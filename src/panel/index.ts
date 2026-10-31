@@ -13,7 +13,8 @@ import { getState } from "../state/store";
 import { label } from "../ui/components";
 import { h } from "../ui/dom";
 import { PRESETS } from "./presets";
-import { changeOnlyActions, forkEvents } from "./replay";
+import { runChecks, type CheckResult } from "./checks";
+import { forkEvents } from "./replay";
 
 export function isJudgeMode(search: string = location.search): boolean {
   return new URLSearchParams(search).get("judge") === "1";
@@ -28,10 +29,12 @@ interface PanelState {
   draft: RoundSpec | null;
   fork: RoundSpec[] | null;
   error: string | null;
-  checks: { name: string; pass: boolean; detail: string }[] | null;
+  checks: CheckResult[] | null;
+  /** 每次“应用改动”前的分叉，用于逐步撤销 */
+  history: (RoundSpec[] | null)[];
 }
 
-const ps: PanelState = { baseline: "yi", editRound: "R1", draft: null, fork: null, error: null, checks: null };
+const ps: PanelState = { baseline: "yi", editRound: "R1", draft: null, fork: null, error: null, checks: null, history: [] };
 let outcomes: Outcomes = {};
 let rerender: () => void = () => {};
 
@@ -69,22 +72,6 @@ function compute(specs: RoundSpec[], flip: string[], fork = false) {
   return { events, profile, progress, plan, chips };
 }
 
-function runChecks(specs: RoundSpec[]): PanelState["checks"] {
-  const events = compute(specs, [], ps.fork !== null).events;
-  const base = JSON.stringify(evaluate(events, ENGINE_CONFIG));
-  const decisions = specs.map((s) => ({ round_id: s.round_id, action: s.action }));
-  const a = settle(decisions, outcomes).balance;
-  const b = settle(decisions, flipOutcomes(outcomes, ROUNDS.map((r) => r.round_id))).balance;
-  const actionSame = JSON.stringify(evaluate(changeOnlyActions(events), ENGINE_CONFIG)) === base;
-  const doubled: GameEvent[] = events.flatMap((e): GameEvent[] => (e.type === "card_flip" ? [e, { ...e, event_id: `${e.event_id}:dup` }] : [e]));
-  const dupSame = JSON.stringify(evaluate(doubled, ENGINE_CONFIG)) === base;
-  return [
-    { name: "只换事后走势", pass: a !== b || specs.every((s) => s.action !== "follow"), detail: `画像输入不含收益；代币 ${a.toFixed(2)} → ${b.toFixed(2)}` },
-    { name: "只改行动（跟 ↔ 不跟）", pass: actionSame, detail: actionSame ? "能力观察、物种、推荐都不变" : "画像变了，需要检查" },
-    { name: "重复点击同一张牌", pass: dupSame, detail: dupSame ? "每张牌只记一次翻开" : "重复点击改变了结果" },
-  ];
-}
-
 function select(name: string, value: string, opts: [string, string][], onChange: (v: string) => void): HTMLElement {
   return h(
     "label",
@@ -118,6 +105,7 @@ function editor(specs: RoundSpec[]): HTMLElement {
     else if (d.flips[0] && d.flips[0] === d.flips[1]) ps.error = "同一张牌不能翻两次。";
     else {
       ps.error = null;
+      ps.history.push(ps.fork);
       ps.fork = (ps.fork ?? specs).map((s) => (s.round_id === d.round_id ? { ...d, followupAnswer: q ? (FOLLOWUP_COPY[q].options.includes(d.followupAnswer ?? "") ? d.followupAnswer : null) : undefined } : s));
       ps.draft = null;
     }
@@ -143,7 +131,7 @@ function editor(specs: RoundSpec[]): HTMLElement {
       ? select(`追问：${FOLLOWUP_COPY[q].question}（必须选择或明确跳过）`, d.followupAnswer ?? "", [["", "跳过"], ...FOLLOWUP_COPY[q].options.map((o) => [o, o] as [string, string])], (v) => setDraft({ followupAnswer: v || null }))
       : h("p", { class: "xs muted" }, "这组字段不触发追问。"),
     ps.error ? h("p", { class: "small", style: "color:var(--leo)" }, ps.error) : null,
-    h("div", { class: "row" }, h("button", { class: "btn", style: "min-height:44px;font-size:15px", onclick: apply }, "应用改动（建立分叉）"), h("button", { class: "btn-line", style: "min-height:44px", onclick: () => ((ps.fork = null), (ps.draft = null), (ps.error = null), rerender()) }, "恢复基线")),
+    h("div", { class: "row" }, h("button", { class: "btn", style: "min-height:44px;font-size:15px", onclick: apply }, "应用改动（建立分叉）"), h("button", { class: "btn-line", style: "min-height:44px", disabled: !ps.history.length, onclick: () => ((ps.fork = ps.history.pop() ?? null), (ps.draft = null), (ps.error = null), rerender()) }, `撤销${ps.history.length ? `（${ps.history.length}）` : ""}`), h("button", { class: "btn-line", style: "min-height:44px", onclick: () => ((ps.fork = null), (ps.history = []), (ps.draft = null), (ps.error = null), rerender()) }, "恢复基线")),
   );
 }
 
@@ -206,7 +194,7 @@ export function renderPanel(): HTMLElement {
       "section",
       { class: "row wrap" },
       [...PRESETS.map((p) => [p.id, `${p.name} · ${p.desc}`] as [string, string]), ...(live ? [["live", "当前体验记录"] as [string, string]] : [])].map(([id, text]) =>
-        h("button", { class: "opt", style: "min-height:40px;font-size:13px;font-weight:500", "aria-pressed": String(ps.baseline === id), onclick: () => ((ps.baseline = id), (ps.fork = null), (ps.draft = null), (ps.checks = null), rerender()) }, text),
+        h("button", { class: "opt", style: "min-height:40px;font-size:13px;font-weight:500", "aria-pressed": String(ps.baseline === id), onclick: () => ((ps.baseline = id), (ps.fork = null), (ps.history = []), (ps.draft = null), (ps.checks = null), rerender()) }, text),
       ),
     ),
     h(
@@ -252,11 +240,15 @@ export function renderPanel(): HTMLElement {
     h(
       "section",
       { class: "panel stack" },
-      h("div", { class: "row wrap" }, h("h2", { class: "grow" }, "反例检查"), h("button", { class: "btn", style: "width:auto;min-height:40px;font-size:14px", onclick: () => ((ps.checks = runChecks(ps.fork ?? specs)), rerender()) }, "一键运行")),
+      h("div", { class: "row wrap" }, h("h2", { class: "grow" }, "反例检查（PRD §9 · 9 项）"), label("simulated", "检查场景为模拟"), h("button", { class: "btn", style: "width:auto;min-height:40px;font-size:14px", onclick: () => ((ps.checks = runChecks(compute(ps.fork ?? specs, flip, ps.fork !== null).events, ps.fork ?? specs, outcomes)), rerender()) }, "一键依次运行")),
+      h("p", { class: "xs muted" }, `以当前${ps.fork ? "分叉" : "基线"}为起点，每项只改一个变量，再用同一个 evaluate / recommend 重算。失败会直接显示为未通过。`),
       ps.checks
-        ? h("ul", { class: "list" }, ps.checks.map((c) => h("li", { class: "row" }, h("span", { class: "bold", style: `color:${c.pass ? "var(--ok)" : "var(--leo)"}` }, c.pass ? "通过" : "未通过"), h("span", { class: "grow" }, c.name), h("span", { class: "xs muted" }, c.detail))))
-        : h("p", { class: "small muted" }, "运行后显示三项检查结果。"),
-      h("div", { class: "row" }, label("todo"), h("span", { class: "xs muted" }, "其余 6 项检查待补充")),
+        ? h("ol", { class: "list", style: "padding:0" }, ps.checks.map((c) =>
+            h("li", { class: "stack", style: "gap:2px;padding:8px 0;border-top:1px solid var(--line)" },
+              h("div", { class: "row" }, h("span", { class: "bold", style: `color:${c.pass ? "var(--ok)" : "var(--leo)"};min-width:52px` }, c.pass ? "通过" : "未通过"), h("span", { class: "grow bold small" }, `${c.id}. ${c.name}`)),
+              h("span", { class: "xs muted" }, `预期：${c.expected}`),
+              h("span", { class: "xs", style: `color:${c.pass ? "var(--text-2)" : "var(--leo)"}` }, `实际：${c.actual}`))))
+        : h("p", { class: "small muted" }, "点“一键依次运行”显示 9 项检查的预期、实际和结果。"),
     ),
   );
 }
