@@ -1,0 +1,94 @@
+{
+  "header": {
+    "schema": "next-card/data@v0.3",
+    "file": "taskB",
+    "topic": "elephant",
+    "script": "scripts/build_taskB.py",
+    "script_version": "example",
+    "rules_version": "v0.3",
+    "generated_at": "2026-10-31T00:00:00.000Z",
+    "data_as_of": "20261030",
+    "source": "契约示例：数值为虚构占位，不是 Panda Data 的真实结果",
+    "apis": ["get_stock_daily_pre"],
+    "benchmark": "沪深300（000300.SH）",
+    "adjustment": "前复权日线",
+    "dividends": "分红送转由前复权价格体现，不另行加回",
+    "normalization": "每个样本以信号日收盘 = 100 归一化",
+    "selection": "示例：展示段与检验段先冻结边界，再各自统计；本文件不含真实筛选",
+    "public_scope": "仅作契约示例，数值虚构，不得展示或引用为结果",
+    "question": "过去约一年总体上涨且回撤较小的，后续约一年怎样？",
+    "signal": {
+      "definition": "信号日前 250 个交易日累计涨幅为正，且区间最大回撤小于 15%",
+      "params": { "lookback_days": 250, "max_drawdown_below": 0.15 }
+    },
+    "primary_metric": { "id": "share_positive_return", "label": "后续约一年上涨的比例" },
+    "execution": {
+      "entry": "信号日次一交易日开盘",
+      "exit": "持有 250 个交易日后的收盘",
+      "horizon_days": 250
+    },
+    "pool": {
+      "description": "示例股票池",
+      "size": 300,
+      "snapshot_date": "20260101",
+      "bias_note": "按快照日成分回看，存在幸存者偏差"
+    },
+    "segments": {
+      "lookback_from": "20160101",
+      "display": { "from": "20180101", "to": "20211231" },
+      "test": { "from": "20220101", "to": "20241231" }
+    },
+    "thresholds": {
+      "min_samples": 30,
+      "advantage_margin": 0.05,
+      "frozen_at": "2026-10-31T00:00:00.000Z"
+    },
+    "baseline_rule": "同段内、同一股票池里不满足信号条件的样本",
+    "non_overlap_rule": "同一标的在持有期内的重复信号只计第一次",
+    "exclusions": ["信号日次日停牌或一字涨停无法成交的样本", "上市不足回看窗口的标的"],
+    "limitations": ["阈值只是本练习的描述标准，不是统计显著性门槛", "股票池按快照日冻结，存在幸存者偏差"]
+  },
+  "display": {
+    "range": { "from": "20180101", "to": "20211231" },
+    "signal_group": {
+      "n_records": 120,
+      "n_symbols": 80,
+      "primary_metric": 0.6,
+      "mean_return": 0.08,
+      "covered": ["20180102", "20201231"],
+      "excluded": { "suspended_or_limit": 4 }
+    },
+    "baseline_group": {
+      "n_records": 400,
+      "n_symbols": 250,
+      "primary_metric": 0.52,
+      "mean_return": 0.03,
+      "covered": ["20180102", "20201231"],
+      "excluded": { "suspended_or_limit": 9 }
+    },
+    "delta": 0.08,
+    "meets_threshold": true
+  },
+  "test": {
+    "range": { "from": "20220101", "to": "20241231" },
+    "signal_group": {
+      "n_records": 90,
+      "n_symbols": 70,
+      "primary_metric": 0.47,
+      "mean_return": -0.01,
+      "covered": ["20220104", "20231229"],
+      "excluded": { "suspended_or_limit": 2 }
+    },
+    "baseline_group": {
+      "n_records": 350,
+      "n_symbols": 240,
+      "primary_metric": 0.48,
+      "mean_return": 0.0,
+      "covered": ["20220104", "20231229"],
+      "excluded": { "suspended_or_limit": 6 }
+    },
+    "delta": -0.01,
+    "meets_threshold": false
+  },
+  "verdict": { "result": "segment_difference", "only_segment": "display" }
+}
