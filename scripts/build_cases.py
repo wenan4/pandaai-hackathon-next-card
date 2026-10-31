@@ -26,7 +26,7 @@ from pd_common import data  # noqa: E402
 from pd_common.client import REPO_ROOT  # noqa: E402
 from pd_common.metrics import max_drawdown, normalize, period_return  # noqa: E402
 
-SCRIPT_VERSION = "cases-0.1.0"
+SCRIPT_VERSION = "cases-0.1.1"
 RULES_VERSION = "v0.3"
 
 # ---------------------------------------------------------------- 冻结参数（筛选前固定）
@@ -99,11 +99,13 @@ def load():
     return days, t_days, pools, px, bench, sectors, adj
 
 
-def by_symbol(px: pd.DataFrame) -> dict[str, pd.DataFrame]:
+def by_symbol(px: pd.DataFrame, calendar=None) -> dict[str, pd.DataFrame]:
     px = px.copy()
     # 约 1.2% 的行 trade_status 为空：有成交量视为正常交易（0），否则视为停牌（1）
-    px["trade_status"] = px["trade_status"].fillna((px["volume"] <= 0).astype(int)).astype(int)
-    return {s: g.set_index("date") for s, g in px.groupby("symbol")}
+    px["trade_status"] = px["trade_status"].fillna((~(px["volume"] > 0)).astype(int)).astype(int)
+    groups = {s: g.set_index("date").sort_index() for s, g in px.groupby("symbol")}
+    # 保留缺失交易日为空值，不向前填充或把下一条记录当作下一交易日。
+    return {s: g.reindex(calendar) if calendar is not None else g for s, g in groups.items()}
 
 
 def series_window(close: pd.Series, t: str, back: int) -> list[float] | None:
@@ -113,17 +115,70 @@ def series_window(close: pd.Series, t: str, back: int) -> list[float] | None:
     i = close.index.get_loc(t)
     if i < back:
         return None
-    return close.iloc[i - back : i + 1].tolist()
+    values = close.iloc[i - back : i + 1]
+    if not np.isfinite(values).all() or not (values > 0).all():
+        return None
+    return values.tolist()
+
+
+def comparison_window(g, bench_close, t):
+    """筛选和导出共用完全相同的日期与价格窗口。"""
+    asset = series_window(g["close"], t, WIN_SHORT)
+    benchmark = series_window(bench_close, t, WIN_SHORT)
+    if asset is None or benchmark is None:
+        return None
+    i, j = g.index.get_loc(t), bench_close.index.get_loc(t)
+    if not g.index[i - WIN_SHORT:i + 1].equals(bench_close.index[j - WIN_SHORT:j + 1]):
+        return None
+    return asset, benchmark
+
+
+def case_data_error(g, bench_close, t):
+    """完整交易日窗口及执行日检查；返回可记录的排除原因。"""
+    if comparison_window(g, bench_close, t) is None:
+        return "incomplete_comparison_window"
+    i, j = g.index.get_loc(t), bench_close.index.get_loc(t)
+    if series_window(g["close"], t, WIN_LONG) is None or j < WIN_LONG:
+        return "incomplete_history"
+    if not g.index[i - WIN_LONG:i + 1].equals(bench_close.index[j - WIN_LONG:j + 1]):
+        return "incomplete_history"
+    if i + WIN_AFTER >= len(g) or j + WIN_AFTER >= len(bench_close):
+        return "incomplete_reveal_window"
+    if not g.index[i:i + WIN_AFTER + 1].equals(bench_close.index[j:j + WIN_AFTER + 1]):
+        return "incomplete_reveal_window"
+    after = g["close"].iloc[i:i + WIN_AFTER + 1]
+    if not np.isfinite(after).all() or not (after > 0).all():
+        return "incomplete_reveal_window"
+    entry = g.iloc[i + 1]
+    if entry["trade_status"] != 0 or not entry["volume"] > 0:
+        return "entry_suspended_or_missing"
+    if not np.isfinite(entry["open"]) or entry["open"] <= 0:
+        return "invalid_entry_price"
+    return None
+
+
+def volume_reference(g, j):
+    """触发日前最近 20 个非停牌日；不足或数值缺失时不生成量比。"""
+    if j < 0 or j >= len(g):
+        return None
+    row = g.iloc[j]
+    if row["trade_status"] != 0 or not np.isfinite(row["volume"]) or row["volume"] <= 0:
+        return None
+    previous = g.iloc[:j]
+    volumes = previous.loc[previous["trade_status"] == 0, "volume"].tail(WIN_VOL)
+    if len(volumes) != WIN_VOL or not np.isfinite(volumes).all() or not (volumes > 0).all():
+        return None
+    return volumes
 
 
 # ---------------------------------------------------------------- 条件
 
 def check_r1(g, bench_close, t):
-    s60 = series_window(g["close"], t, WIN_SHORT)
-    b60 = series_window(bench_close, t, WIN_SHORT)
+    paired = comparison_window(g, bench_close, t)
     s3y = series_window(g["close"], t, WIN_LONG)
-    if not (s60 and b60 and s3y):
+    if paired is None or s3y is None:
         return None
+    s60, b60 = paired
     r60, b_r60, r3y = period_return(s60), period_return(b60), period_return(s3y)
     c = {
         "r60": r60, "bench_r60": b_r60, "r3y": r3y,
@@ -160,16 +215,12 @@ def surge_days(g: pd.DataFrame, t: str, adj_dates: set[str]):
     i = idx.get_loc(t)
     out = []
     for j in range(i - R3["trigger_within"] + 1, i + 1):
-        if j < WIN_VOL + 1:
+        prev_vol = volume_reference(g, j)
+        if prev_vol is None:
             continue
         row = g.iloc[j]
-        if row["trade_status"] != 0:
-            continue
-        prev = g.iloc[j - WIN_VOL : j]
-        prev_vol = prev.loc[prev["trade_status"] == 0, "volume"]
-        if len(prev_vol) < WIN_VOL * 0.75:
-            continue
-        window_dates = set(idx[j - WIN_VOL : j + 1])
+        # 停牌可能扩大回看跨度，除权检查也必须覆盖扩展后的整个区间。
+        window_dates = set(idx[(idx >= prev_vol.index[0]) & (idx <= idx[j])])
         if window_dates & adj_dates:  # 回看窗口内有送转除权，量比不可信
             continue
         avg = prev_vol.mean()
@@ -206,9 +257,9 @@ def day_ret(close: pd.Series, d: str) -> float | None:
 
 def scan():
     days, t_days, pools, px, bench, sectors, adj = load()
-    groups = by_symbol(px)
-    bench_close = bench.set_index("date")["close"]
-    sector_close = {s: g.set_index("date")["close"] for s, g in sectors.groupby("symbol")}
+    groups = by_symbol(px, days)
+    bench_close = bench.set_index("date")["close"].reindex(days)
+    sector_close = {s: g.set_index("date")["close"].reindex(days) for s, g in sectors.groupby("symbol")}
     split_dates = {
         s: set(g.loc[g["ex_factor"] >= R3["split_factor"], "ex_date"].astype(str))
         for s, g in adj.groupby("symbol")
@@ -216,13 +267,16 @@ def scan():
 
     cands: dict[str, list[Candidate]] = {"R1": [], "R2": [], "R3": []}
     stats = {r: {"evaluated": 0, "passed": 0} for r in cands}
+    stats["excluded_records"] = {}
     for t in t_days:
         for s in pools[t]:
             g = groups.get(s)
             if g is None or t not in g.index or g.loc[t, "trade_status"] != 0:
                 continue
             i = g.index.get_loc(t)
-            if i + WIN_AFTER >= len(g):  # 揭晓窗口必须完整
+            error = case_data_error(g, bench_close, t)
+            if error:
+                stats["excluded_records"][error] = stats["excluded_records"].get(error, 0) + 1
                 continue
             liq = float(g["amount"].iloc[max(0, i - WIN_SHORT + 1) : i + 1].mean())
             name = str(g["name"].iloc[i])
@@ -311,18 +365,18 @@ def volume_ratios(g: pd.DataFrame, i: int, n: int) -> list[float | None]:
     """最近 n 个交易日每天的量比：当日量 ÷ 之前 20 个非停牌日的均量（不含当日）。停牌日为 None。"""
     out = []
     for j in range(i - n + 1, i + 1):
-        prev = g.iloc[j - WIN_VOL : j]
-        avg = prev.loc[prev["trade_status"] == 0, "volume"].mean()
-        row = g.iloc[j]
-        out.append(None if row["trade_status"] != 0 or not avg else round(float(row["volume"] / avg), 4))
+        previous = volume_reference(g, j)
+        out.append(None if previous is None else round(float(g.iloc[j]["volume"] / previous.mean()), 4))
     return out
 
 
 def export_round(c: Candidate, g: pd.DataFrame, bench_close: pd.Series) -> tuple[dict, dict]:
+    error = case_data_error(g, bench_close, c.t)
+    if error:
+        raise ValueError(f"不能导出 {c.round_id} {c.symbol} {c.t}: {error}")
     i = g.index.get_loc(c.t)
     close = g["close"]
-    s60 = close.iloc[i - WIN_SHORT : i + 1].tolist()
-    b60 = bench_close.loc[g.index[i - WIN_SHORT : i + 1]].tolist()
+    s60, b60 = comparison_window(g, bench_close, c.t)
     s3y = close.iloc[i - WIN_LONG : i + 1].tolist()
     s20 = close.iloc[i - WIN_VOL : i + 1].tolist()
     after = close.iloc[i : i + WIN_AFTER + 1].tolist()  # T 收盘 … T+20 收盘
@@ -421,7 +475,8 @@ def full_header(stats, t_days, as_of):
         "filters": {"R1": R1, "R2": {**R2, "r60_range": list(R2["r60_range"])}, "R3": R3},
         "exclusions": [
             "决策日停牌（trade_status ≠ 0）",
-            "历史不足 729 个交易日或揭晓窗口不足 20 个交易日",
+            "按交易日历对齐；历史不足 729 日、标的或基准窗口缺失，或揭晓窗口不足 20 日",
+            "T+1 停牌、无成交量，或开盘价缺失／非正；排除数量见 sample.excluded_records",
             "R3：量比回看窗口内有送转除权（ex_factor ≥ 1.1）",
             "trade_status 为空时：有成交量视为正常交易，否则视为停牌",
         ],
@@ -503,3 +558,4 @@ if __name__ == "__main__":
     for rid, c in chosen.items():
         print(rid, c.symbol, c.name, c.t)
     print("已写入 public/data/cases_visible.json、public/data/cases_reveal.json、src/config/rounds_act1.json、docs/cases-report.md")
+

@@ -2,9 +2,9 @@
  "header": {
   "schema": "draft（YOU-145 冻结前的临时格式）",
   "script": "scripts/build_cases.py",
-  "script_version": "cases-0.1.0",
+  "script_version": "cases-0.1.1",
   "rules_version": "v0.3",
-  "generated_at": "2026-10-31T07:34:50Z",
+  "generated_at": "2026-10-31T08:20:01Z",
   "data_as_of": "20261030",
   "source": "Panda Data（panda_data 1.0.5）",
   "apis": [
@@ -64,23 +64,29 @@
   },
   "exclusions": [
    "决策日停牌（trade_status ≠ 0）",
-   "历史不足 729 个交易日或揭晓窗口不足 20 个交易日",
+   "按交易日历对齐；历史不足 729 日、标的或基准窗口缺失，或揭晓窗口不足 20 日",
+   "T+1 停牌、无成交量，或开盘价缺失／非正；排除数量见 sample.excluded_records",
    "R3：量比回看窗口内有送转除权（ex_factor ≥ 1.1）",
    "trade_status 为空时：有成交量视为正常交易，否则视为停牌"
   ],
   "sample": {
    "R1": {
-    "evaluated": 108366,
+    "evaluated": 108351,
     "passed": 1311
    },
    "R2": {
-    "evaluated": 108366,
+    "evaluated": 108351,
     "passed": 145
    },
    "R3": {
-    "evaluated": 108366,
-    "passed": 261,
-    "passed_basic": 512
+    "evaluated": 108351,
+    "passed": 263,
+    "passed_basic": 513
+   },
+   "excluded_records": {
+    "incomplete_history": 5101,
+    "entry_suspended_or_missing": 15,
+    "incomplete_reveal_window": 5
    }
   },
   "selection": "每轮在通过条件的候选中按 T 日前 60 日平均成交额最高者自动选取；未参考 T 之后数据",
