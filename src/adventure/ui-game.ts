@@ -1,10 +1,13 @@
 import { h, type Child } from "../ui/dom";
 import "./battle-preview.css";
+import "./ui-piles.css";
 import { availableActions, canPlayCard } from "./engine";
+import { battleZones, turnEnergySummary } from "./battle-information";
 import { describeCardPlayPreview, describeCompactCardPlayPreview, previewCardPlay } from "./card-preview";
 import { CARDS, ENEMIES, PRICES, ROUTES } from "./content";
 import type { MarketInitialCase } from "./market";
 import type { CardInstance, Run, RunAction } from "./types";
+import type { PileKind } from "./ui-piles";
 import { button, cardFace, chart, coins, dateText, deckSummary, details, metric, moneyHistory, moneyPanel, note, panel, pill } from "./ui-components";
 
 export interface GameViewContext {
@@ -32,6 +35,7 @@ export interface GameViewContext {
   extraCamp: () => Child;
   openReport: () => void;
   openTask: (task: "d1" | "d2") => void;
+  openPile: (pile: PileKind) => void;
   archiveShown: (caseId: string) => void;
   nextTutorial: () => void;
   skipTutorial: () => void;
@@ -62,6 +66,27 @@ function battleView(ctx: GameViewContext): HTMLElement {
   const preview = selected ? previewCardPlay(run, selected.instanceId, isRetain ? retained?.instanceId : undefined) : null;
   const reason = preview && !preview.enabled ? preview.reason : null;
   const hand = b.hand.map((id) => run.deck.find((card) => card.instanceId === id)).filter((card): card is CardInstance => !!card);
+  const zones = battleZones(run);
+  const energy = turnEnergySummary(run);
+  const borrowedThisTurn = run.history.some((event) => event.type === "battle" && event.node === run.node && event.action === "play-card" && event.data.cardId === "C04" && event.data.turn === b.turn);
+  const showEnergySummary = energy && (energy.overloadSettled || b.overloadNext > 0 || energy.capacity !== b.capacity || borrowedThisTurn);
+  const pileButton = (pile: "draw" | "discard" | "exhaust", label: string): HTMLElement => {
+    const total = zones?.[pile].total ?? null;
+    return h("button", { type: "button", class: "battle-pile-button", "data-focus-key": `pile-${pile}`, "aria-label": `查看${label}，${total === null ? "数量未知" : `${total} 张`}`, onclick: () => ctx.openPile(pile) }, label, h("b", null, total === null ? "?" : total));
+  };
+  const handCard = (card: CardInstance, index: number): HTMLElement => {
+    const temporary = b.retainedOnce?.includes(card.instanceId) ?? false;
+    const permanent = CARDS[card.cardId].retain;
+    const label = permanent && temporary ? "保留至打出 · 本次也保留" : permanent ? "保留至打出" : temporary ? "本次结束后保留" : undefined;
+    const face = cardFace(card, { selected: selected?.instanceId === card.instanceId, onClick: () => ctx.selectCard(card.instanceId), key: `card-${card.instanceId}`, label });
+    if (label) {
+      const id = `hand-retain-${index}`;
+      const description = permanent && temporary ? "此牌会保留至打出，本回合结束也获得了一次保留。" : permanent ? "此牌会留在手中，直到打出。" : "此牌在本回合结束后保留一次；之后除非再次获得保留，否则会弃置。";
+      face.setAttribute("data-retain", permanent ? "permanent" : "once"); face.setAttribute("aria-describedby", id);
+      face.append(h("span", { id, class: "pile-sr-only" }, description));
+    }
+    return face;
+  };
   const intent = enemy.intent.kind === "attack" ? `攻击 ${enemy.intent.amount}` : `获得 ${enemy.intent.amount} 护盾`;
   const art = enemy.id === "moss" ? "moss" : enemy.id === "clock" ? "clock" : "guardian";
   const playable = hand.filter((card) => canPlayCard(run, card.instanceId).enabled);
@@ -89,9 +114,11 @@ function battleView(ctx: GameViewContext): HTMLElement {
       lesson ? h("div", { class: "tutorial-guide" }, h("div", { class: "tutorial-copy", "aria-live": "polite" }, h("strong", null, `${ctx.tutorialStep + 1} / 4 · ${lesson[0]}`), h("span", null, lesson[1])), h("div", { class: "tutorial-actions" }, button("跳过提示", ctx.skipTutorial, "small ghost", false, "tutorial-skip"), button(ctx.tutorialStep === 3 ? "知道了" : "下一条", ctx.nextTutorial, "small secondary", false, "tutorial-next"))) : null,
       h("p", { class: "combat-feedback-line", role: "status", "aria-live": "polite" }, ctx.battleFeedback || (lesson ? "" : `第 ${b.turn} 回合 · 看清意图，再选择手牌`))),
     h("div", { class: "battle-status" }, h("div", { class: "battle-stat" }, h("span", null, "现在可用能量"), h("b", null, b.energy)), h("div", { class: "battle-stat" }, h("span", null, "本场容量"), h("b", null, `${b.capacity} / 6`)), h("div", { class: "battle-stat" }, h("span", null, "下回合锁定"), h("b", null, b.overloadNext))),
-    h("section", { class: "panel stack battle-hand-panel" }, h("div", { class: "panel-head" }, h("div", null, h("div", { class: "eyebrow" }, `TURN ${String(b.turn).padStart(2, "0")}`), h("h2", null, "选择一张手牌"), h("p", { class: "hint" }, "先看对方意图，再选择卡牌。点击卡牌查看效果。")), pill(`抽牌堆 ${b.drawPile.length} · 弃牌堆 ${b.discardPile.length}`, "blue")),
+    showEnergySummary ? h("p", { class: "battle-energy-summary" }, `本回合开始恢复 ${energy.restoredEnergy}/${energy.capacity}${energy.overloadSettled ? `，已结算过载 ${energy.locked}` : "，上回合无过载"}。`) : null,
+    h("section", { class: "panel stack battle-hand-panel" }, h("div", { class: "panel-head" }, h("div", null, h("div", { class: "eyebrow" }, `TURN ${String(b.turn).padStart(2, "0")}`), h("h2", null, "选择一张手牌"), h("p", { class: "hint" }, "先看对方意图，再选择卡牌。点击卡牌查看效果。"))),
+      h("div", { class: "battle-pile-counts", role: "group", "aria-label": "查看战斗牌区" }, pileButton("draw", "抽牌堆"), pileButton("discard", "弃牌堆"), pileButton("exhaust", "消耗区")),
       h("p", { class: "hand-swipe-hint" }, "左右滑动查看全部手牌"),
-      h("div", { class: "hand", "data-scroll-key": "battle-hand", tabindex: "0", "aria-label": "手牌，可左右滚动" }, hand.map((card) => cardFace(card, { selected: selected?.instanceId === card.instanceId, onClick: () => ctx.selectCard(card.instanceId), key: `card-${card.instanceId}` }))),
+      h("div", { class: "hand", "data-scroll-key": "battle-hand", tabindex: "0", "aria-label": "手牌，可左右滚动" }, hand.map(handCard)),
       selected ? h("div", { class: "notice battle-selection" }, h("strong", null, `${CARDS[selected.cardId].name}${selected.upgraded ? "+" : ""} · ${selected.upgraded ? CARDS[selected.cardId].upgradedCost : CARDS[selected.cardId].cost} 能量`), h("p", null, selected.upgraded ? CARDS[selected.cardId].upgradedDescription : CARDS[selected.cardId].description),
         retainSelect(),
         previewBlock(),
