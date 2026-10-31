@@ -1,14 +1,16 @@
 import { h, type Child } from "../ui/dom";
 import "./battle-preview.css";
 import "./ui-piles.css";
+import "./game-feedback.css";
 import { availableActions, canPlayCard } from "./engine";
 import { battleZones, turnEnergySummary } from "./battle-information";
 import { intentText, routeEnemySummary } from "./ui-enemy";
 import { describeCardPlayPreview, describeCompactCardPlayPreview, previewCardPlay } from "./card-preview";
 import { CARDS, ENEMIES, PRICES, ROUTES } from "./content";
 import type { MarketInitialCase } from "./market";
-import type { CardInstance, Run, RunAction } from "./types";
+import type { CardId, CardInstance, Run, RunAction } from "./types";
 import type { PileKind } from "./ui-piles";
+import { outcomeFeedback, type ActionFeedback } from "./game-feedback";
 import { button, cardFace, chart, coins, dateText, deckSummary, details, metric, moneyHistory, moneyPanel, note, panel, pill } from "./ui-components";
 
 export interface GameViewContext {
@@ -20,16 +22,19 @@ export interface GameViewContext {
   selectedCard: string | null;
   selectedRetain: string | null;
   selectedUpgrade: string | null;
+  selectedReward: CardId | null;
   entryCents: number;
   reserveCents: number;
   marketLoading: boolean;
   marketError: string | null;
   battleFeedback: string;
+  gameFeedback: GameReceipt | null;
   tutorialStep: number;
   action: (action: RunAction) => void;
   selectCard: (id: string | null) => void;
   selectRetain: (id: string) => void;
   selectUpgrade: (id: string) => void;
+  selectReward: (id: CardId | null) => void;
   setEntry: (cents: number, render?: boolean) => void;
   setReserve: (cents: number) => void;
   retryMarket: () => void;
@@ -41,6 +46,11 @@ export interface GameViewContext {
   archiveShown: (caseId: string) => void;
   nextTutorial: () => void;
   skipTutorial: () => void;
+}
+
+export interface GameReceipt {
+  area: "journey" | "shop" | "free";
+  result: ActionFeedback;
 }
 
 const nodeNames: Record<Run["node"], string> = { N1: "城门初遇", N2: "第一处营地", N3: "岔路 · 第一站", N4: "林间营地", N5: "岔路 · 第二站", N6: "最后的营地", N7: "守灯者的挑战", N8: "归途" };
@@ -57,7 +67,12 @@ function sidebar(run: Run): HTMLElement {
   const current = nodes.indexOf(run.node);
   return h("aside", { class: "side-column" }, h("section", { class: "panel stack" }, h("div", { class: "eyebrow" }, "YOUR JOURNEY"), h("h3", null, "这段旅程"), h("div", { class: "progress-path", "aria-label": `当前位于${nodeNames[run.node]}` }, nodes.map((node, index) => h("span", { class: index === current ? "current" : index < current ? "done" : "" }, nodeLabels[node]))),
     h("hr", { class: "divider" }), moneyPanel(run), details("查看金币往来", moneyHistory(run))),
-    h("section", { class: "panel stack" }, h("div", { class: "panel-head" }, h("div", null, h("h3", null, "随行牌组"), h("p", { class: "hint" }, `${run.deck.length} 张牌 · 奖励会直接加入牌组`))), deckSummary(run), details("卡牌小词典", h("p", { class: "hint" }, "过载：下一回合少恢复对应能量，仅持续一回合。成长：增加本场容量，从下一回合起生效。消耗：本场暂时移出，下一场回来。保留：牌会留在手中。"))));
+    h("section", { class: "panel stack" }, h("div", { class: "panel-head" }, h("div", null, h("h3", null, "随行牌组"), h("p", { class: "hint" }, `${run.deck.length} 张牌 · 确认后奖励加入牌组`))), deckSummary(run), details("卡牌小词典", h("p", { class: "hint" }, "过载：下一回合少恢复对应能量，仅持续一回合。成长：增加本场容量，从下一回合起生效。消耗：本场暂时移出，下一场回来。保留：牌会留在手中。"))));
+}
+function receipt(ctx: GameViewContext, area: GameReceipt["area"]): HTMLElement | null {
+  if (ctx.gameFeedback?.area !== area) return null;
+  const { title, detail } = ctx.gameFeedback.result;
+  return h("div", { class: "game-receipt", "data-game-receipt": area, role: "status", "aria-live": "polite" }, h("strong", null, title), h("p", null, detail));
 }
 function battleView(ctx: GameViewContext): HTMLElement {
   const { run } = ctx; const b = run.battle!; const enemy = b.enemy; const def = ENEMIES[enemy.id];
@@ -132,14 +147,23 @@ function battleView(ctx: GameViewContext): HTMLElement {
 }
 function rewardView(ctx: GameViewContext): HTMLElement {
   const { run } = ctx; const reward = run.reward!;
+  const selected = ctx.selectedReward && reward.choices.includes(ctx.selectedReward) ? ctx.selectedReward : null;
   const ideas = run.node === "N1" ? h("div", { class: "reward-ideas" }, h("div", null, h("strong", null, "连刃 + 余烬"), h("p", null, "营地可用 25 金币买余烬。先打余烬再打连刃，三段伤害合计从 9 变成 15。")), h("div", null, h("strong", null, "培育 → 大牌"), h("p", null, "培育增加空容量；下回合容量达到 4，能量足够时可尝试营地里的参天一击。"))) : null;
-  return panel("把新牌带上旅程", `胜利获得 ${coins(reward.coinsCents)} 金币。选择一张加入牌组，或保持牌组精简。`, ctx.battleFeedback ? note(ctx.battleFeedback) : null, ideas, h("div", { class: "hand" }, reward.choices.map((id) => cardFace({ cardId: id, upgraded: false }, { label: "选择并加入牌组", onClick: () => ctx.action({ type: "choose-reward", cardId: id }), key: `reward-${id}` }))),
-    note("新牌会立即加入你的牌组，下一场战斗就有机会抽到。"), h("div", { class: "button-row" }, button("这次不拿牌", () => ctx.action({ type: "choose-reward", cardId: null }), "secondary", false, "skip-reward")));
+  return panel("把新牌带上旅程", `胜利获得 ${coins(reward.coinsCents)} 金币。先选择并比较卡牌，再确认加入，或选择不拿牌。`, ctx.battleFeedback ? note(ctx.battleFeedback) : null,
+    h("p", { class: "reward-swipe-hint" }, "左右滑动可比较全部奖励牌。"),
+    h("div", { class: "hand reward-choices", "data-scroll-key": "reward-choices", tabindex: "0", "aria-label": "奖励牌，可左右滚动比较" }, reward.choices.map((id) => cardFace({ cardId: id, upgraded: false }, { selected: selected === id, label: selected === id ? "已选 · 待确认" : "点击查看", onClick: () => ctx.selectReward(selected === id ? null : id), key: `reward-${id}` }))),
+    h("div", { class: "reward-selection", role: "status", "aria-live": "polite" }, selected ? h("p", null, h("strong", null, `已选 ${CARDS[selected].name}，尚未加入牌组。`), ` ${CARDS[selected].description}`) : h("p", null, "尚未选择奖励牌。点击卡牌查看，不会立即加入。")),
+    h("div", { class: "button-row reward-actions" }, button(selected ? `确认加入 ${CARDS[selected].name}` : "确认加入所选牌", () => { if (selected) ctx.action({ type: "choose-reward", cardId: selected }); }, "", !selected, "confirm-reward"), selected ? button("取消选择", () => ctx.selectReward(null), "secondary", false, "cancel-reward") : null, button("这次不拿牌", () => ctx.action({ type: "choose-reward", cardId: null }), "secondary", false, "skip-reward")),
+    note("确认后新牌才加入牌组，下一场战斗就有机会抽到。"), ideas);
 }
 function selectUpgrade(ctx: GameViewContext, baseOnly = false): { field: HTMLElement; selected: CardInstance | undefined } {
   const candidates = ctx.run.deck.filter((card) => !card.upgraded && (!baseOnly || Number(card.cardId.slice(1)) <= 6));
   const selected = candidates.find((card) => card.instanceId === ctx.selectedUpgrade) ?? candidates[0];
-  return { selected, field: h("label", { class: "field" }, "选择要升级的牌", h("select", { value: selected?.instanceId ?? "", disabled: !candidates.length, "data-focus-key": "upgrade-select", onchange: (event: Event) => ctx.selectUpgrade((event.currentTarget as HTMLSelectElement).value) }, candidates.map((card, i) => h("option", { value: card.instanceId, selected: card.instanceId === selected?.instanceId }, `${CARDS[card.cardId].name} · 第 ${i + 1} 张`))), selected ? h("span", { class: "hint" }, `升级前：${CARDS[selected.cardId].description} 升级后：${CARDS[selected.cardId].upgradedDescription}${CARDS[selected.cardId].cost !== CARDS[selected.cardId].upgradedCost ? ` 费用 ${CARDS[selected.cardId].cost} → ${CARDS[selected.cardId].upgradedCost}` : ""}`) : h("span", { class: "hint" }, "没有可升级的牌。")) };
+  return { selected, field: h("label", { class: "field" }, "选择要升级的牌", h("select", { value: selected?.instanceId ?? "", disabled: !candidates.length, "data-focus-key": "upgrade-select", onchange: (event: Event) => ctx.selectUpgrade((event.currentTarget as HTMLSelectElement).value) }, candidates.map((card) => {
+    const sameName = ctx.run.deck.filter((item) => item.cardId === card.cardId);
+    const ordinal = sameName.findIndex((item) => item.instanceId === card.instanceId) + 1;
+    return h("option", { value: card.instanceId, selected: card.instanceId === selected?.instanceId }, `${CARDS[card.cardId].name} · 第 ${ordinal} 张`);
+  })), selected ? h("span", { class: "hint" }, `升级前：${CARDS[selected.cardId].description} 升级后：${CARDS[selected.cardId].upgradedDescription}${CARDS[selected.cardId].cost !== CARDS[selected.cardId].upgradedCost ? ` 费用 ${CARDS[selected.cardId].cost} → ${CARDS[selected.cardId].upgradedCost}` : ""}`) : h("span", { class: "hint" }, "没有可升级的牌。")) };
 }
 function item(title: string, description: string, action: HTMLElement, unavailable: string | null = null): HTMLElement {
   return h("div", { class: "item" }, h("div", null, h("strong", null, title), h("p", null, description)), h("div", { class: "item-actions" }, action, unavailable ? h("small", null, unavailable) : null));
@@ -151,6 +175,7 @@ function shop(ctx: GameViewContext, roadside = false): HTMLElement {
   const canHeal = supplyOpen && run.hp < run.maxHp;
   const canUpgrade = supplyOpen && !!upgrade.selected;
   return h("section", { class: "panel stack" }, h("div", { class: "panel-head" }, h("div", null, h("h2", null, roadside ? "路边补给" : "营地商店"), h("p", { class: "hint" }, roadside ? "这里只接受可用金币，不能回收契约。也可以直接出发。" : "金币只在购买时扣除；不足的商品仍会显示。"))),
+    receipt(ctx, "shop"),
     h("div", { class: "item-list" }, item("热茶与补给", "恢复 10 生命 · 10 金币", button(healingShortfall ? "尝试补充" : "补充生命", () => ctx.action(healingShortfall ? { type: "purchase-attempted", purchase: "heal" } : { type: "heal" }), "small secondary", !canHeal, "heal"), healingShortfall ?? (run.hp >= run.maxHp ? "生命已满" : !supplyOpen ? "先完成当前结算" : null)),
       item("整理装备", "升级一张牌 · 20 金币", button(upgradeShortfall ? "尝试升级" : "确认升级", () => { if (upgrade.selected) ctx.action(upgradeShortfall ? { type: "purchase-attempted", purchase: "upgrade-card", cardInstanceId: upgrade.selected.instanceId } : { type: "upgrade-card", cardInstanceId: upgrade.selected.instanceId }); }, "small secondary", !canUpgrade, "upgrade"), upgradeShortfall ?? (!supplyOpen ? "先完成当前结算" : null))),
     upgrade.field,
@@ -194,8 +219,12 @@ function redemptionPanel(ctx: GameViewContext): HTMLElement {
 function freeRest(ctx: GameViewContext): HTMLElement | null {
   const { run } = ctx; if (!run.camp || run.camp.node === "N2") return null;
   const upgrade = selectUpgrade(ctx, true); const used = run.camp.freeChoiceUsed;
-  return h("section", { class: "panel stack soft" }, h("div", { class: "panel-head" }, h("div", null, h("h2", null, "一次免费的整备"), h("p", { class: "hint" }, used ? "本营地的免费整备已使用。" : "休息恢复 6 生命，或免费升级一张牌；二选一。")), pill("免费")),
-    !used ? h("div", { class: "stack" }, upgrade.field, h("div", { class: "button-row" }, button("休息，恢复 6 生命", () => ctx.action({ type: "free-rest" }), "secondary", !can(run, "free-rest"), "free-rest"), button("免费升级所选牌", () => { if (upgrade.selected) ctx.action({ type: "free-upgrade", cardInstanceId: upgrade.selected.instanceId }); }, "secondary", !upgrade.selected || !can(run, "free-upgrade"), "free-upgrade"))) : null);
+  const healed = Math.min(6, Math.max(0, run.maxHp - run.hp));
+  const alternatives = [upgrade.selected && can(run, "free-upgrade") ? "免费升级基础牌" : "", can(run, "continue") ? "直接出发" : "", can(run, "return-home") ? "提前返程" : ""].filter(Boolean);
+  const fullHealth = `生命已满，暂不能休息${alternatives.length ? `；你可以${alternatives.join("，或")}` : run.camp.decision !== "settled" ? "；请先完成契约安排与结算" : ""}。`;
+  return h("section", { class: "panel stack soft" }, h("div", { class: "panel-head" }, h("div", null, h("h2", null, "一次免费的整备"), h("p", { class: "hint" }, used ? "本营地的免费整备已使用。" : "休息最多恢复 6 生命，或免费升级一张基础牌；二选一。")), pill("免费")),
+    receipt(ctx, "free"),
+    !used ? h("div", { class: "stack" }, healed === 0 ? h("p", { class: "hint" }, fullHealth) : null, upgrade.field, h("div", { class: "button-row" }, button(`休息，恢复 ${healed} 生命`, () => ctx.action({ type: "free-rest" }), "secondary", healed === 0 || !can(run, "free-rest"), "free-rest"), button("免费升级所选牌", () => { if (upgrade.selected) ctx.action({ type: "free-upgrade", cardInstanceId: upgrade.selected.instanceId }); }, "secondary", !upgrade.selected || !can(run, "free-upgrade"), "free-upgrade"))) : null);
 }
 function campView(ctx: GameViewContext): HTMLElement {
   const { run } = ctx; const camp = run.camp!;
@@ -216,7 +245,18 @@ function routeView(ctx: GameViewContext): HTMLElement {
   return h("div", { class: "stack" }, shop(ctx, true), panel("选择接下来的路", "两条路消耗相同的旅程时间；选择最想挑战的对手。", h("div", { class: "route-grid" }, routes.map((route, index) => h("article", { class: "route-card" }, h("div", { class: "route-symbol" }, index === 0 ? "Ⅰ" : "Ⅱ"), h("h3", null, route.name), h("p", { class: "hint" }, route.description), routeEnemySummary(route.enemyId), pill(`胜利奖励 ${coins(route.rewardCents)} 金币`, "gold"), button("选择这条路", () => ctx.action({ type: "choose-route", enemyId: route.enemyId }), "secondary", !can(run, "choose-route"), `route-${route.enemyId}`))))));
 }
 function marketView(ctx: GameViewContext): HTMLElement {
-  return panel(ctx.marketError ? "这段旅程暂时停在这里" : "翻到旅程的下一页", ctx.marketError ? "报价未加载成功。已提交的选择和当前进度都保留着。" : "正在按旅程顺序加载这一阶段的报价……", ctx.marketError ? note(ctx.marketError, true) : h("div", { class: "notice", role: "status" }, "稍等片刻，已经锁定的订单不会重复提交。"), ctx.marketError ? button("重新加载", ctx.retryMarket, "", ctx.marketLoading, "retry-market") : null);
+  const quoteError = ctx.marketError?.replace(/[。.!！]+$/, "");
+  if (ctx.run.status !== "active") {
+    const outcome = outcomeFeedback(ctx.run);
+    const preserved = ctx.run.market.order ? "结局和已锁定的订单保持不变，重试不会重复提交订单。" : "结局和当前进度保持不变。";
+    return panel(outcome.title, outcome.summary,
+      outcome.lastOpponent ? h("p", { class: "hint" }, `最近面对：${outcome.lastOpponent}。`) : null,
+      outcome.defeatBlow ? h("p", { class: "hint" }, outcome.defeatBlow) : null,
+      outcome.settlementText ? h("div", { class: "notice", role: "status" }, outcome.settlementText) : null,
+      ctx.marketError ? note(`报价未能完成处理：${quoteError}。${preserved}`, true) : h("p", { class: "hint" }, ctx.run.market.order ? "正在加载所需报价，已锁定的订单不会重复提交。" : "正在加载所需报价，当前进度已保留。"),
+      ctx.marketError ? button("重新加载", ctx.retryMarket, "", ctx.marketLoading, "retry-market") : null);
+  }
+  return panel(ctx.marketError ? "这段旅程暂时停在这里" : "翻到旅程的下一页", ctx.marketError ? "报价未能完成处理。已提交的选择和当前进度都保留着。" : "正在按旅程顺序加载这一阶段的报价……", ctx.marketError ? note(ctx.marketError, true) : h("div", { class: "notice", role: "status" }, ctx.run.market.order ? "稍等片刻，已经锁定的订单不会重复提交。" : "稍等片刻，当前进度已保留。"), ctx.marketError ? button("重新加载", ctx.retryMarket, "", ctx.marketLoading, "retry-market") : null);
 }
 export function gameView(ctx: GameViewContext): HTMLElement {
   const { run } = ctx;
@@ -229,6 +269,6 @@ export function gameView(ctx: GameViewContext): HTMLElement {
     case "market": main = marketView(ctx); break;
     case "ended": main = h("div"); break;
   }
-  return h("div", { class: "app-shell journey-shell" }, journeyHeader(run), h("div", { class: "page-grid" }, h("main", { class: "main-column", id: "main-content" }, main), sidebar(run)));
+  return h("div", { class: "app-shell journey-shell" }, journeyHeader(run), h("div", { class: "page-grid" }, h("main", { class: "main-column", id: "main-content" }, receipt(ctx, "journey"), main), sidebar(run)));
 }
 export { nodeNames };

@@ -2,11 +2,12 @@ import "./adventure.css";
 import { h, type Child } from "../ui/dom";
 import { createRun, forkRun, pendingMarketStep, reduceRun } from "./engine";
 import { CARDS, ENEMIES } from "./content";
-import { loadMarketInitial, loadMarketInitialCase, loadMarketStage, loadResearchCase, type MarketInitialCase, type MarketManifest } from "./market";
+import { discardRejectedMarketStage, loadMarketInitial, loadMarketInitialCase, loadMarketStage, loadResearchCase, type MarketInitialCase, type MarketManifest } from "./market";
 import { addUserReason, compareSchedule, compareSelfForecast, declarePriorExposure, emptyResearchProfile, markHistoryHelp, recommendResearch, revokeResearch, setHelpPreference, setResearchGoal, showHistoryEvidence, startHistory, submitHistory, updateJourney, type Direction, type Goal, type HelpPreference, type ResearchProfile } from "./research";
-import type { Run, RunAction } from "./types";
+import type { CardId, Run, RunAction } from "./types";
 import { button, coins, dateText, pill } from "./ui-components";
-import { gameView, nodeNames } from "./ui-game";
+import { gameView, nodeNames, type GameReceipt } from "./ui-game";
+import { actionFeedback } from "./game-feedback";
 import { ResearchUI } from "./ui-research";
 import { makeDemoPath } from "./ui-demo";
 import { mergeFundingExposures, type FundingExposureArchive } from "./ui-exposure";
@@ -45,7 +46,9 @@ let storageError = false;
 let selectedCard: string | null = null;
 let selectedRetain: string | null = null;
 let selectedUpgrade: string | null = null;
+let selectedReward: CardId | null = null;
 let battleFeedback = "";
+let gameFeedback: GameReceipt | null = null;
 let tutorialStep = 4;
 let entryCents = 0;
 let reserveCents = 0;
@@ -62,6 +65,18 @@ let requestVersion = 0;
 let idCounter = 0;
 const uid = (prefix: string): string => `${prefix}-${Date.now().toString(36)}-${++idCounter}`;
 const errorMessage = (error: unknown): string => error instanceof TypeError && /fetch|network/i.test(error.message) ? "网络连接暂时不可用，请重试。" : error instanceof Error ? error.message : "加载未完成，请重试。";
+
+function resetGameUi(): void {
+  selectedCard = null; selectedRetain = null; selectedUpgrade = null; selectedReward = null;
+  battleFeedback = ""; gameFeedback = null; toastMessage = "";
+  window.clearTimeout(toastTimer); toastTimer = 0;
+}
+function selectReward(id: CardId | null): void {
+  const previous = selectedReward;
+  selectedReward = id;
+  render();
+  if (id === null && previous) app.querySelector<HTMLElement>(`[data-focus-key="reward-${previous}"]`)?.focus({ preventScroll: true });
+}
 
 function writeLocal(key: string, value: string): boolean {
   if (recovery) return false;
@@ -190,15 +205,32 @@ function startRun(enabled: boolean): void {
   if (!writeLocal(SAVE_KEY, JSON.stringify(nextSave))) { flash("未能保存新旅程；原来的本地记录未替换，请检查存储设置后重试。"); return; }
   cancelMarketRequest(); resetInitialCase();
   if (expiredArchive && !clearFundingExposures()) fundingExposureArchive = { version: 1, createdAt: now, entries: [] };
-  run = nextRun; profile = nextProfile; realSave = nextSave; priorExposure = chosen.priorExposure; observationStartedAt = now; selectedCard = null; selectedUpgrade = null; battleFeedback = ""; tutorialStep = 0; entryCents = 0; reserveCents = 0;
+  resetGameUi(); run = nextRun; profile = nextProfile; realSave = nextSave; priorExposure = chosen.priorExposure; observationStartedAt = now; tutorialStep = 0; entryCents = 0; reserveCents = 0;
   changeScreen("game"); ensureInitialCase();
 }
 function action(next: RunAction): void {
   if (recovery || !run) return;
   const previousPhase = run.phase; const previousNode = run.node;
   const before = run;
+  let updatedRun: Run;
+  try { updatedRun = reduceRun(before, next); }
+  catch (error) {
+    if (next.type === "apply-quote" && before.phase === "market" && before.market.pending) {
+      discardRejectedMarketStage(before.market.pending.caseId, before.market.pending.stage);
+      marketLoading = false; marketError = errorMessage(error); render();
+    }
+    else { gameFeedback = null; flash(errorMessage(error)); }
+    return;
+  }
   try {
-    run = reduceRun(run, next);
+    run = updatedRun;
+    const feedback = actionFeedback(before, run, next);
+    if (feedback) {
+      const area: GameReceipt["area"] = next.type === "choose-reward" ? "journey" : next.type === "free-rest" || next.type === "free-upgrade" ? "free" : "shop";
+      gameFeedback = { area, result: feedback };
+    } else if (next.type !== "apply-quote" && next.type !== "open-archive") gameFeedback = null;
+    if (before.phase !== run.phase || before.node !== run.node) selectedReward = null;
+    if (feedback && (next.type === "upgrade-card" || next.type === "free-upgrade")) selectedUpgrade = null;
     if (before.node === "N1" && before.phase === "battle") {
       if (next.type === "play-card" && tutorialStep < 3) tutorialStep = 3;
       if (next.type === "end-turn" || run.phase !== "battle") tutorialStep = 4;
@@ -235,8 +267,9 @@ function action(next: RunAction): void {
       if (hand) hand.scrollLeft = 0;
     }
     if (changed) window.scrollTo({ top: 0, behavior: "auto" });
+    else if (feedback) app.querySelector<HTMLElement>(`[data-game-receipt="${gameFeedback?.area}"]`)?.scrollIntoView({ behavior: "auto", block: "nearest" });
     queueMarket();
-  } catch (error) { flash(errorMessage(error)); }
+  } catch (error) { gameFeedback = null; flash(errorMessage(error)); }
 }
 function queueMarket(): void {
   if (recovery || !run || run.phase !== "market" || marketLoading || marketError) return;
@@ -258,7 +291,7 @@ function loadInitial(): void {
 }
 function restoreReal(): void {
   if (!realSave) { flash("还没有真实旅程记录。"); return; }
-  cancelMarketRequest(); resetInitialCase();
+  cancelMarketRequest(); resetInitialCase(); resetGameUi();
   run = structuredClone(realSave.run); profile = structuredClone(realSave.profile); if (profile.enabled) profile.funding_exposure = mergeFundingExposures(profile.funding_exposure, fundingExposureArchive.entries); observationStartedAt = realSave.observationStartedAt; priorExposure = realSave.priorExposure ?? false; tutorialStep = restoredTutorial(run, realSave.tutorialStep);
   changeScreen(run.phase === "ended" ? "report" : "game"); ensureInitialCase(); queueMarket();
 }
@@ -272,7 +305,7 @@ function clearAllLocalRecords(): void {
     const message = outcome === "changed" ? "本机记录已变化，未开始清除；请重新读取后再确认。" : outcome === "failed-uncertain" ? "清除未完成，原记录也未能完全恢复；部分本机内容可能已变化。请先下载此前读取的备份。" : "未能完成清除，原记录已保留；请检查存储设置后重试。";
     enterRecovery(inspectLocalStorage(), backup, message, wasUncertain || outcome === "failed-uncertain"); render(); return;
   }
-  recovery = null; storageError = false; fundingExposureArchive = { version: 1, createdAt: Date.now(), entries: [] }; seenCases.clear(); cancelMarketRequest(); resetInitialCase(); resetJudgeDemos(); run = null; realSave = null; profile = emptyResearchProfile(); modal = null; changeScreen("intro"); flash("本地冒险记录已清除。");
+  recovery = null; storageError = false; fundingExposureArchive = { version: 1, createdAt: Date.now(), entries: [] }; seenCases.clear(); cancelMarketRequest(); resetInitialCase(); resetJudgeDemos(); resetGameUi(); run = null; realSave = null; profile = emptyResearchProfile(); modal = null; changeScreen("intro"); flash("本地冒险记录已清除。");
 }
 function settings(): void {
   const state = !recovery && run?.observationEnabled && profile.enabled;
@@ -348,7 +381,7 @@ function judge(): HTMLElement {
       const exposures = mergeFundingExposures(profile.funding_exposure, fundingExposureArchive.entries);
       const inheritedForecasts = cp.snapshot.node === "N4" || cp.snapshot.node === "N6" ? profile.forecasts.filter((forecast) => forecast.caseId === current.caseId && !forecast.withdrawn).map((forecast) => ({ ...forecast, priorExposure: true })) : [];
       const hadUnplacedForecast = !inheritedForecasts.length && profile.forecasts.some((forecast) => forecast.caseId === current.caseId && !forecast.withdrawn);
-      cancelMarketRequest(); resetInitialCase(); run = forkRun(current, cp.id); priorExposure = true;
+      cancelMarketRequest(); resetInitialCase(); resetGameUi(); run = forkRun(current, cp.id); priorExposure = true;
       profile = updateJourney({ ...emptyResearchProfile(current.observationEnabled, "fork"), funding_exposure: exposures, forecasts: inheritedForecasts }, run);
       selectedCard = null; changeScreen("game"); ensureInitialCase(); queueMarket();
       if (inheritedForecasts.length) flash("已保留原局事前预期作为模拟参考；分叉不作为可比的新观察。");
@@ -372,7 +405,7 @@ async function openDemo(path: "A" | "B"): Promise<void> {
     manifest = available;
     const generated = await makeDemoPath(path, available.cases[0]!.caseId);
     if (version !== demoVersion || screen !== "judge") return;
-    markExternalExposure(generated.caseId); cancelMarketRequest(); resetInitialCase();
+    markExternalExposure(generated.caseId); cancelMarketRequest(); resetInitialCase(); resetGameUi();
     run = generated; profile = updateJourney({ ...emptyResearchProfile(true, "demo"), funding_exposure: structuredClone(fundingExposureArchive.entries) }, generated); priorExposure = true; changeScreen("judge"); ensureInitialCase();
     flash(`模拟路径${path === "A" ? "甲" : "乙"}已生成，可查看依据或从检查点分叉。`);
   } catch (error) { if (version === demoVersion && screen === "judge") flash(`生成模拟路径失败：${errorMessage(error)}`); }
@@ -421,13 +454,14 @@ function snapshotsEqual(first: StorageSnapshot, second: StorageSnapshot): boolea
   return first.save === second.save && first.seen === second.seen && first.exposure === second.exposure;
 }
 function enterRecovery(read: StorageRead, backup?: StorageSnapshot | null, message: string | null = null, uncertain = false): void {
-  cancelMarketRequest(); resetInitialCase();
+  cancelMarketRequest(); resetInitialCase(); resetGameUi();
   const current = read.kind === "unavailable" ? null : read.snapshot;
   recovery = { current, backup: backup ?? current, issues: read.kind === "recovery" ? read.issues : [], summary: uncertain ? null : read.kind === "ready" ? read.save : read.kind === "recovery" ? read.summary : null, unavailable: read.kind === "unavailable", uncertain, message };
   run = null; realSave = null; profile = emptyResearchProfile(false); screen = "intro"; modal = null;
 }
 /** Validate all three records before any migration, expiration or save. */
 function restoreStoredState(read: StorageRead): void {
+  resetGameUi();
   if (read.kind === "unavailable") { enterRecovery(read); return; }
   if (read.kind === "recovery") {
     const saved = read.summary;
@@ -511,7 +545,7 @@ function replaceRecoveredRun(enabled: boolean): void {
   }
   recovery = null; storageError = false; cancelMarketRequest(); resetInitialCase(); resetJudgeDemos();
   run = nextRun; realSave = nextSave; profile = nextProfile; seenCases = new Set(); fundingExposureArchive = { version: 1, createdAt: now, entries: [] };
-  observationStartedAt = now; priorExposure = false; tutorialStep = 0; selectedCard = null; selectedRetain = null; selectedUpgrade = null; battleFeedback = ""; entryCents = 0; reserveCents = 0; modal = null;
+  resetGameUi(); observationStartedAt = now; priorExposure = false; tutorialStep = 0; entryCents = 0; reserveCents = 0; modal = null;
   changeScreen("game"); ensureInitialCase();
 }
 function recoveryView(): HTMLElement {
@@ -542,7 +576,7 @@ function render(preserve = true): void {
   else if (screen === "report") content = report();
   else if (screen === "judge") content = judge();
   else if (screen === "d1" || screen === "d2") content = h("div", { class: "app-shell" }, topbar(), screen === "d1" ? researchUI.renderFunding() : researchUI.renderHistory());
-  else content = h("div", null, h("div", { class: "app-shell" }, topbar()), gameView({ run, initialCase, initialCaseError, initialCaseLoading, retryInitialCase, selectedCard, selectedRetain, selectedUpgrade, entryCents, reserveCents, marketLoading, marketError, battleFeedback, tutorialStep, action, selectCard: (id) => { selectedCard = id; if (id && run?.node === "N1" && tutorialStep < 2) { tutorialStep = 2; save(); } render(); }, selectRetain: (id) => { selectedRetain = id; render(); }, selectUpgrade: (id) => { selectedUpgrade = id; render(); }, setEntry: (amount, redraw) => { entryCents = amount; if (redraw) render(); }, setReserve: (amount) => { reserveCents = amount; }, retryMarket, extraCamp: () => researchUI.campExtras(), openReport: () => changeScreen("report"), openTask: (task) => changeScreen(task), archiveShown: (caseId) => { if (run?.source === "real") markNaturalArchiveSeen(caseId); else markExternalExposure(caseId); }, nextTutorial: () => setTutorialStep(tutorialStep + 1), skipTutorial: () => setTutorialStep(4), openPile, openEnemyPlan }));
+  else content = h("div", null, h("div", { class: "app-shell" }, topbar()), gameView({ run, initialCase, initialCaseError, initialCaseLoading, retryInitialCase, selectedCard, selectedRetain, selectedUpgrade, selectedReward, entryCents, reserveCents, marketLoading, marketError, battleFeedback, gameFeedback, tutorialStep, action, selectCard: (id) => { selectedCard = id; if (id && run?.node === "N1" && tutorialStep < 2) { tutorialStep = 2; save(); } render(); }, selectRetain: (id) => { selectedRetain = id; render(); }, selectUpgrade: (id) => { selectedUpgrade = id; render(); }, selectReward, setEntry: (amount, redraw) => { entryCents = amount; if (redraw) render(); }, setReserve: (amount) => { reserveCents = amount; }, retryMarket, extraCamp: () => researchUI.campExtras(), openReport: () => changeScreen("report"), openTask: (task) => changeScreen(task), archiveShown: (caseId) => { if (run?.source === "real") markNaturalArchiveSeen(caseId); else markExternalExposure(caseId); }, nextTutorial: () => setTutorialStep(tutorialStep + 1), skipTutorial: () => setTutorialStep(4), openPile, openEnemyPlan }));
   content.inert = !!modal;
   const wrapper = h("div", { class: `adventure${screen === "game" && run?.phase === "battle" ? " battle-active" : ""}` }, content, storageError ? h("div", { class: "toast", role: "status" }, "浏览器无法保存进度，请检查本地存储设置。") : null, toastMessage ? h("div", { class: "toast", role: "status" }, toastMessage) : null, modal);
   app.replaceChildren(wrapper);

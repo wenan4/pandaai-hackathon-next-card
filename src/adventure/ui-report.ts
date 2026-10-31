@@ -189,8 +189,8 @@ function savedFundingReview(attempt: FundingAttempt, run: Run): HTMLElement {
 export function reportView(ctx: ReportContext): HTMLElement {
   const { run, profile } = ctx;
   const active = run.status === "active";
-  const ending = active ? "旅程中的小发现" : run.status === "cleared" ? "灯火已点亮" : run.status === "returned" ? "带着收获返程" : "旅程暂时停在这里";
-  const subtitle = active ? `现在位于${nodeNames[run.node]}，随时可以继续。` : run.status === "cleared" ? "你完成了守灯者的挑战。" : run.status === "returned" ? "这段旅程的发现，可以慢慢回看。" : "这次冒险结束了，带走的发现仍然属于你。";
+  const ending = active ? "旅程中的小发现" : run.status === "cleared" ? "灯火已点亮" : run.status === "returned" ? "带着收获返程" : "战斗失败，旅程暂告一段落";
+  const subtitle = active ? `现在位于${nodeNames[run.node]}，随时可以继续。` : run.status === "cleared" ? "你完成了守灯者的挑战。" : run.status === "returned" ? "这段旅程的发现，可以慢慢回看。" : "生命已降至 0。这次冒险结束了，带走的发现仍然属于你。";
   const highlights = gameplayHighlights(run).slice(0, 3);
   const observations = profile.enabled ? profile.journey_observations.slice(-2).reverse() : [];
   const plan = recommendationPlan(profile, taskAvailability(run, profile, ctx.manifest, ctx.wasCaseSeen));

@@ -52,6 +52,18 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); resetMarketCacheForTest(); });
 
 describe("compact journey report", () => {
+  it("identifies a defeat that ends immediately without any shares or quote wait", () => {
+    let run = createRun({ seed: 104, observationEnabled: false });
+    for (let turn = 0; turn < 20 && run.phase === "battle"; turn++) run = reduceRun(run, { type: "end-turn" });
+    expect(run.status).toBe("defeated"); expect(run.phase).toBe("ended"); expect(run.market.pending).toBeNull();
+    const view = reportView({ run, profile: emptyResearchProfile(false), manifest: null, wasCaseSeen: () => false, header: new FakeElement("header") as unknown as HTMLElement,
+      preferences: null, calibration: null, openTask: vi.fn(), saveReason: vi.fn(), resume: vi.fn(), newRun: vi.fn(), home: vi.fn() }) as unknown as FakeElement;
+    expect(visibleText(view)).toContain("战斗失败，旅程暂告一段落");
+    expect(visibleText(view)).toContain("生命已降至 0");
+    expect(visibleText(view)).not.toContain("等待报价");
+    expect(visibleText(view)).not.toContain("任务观察");
+  });
+
   it("shows real highlights and a single recommended entry while retaining other actions in disclosures", async () => {
     let run = await makeCalibrationDemo();
     run = reduceRun(run, { type: "submit-redemption", percent: 0 });

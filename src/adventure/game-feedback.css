@@ -1,0 +1,36 @@
+.game-receipt {
+  padding: 12px 14px;
+  border: 1px solid #bdd5b9;
+  border-left: 4px solid #4f805b;
+  border-radius: 10px;
+  background: #eff8e9;
+  color: #36563e;
+  font-size: .84rem;
+  line-height: 1.6;
+}
+
+.game-receipt p { margin: 4px 0 0; }
+.reward-selection { color: #49634b; font-size: .84rem; line-height: 1.6; }
+.reward-selection p { margin: 0; }
+.reward-choices .game-card.selected { border-color: #416f4e; outline-color: #416f4e; }
+.reward-swipe-hint { display: none; }
+
+@media (max-width: 700px) {
+  .reward-swipe-hint { display: block; color: #687b68; font-size: .75rem; }
+  .reward-choices.hand {
+    display: flex;
+    gap: 9px;
+    overflow-x: auto;
+    padding: 8px 3px 12px;
+    scroll-snap-type: x proximity;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  .reward-choices .game-card {
+    flex: 0 0 calc((100% - 9px) / 2);
+    min-width: 130px;
+    scroll-snap-align: start;
+  }
+  .reward-choices .card-description { font-size: .76rem; line-height: 1.45; }
+  .reward-actions .button { flex: 1 1 150px; }
+}

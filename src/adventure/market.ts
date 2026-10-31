@@ -67,6 +67,7 @@ const base = import.meta.env.BASE_URL;
 let initial: Promise<MarketManifest> | undefined;
 const initialCases = new Map<string, Promise<MarketInitialCase>>();
 const quotes = new Map<string, Promise<MarketQuote>>();
+const rejectedQuotes = new Set<string>();
 const research = new Map<string, Promise<ResearchMarketCase>>();
 
 export class MarketLockedError extends Error {}
@@ -90,8 +91,8 @@ function validSeries(series: MarketSeries, endDate: string): boolean {
 function onlyKeys(value: object, allowed: readonly string[]): boolean {
   return Object.keys(value).every((key) => allowed.includes(key));
 }
-async function fetchJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${base}data/adventure/${path}`);
+async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${base}data/adventure/${path}`, init);
   if (!response.ok) throw new MarketDataError(`无法加载市场数据（${response.status}），可重试`);
   return await response.json() as T;
 }
@@ -144,16 +145,24 @@ export function loadMarketStage(caseId: string, stage: MarketStage, unlocked: bo
   const key = `${caseId}/${stage}`;
   let pending = quotes.get(key);
   if (!pending) {
-    pending = fetchJson<MarketQuote>(`stages/${key}.json`).then((quote) => {
+    pending = fetchJson<MarketQuote>(`stages/${key}.json`, rejectedQuotes.has(key) ? { cache: "no-store" } : undefined).then((quote) => {
       if (quote.caseId !== caseId || quote.step !== stage || !validDate(quote.date) || !positiveInteger(quote.price)) throw new MarketDataError("阶段报价无效");
       const closing = stage === "t1" || stage === "t2" || stage === "t3";
       if (closing && (!quote.segment || !validSeries(quote.segment, quote.date) || quote.segment.dates.at(-1) !== quote.date || quote.segment.asset.at(-1) !== quote.price)) throw new MarketDataError("阶段历史片段无效");
       if (!closing && quote.segment) throw new MarketDataError("执行价文件不应包含历史片段");
+      rejectedQuotes.delete(key);
       return quote;
     }).catch((error: unknown) => { quotes.delete(key); throw error; });
     quotes.set(key, pending);
   }
   return pending;
+}
+
+/** Discard only a quote rejected by the reducer; retry the same locked stage from the source. */
+export function discardRejectedMarketStage(caseId: string, stage: MarketStage): void {
+  const key = `${caseId}/${stage}`;
+  quotes.delete(key);
+  rejectedQuotes.add(key);
 }
 
 /** The fixed schedule and initial hypothesis must already be locked. */
@@ -176,4 +185,4 @@ export function loadResearchCase(caseId: string, locked: boolean): Promise<Resea
 }
 
 /** Test helper, not used to alter the saved observation/exposure history. */
-export function resetMarketCacheForTest(): void { initial = undefined; initialCases.clear(); quotes.clear(); research.clear(); }
+export function resetMarketCacheForTest(): void { initial = undefined; initialCases.clear(); quotes.clear(); rejectedQuotes.clear(); research.clear(); }
