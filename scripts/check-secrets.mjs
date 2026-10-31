@@ -6,9 +6,10 @@
 import { execSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const target = process.argv[2];
-const root = new URL("..", import.meta.url).pathname;
+const root = fileURLToPath(new URL("..", import.meta.url));
 
 // 只在构建产物里查关键字：仓库文档里讨论 token / password 是正常的
 const KEYWORDS = [/PANDA_/, /DEFAULT_PASSWORD/, /password/i, /\btoken\b/i];

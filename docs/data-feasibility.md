@@ -17,7 +17,7 @@
 | 停牌 | 停牌日**有行**：`trade_status = 1`，`volume = 0`，价格沿用前值。正常交易日 `trade_status = 0`。 |
 | 退市 | 退市股的历史行情保留到退市前一天，`get_stock_detail(status=0)` 能列出退市股。用点时成分股就能避免幸存者偏差。 |
 | 单次跨度 | 起止不能超过 5 年（错误码 100008）。分两段请求后拼接，行数与交易日历完全一致。 |
-| 速度 | 一次请求 50 只股票 × 5 年前复权日线：2.6 秒，约 6 万行。单只循环约 2 秒一只，**要批量请求**。没遇到限流。 |
+| 速度与限流 | 一次请求 50 只股票 × 5 年前复权日线：2.6 秒，约 6 万行。单只循环约 2 秒一只，**要批量请求**。**有每分钟请求次数上限**：短时间内连续发几十个请求会报“每分钟请求次数超限”，`scripts/pd_common/data.py` 遇到时会等 61 秒再重试。 |
 | 公开展示 | **尚未获得答复，暂按最保守方式处理**：前端只放归一化曲线（起点 = 100）和派生统计，不放原始行情表。 |
 | QuantSkills | `quantskills/skill-quant-research` **存在**，GPL-3.0。同一组织下还有 `skill-pandadata-api` 等。只作参考，不要把代码拷进本仓库（GPL 传染）。 |
 
@@ -43,13 +43,13 @@ pd = login()                          # 读 .env 的 PANDA_USER / PANDA_PASS（�
 | `get_index_weights` | `index_symbol`、起止日期 | index_symbol, stock_symbol, date, weight | 每个交易日一份快照 |
 | `get_index_detail` | `status=1` | symbol, name, listed_date … | 1855 个在用指数，找基准代码用 |
 | `get_industry_detail` | `level="L1"`，`reference="sws_2021"` | industry_code, industry_name | 申万一级 31 个 |
-| `get_industry_constituents` | `industry_code`、`level`、`date` | stock_symbol, in_date, out_date, l1 / l2 / l3 code 和名称 | 带纳入 / 剔除日期，可按点时口径还原 |
+| `get_industry_constituents` | `industry_code`、`level`、`date` | stock_symbol, in_date, out_date, l1 / l2 / l3 code 和名称 | 只传 `level="L1"` 一次就能取到全市场 5232 只股票的归属。`out_date` 全为空，**只有当前分类，没有历史归属** |
 | `get_adj_factor` | `symbol`、起止日期 | ex_date, announcement_date, ex_factor, ex_cum_factor | 识别送转和除权日用 |
 | `get_st_list` | 起止日期 | symbol, date, is_st | 每股每日一行，全市场一年约 135 万行，按需带 `symbol` 过滤 |
 | `get_suspended_list` | 起止日期 | symbol, date, is_suspended | 同上 |
 | `get_stock_status_change` | 起止日期 | symbol, change_date, type, description | ST 戴帽 / 摘帽等事件 |
 | `get_stock_detail` | `status`（1 在市 / 0 退市）、`date` | symbol, name, listed_date, de_listed_date, board_type … | |
-| `get_trade_cal` | 起止日期、`is_trading_day=1` | — | 交易日历 |
+| `get_trade_cal` | 起止日期、`is_trading_day=1` | nature_date, next_trade_date, pretrade_date, is_trade | 当天日期在 `nature_date`，**第一列是 `next_trade_date`，别取错** |
 | `get_last_trade_date` | — | `"20261030"` | 数据更新到 2026-10-30 |
 
 ### 不可用或不要用
@@ -70,6 +70,7 @@ pd = login()                          # 读 .env 的 PANDA_USER / PANDA_PASS（�
 4. **成交量口径**：单位是股；前复权数据里成交量没有调整。算量比用原始 `volume`，**要排除回看窗口内有送转除权的记录**（`get_adj_factor` 里 `ex_factor` 明显大于 1，比如 ≥ 1.1）：送转会让股本突增，产生假的“放量”。也可以用成交额 `amount` 复核，它不受送转影响。
 5. **停牌 / 退市 / ST / 涨跌停**：
    - 停牌日 `trade_status = 1`、`volume = 0`：算 20 日均量时**跳过停牌日**；T+1 停牌就买不进，这条记录按“执行日停牌”排除。
+   - 约 1.2% 的行 `trade_status` 为空（2020–2026 年沪深300 + 中证500 样本里约 2 万行），绝大多数有成交量。约定：为空且成交量 > 0 视为正常交易，否则视为停牌。
    - 涨停买不进：T+1 `open >= limit_up` 时视为买不进，按“开盘涨停”排除。例：2024-10-08 沪深300 里有 162 只开盘即涨停。
    - 跌停卖不出：T+20 `close <= limit_down` 时记录下来，按冻结规则处理（建议仍按收盘价计，并标注“退出日跌停”）。
    - ST：用 `get_st_list` 在信号日判断，ST 股排除，并记录排除数量。
@@ -91,6 +92,6 @@ pd = login()                          # 读 .env 的 PANDA_USER / PANDA_PASS（�
 
 - 前复权以最新日为锚，绝对价位不是点时价格；收益率不受影响。
 - 成交量未按送转调整，靠排除送转窗口来规避。
-- 行业基准用中证全指一级行业，和申万口径不完全一致。
+- 行业基准用中证全指一级行业，和申万口径不完全一致；申万归属只有当前分类，回溯历史时用的是今天的行业划分。
 - 公开展示许可还没确认，暂按最保守方式处理。
 - 数据截至 2026-10-30。
