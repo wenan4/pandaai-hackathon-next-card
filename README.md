@@ -1,4 +1,18 @@
-# 下一张牌 · Next Card
+# 下一张牌 · 晨光小城（v0.4.1 MVP）
+
+阳光童话风格的手机卡牌冒险：打出组合、获得新牌、安排途中补给与历史派生契约，随后用实际研究操作认识自己的信息使用方式，并进入有依据的下一步练习。
+
+此分支提供已通过本地完整流程验证的 v0.4.1 MVP。新版默认入口为首页；`?legacy=1` 保留 v0.3，旧版评委面板用 `?legacy=1&judge=1`。两个版本的存档独立。新评委面板在旅程中的顶部导航打开，包含两条模拟路径与合法分叉。
+
+- 修订规格：[PRD v0.4.1](docs/PRD-v0.4.md)，§17 明确知识、研究过程、兴趣、学习需求和任务后画像更新。
+- 实际验证：[MVP 验证记录](docs/MVP-VERIFICATION.md)。未通过浏览器验证的能力不作为完成声明。
+- 美术与生成提示：[美术来源](docs/adventure-art.md)。本次生成原创插画，用户已指定明亮、亲切的大众视觉方向。
+- 数据口径：[冒险数据说明](docs/adventure-data.md)。只发布派生数据，前端不需要 Panda Data 账号。
+- 安装与运行：`npm ci`、`npm run dev`；发布检查：`npm run build:pages`。
+
+游戏中的金币与契约只用于虚构冒险；报告限定于具体任务与本局观察，不构成稳定人格识别、现实风险等级或投资建议。MVP 无需登录。
+
+## 以下为保留的 v0.3 文档
 
 > 听到一个说法，先决定翻哪张牌。
 
@@ -6,7 +20,7 @@ PandaAI「苏客松」赛道作品。三轮翻牌短决策，从用户怎样找�
 
 纯前端 H5，手机竖屏优先。**无账号系统，无需登录，无测试账号。** 评审时不需要 Panda Data 账号：前端只读仓库里预生成的静态 JSON。页面里的代币是虚拟的，内容是研究练习，不构成投资建议。
 
-- 在线地址：待部署后填写（YOU-146）；评委面板在地址后加 `?judge=1`
+- v0.3 入口：本站地址后加 `?legacy=1`；旧版评委面板加 `?legacy=1&judge=1`
 - 项目说明：[docs/PROJECT.md](docs/PROJECT.md)
 - 第三方组件、AI 工具与赛前成果：[docs/CREDITS.md](docs/CREDITS.md)
 - 结构化结果与接入构想：[docs/structured-output.md](docs/structured-output.md)、[docs/pandaai-integration.md](docs/pandaai-integration.md)

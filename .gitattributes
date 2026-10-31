@@ -1,0 +1,2 @@
+# These derived snapshots have byte-level SHA-256 integrity records.
+public/data/adventure/**/*.json text eol=lf

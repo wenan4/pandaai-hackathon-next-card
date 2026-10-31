@@ -1,0 +1,318 @@
+import "./adventure.css";
+import { h, type Child } from "../ui/dom";
+import { createRun, forkRun, pendingMarketStep, reduceRun } from "./engine";
+import { CARDS, ENEMIES } from "./content";
+import { loadMarketInitial, loadMarketStage, loadResearchCase, type MarketManifest } from "./market";
+import { addUserReason, compareSchedule, emptyResearchProfile, markHistoryHelp, recommendResearch, revokeResearch, setHelpPreference, setResearchGoal, showHistoryEvidence, startHistory, submitHistory, updateJourney, type Direction, type Goal, type HelpPreference, type Reason, type ResearchProfile } from "./research";
+import type { Run, RunAction } from "./types";
+import { button, coins, deckSummary, details, moneyHistory, note, pill } from "./ui-components";
+import { gameView, nodeNames } from "./ui-game";
+import { ResearchUI } from "./ui-research";
+import { makeDemoPath } from "./ui-demo";
+import { mergeFundingExposures, parseFundingExposureArchive, type FundingExposureArchive } from "./ui-exposure";
+
+const app = document.querySelector<HTMLDivElement>("#app")!;
+const SAVE_KEY = "nextcard:adventure:v0.4";
+const SEEN_KEY = `${SAVE_KEY}:seen-cases`;
+const FUNDING_EXPOSURE_KEY = `${SAVE_KEY}:funding-exposure`;
+const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+type Screen = "intro" | "game" | "report" | "d1" | "d2" | "judge";
+interface Save { schema: "nextcard-adventure-save-v1"; savedAt: number; observationStartedAt: number; priorExposure?: boolean; run: Run; profile: ResearchProfile }
+let run: Run | null = null;
+let profile: ResearchProfile = emptyResearchProfile();
+let realSave: Save | null = null;
+let observationStartedAt = Date.now();
+let priorExposure = false;
+let seenCases = new Set<string>();
+let fundingExposureArchive: FundingExposureArchive = { version: 1, createdAt: Date.now(), entries: [] };
+let fundingArchiveExpired = false;
+let screen: Screen = "intro";
+let manifest: MarketManifest | null = null;
+let initialError: string | null = null;
+let marketError: string | null = null;
+let marketLoading = false;
+let initialLoading = false;
+let storageError = false;
+let selectedCard: string | null = null;
+let selectedRetain: string | null = null;
+let selectedUpgrade: string | null = null;
+let battleFeedback = "";
+let entryCents = 0;
+let reserveCents = 0;
+let modal: HTMLElement | null = null;
+let toastMessage = "";
+let toastTimer = 0;
+let demoLoading = false;
+let judgeStudyLoading = false;
+let judgeStudy: { label: string; status: string; recommendation: string; help: string }[] | null = null;
+let requestVersion = 0;
+let idCounter = 0;
+const uid = (prefix: string): string => `${prefix}-${Date.now().toString(36)}-${++idCounter}`;
+const errorMessage = (error: unknown): string => error instanceof Error ? error.message : "加载未完成，请重试。";
+
+function readSave(): Save | null {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY); if (!raw) return null;
+    const data: unknown = JSON.parse(raw);
+    if (!data || typeof data !== "object") return null;
+    const saved = data as Partial<Save>;
+    if (saved.schema !== "nextcard-adventure-save-v1" || saved.run?.version !== "0.4.1" || saved.profile?.version !== "research-v1" || typeof saved.observationStartedAt !== "number" || typeof saved.savedAt !== "number") return null;
+    if (!Array.isArray(saved.profile.funding_exposure)) saved.profile.funding_exposure = [];
+    if (!saved.profile.source) saved.profile.source = saved.run.source;
+    if (Date.now() - saved.observationStartedAt > RETENTION_MS && saved.profile.enabled) {
+      saved.profile = revokeResearch(saved.profile);
+      saved.run.observationEnabled = false;
+      clearFundingExposures();
+    }
+    return saved as Save;
+  } catch { storageError = true; return null; }
+}
+function save(): boolean {
+  if (!run || run.source !== "real") return true;
+  const data: Save = { schema: "nextcard-adventure-save-v1", savedAt: Date.now(), observationStartedAt, priorExposure, run, profile };
+  realSave = data;
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(data)); return true; } catch { storageError = true; return false; }
+}
+function rememberFundingExposures(next: ResearchProfile): void {
+  if (run?.source !== "real" || !next.enabled || !next.funding_exposure.length) return;
+  if (Date.now() - fundingExposureArchive.createdAt >= RETENTION_MS) fundingExposureArchive = { version: 1, createdAt: Date.now(), entries: [] };
+  if (!fundingExposureArchive.entries.length) fundingExposureArchive.createdAt = Date.now();
+  fundingExposureArchive.entries = mergeFundingExposures(fundingExposureArchive.entries, next.funding_exposure);
+  try { localStorage.setItem(FUNDING_EXPOSURE_KEY, JSON.stringify(fundingExposureArchive)); } catch { storageError = true; }
+}
+function clearFundingExposures(): boolean {
+  try { localStorage.removeItem(FUNDING_EXPOSURE_KEY); } catch { storageError = true; return false; }
+  fundingExposureArchive = { version: 1, createdAt: Date.now(), entries: [] };
+  return true;
+}
+function setProfile(next: ResearchProfile): void { profile = next; rememberFundingExposures(profile); save(); render(); }
+function flash(message: string): void {
+  toastMessage = message; window.clearTimeout(toastTimer); render();
+  toastTimer = window.setTimeout(() => { toastMessage = ""; render(); }, 4500);
+}
+function changeScreen(next: Screen): void {
+  if ((screen === "d1" || screen === "d2") && next !== screen) researchUI.leave();
+  screen = next; selectedCard = null; modal = null; render(false); window.scrollTo({ top: 0, behavior: "auto" });
+}
+function showDialog(title: string, body: Child, actions: Child[]): void {
+  const dialog = h("section", { class: "modal stack", role: "dialog", "aria-modal": "true", "aria-label": title }, h("h2", null, title), body, h("div", { class: "button-row" }, actions));
+  modal = h("div", { class: "modal-backdrop", onclick: (e: Event) => { if (e.target === e.currentTarget) { modal = null; render(); } } }, dialog);
+  render(); window.setTimeout(() => dialog.querySelector<HTMLButtonElement>("button")?.focus(), 0);
+}
+function closeDialog(): void { modal = null; render(); }
+function askNewRun(enabled: boolean): void {
+  if (realSave) {
+    showDialog("开启新的旅程？", h("p", { class: "hint" }, "已保存的真实冒险进度会被新旅程替换。"), [button("开始新旅程", () => { modal = null; startRun(enabled); }, "gold"), button("保留已有旅程", closeDialog, "secondary")]);
+  } else startRun(enabled);
+}
+function cancelMarketRequest(): void { requestVersion++; marketLoading = false; marketError = null; }
+/** External displays reveal a case independently of this real run's natural timeline. */
+function markExternalExposure(caseId: string): void {
+  seenCases.add(caseId);
+  if (realSave?.run.caseId === caseId && realSave.run.status === "active") {
+    realSave = { ...realSave, priorExposure: true };
+    if (run?.source === "real" && run.id === realSave.run.id) priorExposure = true;
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify(realSave)); } catch { storageError = true; }
+  }
+  try { localStorage.setItem(SEEN_KEY, JSON.stringify([...seenCases])); } catch { storageError = true; }
+}
+function startRun(enabled: boolean): void {
+  cancelMarketRequest();
+  const caseId = manifest?.cases.find((item) => !seenCases.has(item.caseId))?.caseId ?? manifest?.cases[0]?.caseId ?? "lantern-a";
+  priorExposure = seenCases.has(caseId);
+  run = createRun({ caseId, observationEnabled: enabled, source: "real", seed: Math.floor(Math.random() * 0x7fffffff) });
+  if (Date.now() - fundingExposureArchive.createdAt >= RETENTION_MS && !clearFundingExposures()) fundingExposureArchive = { version: 1, createdAt: Date.now(), entries: [] };
+  profile = { ...emptyResearchProfile(enabled), funding_exposure: enabled ? structuredClone(fundingExposureArchive.entries) : [] }; observationStartedAt = Date.now(); selectedCard = null; selectedUpgrade = null; battleFeedback = ""; entryCents = 0; reserveCents = 0;
+  save(); changeScreen("game");
+}
+function action(next: RunAction): void {
+  if (!run) return;
+  const previousPhase = run.phase; const previousNode = run.node;
+  const before = run;
+  try {
+    run = reduceRun(run, next);
+    if (next.type === "play-card" && before.battle) {
+      const card = before.deck.find((item) => item.instanceId === next.cardInstanceId);
+      const name = card ? CARDS[card.cardId].name : "卡牌";
+      if (!run.battle) battleFeedback = `${name} · 击败了${ENEMIES[before.battle.enemy.id].name}！`;
+      else {
+        const hpLoss = before.battle.enemy.hp - run.battle.enemy.hp;
+        const shieldLoss = before.battle.enemy.shield - run.battle.enemy.shield;
+        const shieldGain = run.battle.shield - before.battle.shield;
+        const growth = run.battle.capacity - before.battle.capacity;
+        const effects = [hpLoss > 0 ? `对手生命 −${hpLoss}` : "", shieldLoss > 0 ? `击破护盾 ${shieldLoss}` : "", shieldGain > 0 ? `获得护盾 ${shieldGain}` : "", growth > 0 ? `容量 +${growth}（下回合生效）` : ""].filter(Boolean);
+        battleFeedback = `${name} · ${effects.length ? effects.join(" · ") : card ? (card.upgraded ? CARDS[card.cardId].upgradedDescription : CARDS[card.cardId].description) : "已打出"}`;
+      }
+    } else if (next.type === "end-turn" && before.battle) {
+      const lost = Math.max(0, before.hp - run.hp); const intent = before.battle.enemy.intent;
+      battleFeedback = intent.kind === "attack" ? `对方攻击 ${intent.amount} · 生命减少 ${lost}` : `对方获得 ${intent.amount} 护盾`;
+    } else if (run.phase === "battle" && previousPhase !== "battle") battleFeedback = "";
+    researchUI.afterAction(next);
+    if (run.source === "real" && next.type === "apply-quote" && ["t1", "t2", "t3"].includes(next.quote.step)) {
+      seenCases.add(run.caseId); try { localStorage.setItem(SEEN_KEY, JSON.stringify([...seenCases])); } catch { storageError = true; }
+    }
+    if (profile.enabled) profile = updateJourney(profile, run);
+    if (next.type === "play-card" || next.type === "end-turn") { selectedCard = null; selectedRetain = null; }
+    if (next.type === "purchase-attempted") flash("可用金币不足，这次购买没有完成。");
+    save();
+    if (run.phase === "ended") screen = "report";
+    const changed = previousPhase !== run.phase || previousNode !== run.node;
+    render(!changed);
+    if (changed) window.scrollTo({ top: 0, behavior: "auto" });
+    queueMarket();
+  } catch (error) { flash(errorMessage(error)); }
+}
+function queueMarket(): void {
+  if (!run || run.phase !== "market" || marketLoading || marketError) return;
+  const pending = pendingMarketStep(run); if (!pending) return;
+  const capturedRun = run; const version = ++requestVersion; marketLoading = true; render();
+  void loadMarketStage(pending.caseId, pending.stage, pending.unlocked).then((quote) => {
+    if (version !== requestVersion || run !== capturedRun) return;
+    marketLoading = false; action({ type: "apply-quote", quote });
+  }).catch((error: unknown) => {
+    if (version !== requestVersion || run !== capturedRun) return;
+    marketLoading = false; marketError = errorMessage(error); render();
+  });
+}
+function retryMarket(): void { marketError = null; queueMarket(); render(); }
+function loadInitial(): void {
+  if (initialLoading) return;
+  initialLoading = true; initialError = null; render();
+  void loadMarketInitial().then((data) => { manifest = data; initialLoading = false; render(); }).catch((error: unknown) => { initialLoading = false; initialError = errorMessage(error); render(); });
+}
+function restoreReal(): void {
+  if (!realSave) { flash("还没有真实旅程记录。"); return; }
+  cancelMarketRequest();
+  run = structuredClone(realSave.run); profile = structuredClone(realSave.profile); if (profile.enabled) profile.funding_exposure = mergeFundingExposures(profile.funding_exposure, fundingExposureArchive.entries); observationStartedAt = realSave.observationStartedAt; priorExposure = realSave.priorExposure ?? false;
+  changeScreen(run.phase === "ended" ? "report" : "game"); queueMarket();
+}
+function settings(): void {
+  const state = run?.observationEnabled && profile.enabled;
+  const body = h("div", { class: "stack" }, h("p", { class: "hint" }, "进度保存在这台设备的浏览器中，不会默认上传。观察从开启起最多保存 30 天，过期后移除观察并保留游戏进度。"),
+    h("p", { class: "hint" }, state ? "当前：生成本局观察。" : "当前：只玩游戏，不保存观察。"),
+    state ? button("撤销观察并删除观察记录", () => showDialog("撤销本局观察？", h("p", { class: "hint" }, run?.source === "real" ? "目标、预期、感受、原因、研究观察与跨局提示暴露记录将删除；冒险进度会保留。" : "当前模拟的观察会删除；真实旅程与其观察保留。"), [button("确认撤销", () => { if (run?.source === "real" && !clearFundingExposures()) { flash("未能删除本地观察记录，请检查存储设置后重试。"); return; } profile = revokeResearch(profile); if (run) run.observationEnabled = false; modal = null; const saved = save(); flash(saved ? "观察已撤销，游戏进度保留。" : "已停止观察，但未能更新本地存档，请检查存储设置。"); }, "danger"), button("返回", closeDialog, "secondary")]), "secondary") : null,
+    button("清除全部本地记录", () => showDialog("清除这台设备的冒险记录？", h("p", { class: "hint" }, "当前冒险与本局观察会删除，此操作无法撤销。旧版 v0.3 存档不受影响。"), [button("确认清除", () => { try { localStorage.removeItem(SAVE_KEY); localStorage.removeItem(SEEN_KEY); localStorage.removeItem(FUNDING_EXPOSURE_KEY); } catch { storageError = true; flash("未能清除浏览器本地记录，请检查存储设置后重试。"); return; } fundingExposureArchive = { version: 1, createdAt: Date.now(), entries: [] }; seenCases.clear(); cancelMarketRequest(); run = null; realSave = null; profile = emptyResearchProfile(); modal = null; changeScreen("intro"); flash("本地冒险记录已清除。"); }, "danger"), button("返回", closeDialog, "secondary")]), "danger"));
+  showDialog("旅程与隐私设置", body, [button("完成", closeDialog, "secondary")]);
+}
+function dataInfo(): void {
+  const source = manifest ? h("div", { class: "stack" }, h("p", { class: "hint" }, manifest.source), h("p", { class: "hint" }, `数据截至 ${manifest.dataAsOf}；${manifest.adjustment}`), h("p", { class: "hint" }, manifest.selection), ...manifest.limitations.map((item) => h("p", { class: "fineprint" }, item))) : h("p", { class: "hint" }, "数据目录尚未加载。可返回后重试。\n");
+  showDialog("关于这段历史", h("div", { class: "stack" }, source, h("p", { class: "hint" }, "契约使用历史派生价格；起点与未来分段加载。每次回收按下一可用开盘报价执行。静态数据分段旨在避免误用，不是保密机制。固定历史样本不代表未来表现或现实投资建议。")), [button("知道了", closeDialog, "secondary")]);
+}
+function topbar(): HTMLElement {
+  return h("header", { class: "topbar" }, h("button", { type: "button", class: "brand", onclick: () => changeScreen("intro"), "aria-label": "回到冒险首页" }, h("span", { class: "brand-mark", "aria-hidden": "true" }, "灯"), h("span", null, h("span", { class: "brand-name" }, "下一张牌"), h("span", { class: "brand-sub" }, "A LITTLE JOURNEY"))),
+    h("nav", { class: "top-actions", "aria-label": "功能导航" }, run ? h("button", { type: "button", class: "link-button back-link", onclick: () => changeScreen(run?.phase === "ended" ? "report" : "game") }, run.phase === "ended" ? "旅程报告" : "回到旅程") : null, run && profile.enabled ? h("button", { type: "button", class: "link-button prefs-link", onclick: () => showDialog("目标与帮助（可跳过）", preferencePanel(), [button("完成", closeDialog, "secondary")]) }, "目标与帮助") : null, h("button", { type: "button", class: "link-button data-link", onclick: dataInfo }, "数据说明"), run ? h("button", { type: "button", class: "link-button judge-link", onclick: () => changeScreen("judge") }, "评委面板") : null, h("button", { type: "button", class: "link-button settings-link", onclick: settings }, "设置")));
+}
+function intro(): HTMLElement {
+  return h("div", { class: "intro" }, topbar(), h("main", { class: "intro-hero", id: "main-content" }, h("div", { class: "intro-content" }, h("div", { class: "intro-kicker" }, "一段轻盈的卡牌冒险"), h("h1", null, "下一张牌", h("span", null, "晨光小城 · 守灯之旅")), h("p", { class: "intro-lead" }, "带上你的牌组，穿过晨雾渐散的小城。一路战斗、收集新牌、安排补给，去寻回那盏温暖的灯。"),
+    h("div", { class: "intro-actions" }, run ? button(run.phase === "ended" ? "查看上次旅程" : "继续上次旅程", () => { changeScreen(run?.phase === "ended" ? "report" : "game"); queueMarket(); }, "gold", false, "resume") : null,
+      button(run ? "开始新旅程 · 生成观察" : "开始旅程 · 生成本局观察", () => askNewRun(true), "", false, "start-observation"), button("只玩游戏", () => askNewRun(false), "secondary", false, "start-game-only")),
+    h("p", { class: "intro-note" }, "可选生成本局观察与研究任务。记录仅保存在本机，随时撤销；只玩游戏不记录兴趣、感受或原因。"),
+    initialError ? h("div", { class: "notice error", style: "margin-top:14px" }, initialError, " ", button("重试数据", loadInitial, "small secondary", initialLoading)) : null)),
+    h("div", { class: "intro-bottom" }, h("div", { class: "intro-feature" }, h("strong", null, "出牌，找到你的组合"), h("span", null, "读懂对手意图，拿新牌，走出自己的打法。")), h("div", { class: "intro-feature" }, h("strong", null, "经营，一路保有选择"), h("span", null, "补给、卡牌与契约共享同一段旅程。")), h("div", { class: "intro-feature" }, h("strong", null, "回望，再试一种可能"), h("span", null, "观察只描述本局，下一步由你选择。"))), h("footer", { class: "footer" }, "虚拟金币不兑换现金 · 历史案例不代表未来 · 现实财务承受能力未评估"));
+}
+function preferencePanel(): HTMLElement {
+  const goal = profile.stated_interest.at(-1)?.goal ?? null; const help = profile.help_preference.at(-1)?.help ?? "hint";
+  return h("section", { class: "panel stack" }, h("h2", null, "下一步，你想探索什么？"), h("p", { class: "hint" }, "这是此刻的目标，可以跳过或随时修改，不是固定标签。"),
+    h("div", { class: "selection-row" }, ([ ["funding", "资金安排"], ["history", "历史比较"], ["idea", "验证一个想法"], ["none", "暂不选择"] ] as const).map(([id, label]) => h("button", { type: "button", class: `choice${(id === "none" ? goal === null : goal === id) ? " selected" : ""}`, "aria-pressed": String(id === "none" ? goal === null : goal === id), onclick: () => { setProfile(setResearchGoal(profile, uid("goal"), id === "none" ? null : id as Goal)); if (modal) showDialog("目标与帮助（可跳过）", preferencePanel(), [button("完成", closeDialog, "secondary")]); } }, label))),
+    h("p", { class: "hint strong" }, "希望怎样获得帮助？"), h("div", { class: "selection-row" }, ([ ["self", "自主尝试"], ["hint", "给我提示"], ["step", "分步说明"] ] as const).map(([id, label]) => h("button", { type: "button", class: `choice${help === id ? " selected" : ""}`, "aria-pressed": String(help === id), onclick: () => { setProfile(setHelpPreference(profile, uid("help"), id as HelpPreference)); if (modal) showDialog("目标与帮助（可跳过）", preferencePanel(), [button("完成", closeDialog, "secondary")]); } }, label))));
+}
+function report(): HTMLElement {
+  const current = run!; const rec = recommendResearch(profile); const active = current.status === "active"; const ending = active ? "营地里的小发现" : current.status === "cleared" ? "灯火已点亮" : current.status === "returned" ? "带着收获返程" : "旅程暂时停在这里";
+  const observations = profile.journey_observations.slice(0, 2);
+  const reasonEvidence = profile.journey_observations[0]?.evidence_ids[0];
+  const reasonSelect = h("select", { "aria-label": "补充我的原因" }, h("option", { value: "" }, "选择一个原因"), h("option", { value: "upgrade" }, "想留钱升级"), h("option", { value: "not_understood" }, "有些规则没看懂"), h("option", { value: "not_interested" }, "暂时不感兴趣"), h("option", { value: "autonomous" }, "想自主尝试"), h("option", { value: "other" }, "其他或不确定"));
+  return h("div", { class: "app-shell" }, topbar(), h("main", { class: "page-grid", id: "main-content" }, h("div", { class: "main-column" },
+    h("section", { class: "panel report-intro" }, h("div", { class: "report-seal", "aria-hidden": "true" }, "灯"), h("div", { class: "eyebrow" }, active ? "A PAUSE IN THE JOURNEY" : "JOURNEY COMPLETE"), h("h1", null, ending), h("p", null, active ? "先看看这一路留下的线索，也可以试一个短练习。完成后随时回到营地继续冒险。" : current.status === "cleared" ? "你带着一路收集的卡牌与选择，完成了守灯者的挑战。" : current.status === "returned" ? "每条归途都有意义。你可以回看这一段旅程，再决定下一步。" : "这一局的战斗到此结束，带走的发现仍然属于你。"), current.source !== "real" ? pill("模拟演示", "gold") : null),
+    h("section", { class: "panel stack" }, h("h2", null, active ? "目前的牌组" : "这一趟的牌组"), h("p", { class: "hint" }, `${active ? "当前生命" : "最终生命"} ${current.hp}/${current.maxHp} · ${current.deck.length} 张牌 · 可用金币 ${coins(current.wallet.cashCents)}`), deckSummary(current), details("查看金币往来", moneyHistory(current))),
+    profile.enabled ? h("section", { class: "panel stack" }, h("div", { class: "panel-head" }, h("div", null, h("h2", null, "本局观察"), h("p", { class: "hint" }, "只描述这次实际发生的选择，不给人贴标签。"))), observations.length ? observations.map((item) => h("div", { class: "observation" }, h("strong", null, item.text), h("p", null, item.limitations.join("；")))) : h("p", { class: "hint" }, "还没有足够的经营选择可供描述。你仍可自选研究起点。"),
+      details("查看依据与边界", h("div", { class: "stack" }, profile.journey_observations.map((item) => h("p", { class: "hint" }, `${item.text} 依据：${item.evidence_ids.join("、")}。${item.limitations.join("；")}。`)), h("p", { class: "hint" }, "现实财务承受能力未评估；单次游戏不能建立稳定交易类型。"))), researchUI.calibrationReport(),
+      reasonEvidence ? details("补充我的原因", h("p", { class: "hint" }, "你的补充会作为新记录保留，不改写原来发生的事。"), reasonSelect, button("保存补充", () => { const value = reasonSelect.value as Reason | ""; if (!value) { flash("请选择一个原因。"); return; } setProfile(addUserReason(profile, uid("reason"), reasonEvidence, value)); flash("已保存你的补充。"); }, "small secondary")) : null) : note("你选择了只玩游戏。旅程仍可回顾，也可以不保存观察地试试下面的练习。"),
+    profile.enabled ? preferencePanel() : null,
+    h("section", { class: "panel stack" }, h("div", { class: "eyebrow" }, "WHAT NEXT"), h("h2", null, "带着问题再走一步"), h("p", { class: "hint" }, profile.enabled ? rec.reason : "两个练习都可以尝试，过程不会保存为人物观察。"),
+      h("div", { class: "route-grid" }, h("div", { class: "route-card" }, h("div", { class: "task-title" }, h("span", { class: "task-badge" }, "D1"), h("h3", null, "资金安排台")), h("p", { class: "hint" }, "调整参与金额和回收比例，看看途中哪些采购仍能支付。"), button(rec.task_id === "D1" && profile.enabled ? "从这里开始 · 推荐" : "打开资金安排台", () => changeScreen("d1"), "secondary")),
+        h("div", { class: "route-card" }, h("div", { class: "task-title" }, h("span", { class: "task-badge" }, "D2"), h("h3", null, "历史对照台")), h("p", { class: "hint" }, "先固定日程，再比较同期基准与另一段历史。"), button(rec.task_id === "D2" && profile.enabled ? "从这里开始 · 推荐" : "打开历史对照台", () => changeScreen("d2"), "secondary")))),
+    profile.enabled ? details("知识与研究过程的依据", h("div", { class: "stack" }, profile.knowledge_observations.map((item) => h("p", { class: "hint" }, `${item.text}${item.evidence_ids.length ? ` 依据：${item.evidence_ids.join("、")}。` : ""}`)), h("p", { class: "fineprint" }, "本任务的一次观察不代表稳定能力；未观察不等于能力不足。"))) : null,
+    h("div", { class: "button-row" }, active ? button("返回营地", () => changeScreen("game"), "gold") : button("再来一局", () => askNewRun(profile.enabled), "gold"), active ? null : button("回到首页", () => changeScreen("intro"), "secondary"))), h("aside", { class: "side-column" }, h("section", { class: "panel stack" }, h("div", { class: "eyebrow" }, "YOUR JOURNEY"), h("h3", null, "留给自己的话"), h("p", { class: "hint" }, "输赢是游戏的一部分。不同安排对应不同机会，并不能判断一个人在现实中的财务能力。"), h("p", { class: "fineprint" }, "你可以修改目标、选择帮助方式，或直接开始新的冒险。")))), h("footer", { class: "footer" }, "历史只描述已经发生的片段，不预测未来。"));
+}
+function judge(): HTMLElement {
+  const current = run!;
+  const checkpoints = current.checkpoints.filter((cp) => ["submit-entry", "buy-archive", "open-archive", "submit-redemption"].includes(cp.action));
+  return h("div", { class: "app-shell" }, topbar(), h("main", { class: "page-grid", id: "main-content" }, h("div", { class: "main-column" }, h("section", { class: "panel stack" }, h("div", { class: "eyebrow" }, "JUDGE'S TABLE"), h("h2", null, "评委面板"), h("p", { class: "hint" }, "真实回放、预设模拟和从决策前状态重新出发的分叉，都会标明来源。后续失效的行动不会冒充真实记录。"), h("div", { class: "button-row" }, pill(current.source === "real" ? "真实记录" : current.source === "fork" ? "模拟 · 分叉" : "模拟 · 预设", current.source === "real" ? "blue" : "gold"), realSave && current.source !== "real" ? button("恢复真实旅程", restoreReal, "small secondary") : null)),
+    h("section", { class: "panel stack" }, h("h3", null, "两条模拟路径"), h("p", { class: "hint" }, "调用正式规则与分段行情生成；演示不是玩家的真实行为。"), h("div", { class: "button-row" }, button(demoLoading ? "正在生成…" : "路径甲 · 查看资料", () => void openDemo("A"), "secondary", demoLoading), button(demoLoading ? "正在生成…" : "路径乙 · 购买受限", () => void openDemo("B"), "secondary", demoLoading))),
+    h("section", { class: "panel stack" }, h("h3", null, "模拟不同研究表现与帮助"), h("p", { class: "hint" }, "固定相同案例与日程，比较独立完成、提示后完成和待核查三种模拟；不写入真实记录。"), button(judgeStudyLoading ? "正在准备对照…" : "生成研究对照", () => void compareJudgeStudy(), "small secondary", judgeStudyLoading), judgeStudy ? h("div", { class: "item-list" }, judgeStudy.map((item) => h("div", { class: "item" }, h("div", null, h("strong", null, item.label), h("p", null, `${item.status} · ${item.help}`), h("p", null, item.recommendation)), pill("模拟", "gold")))) : null),
+    h("section", { class: "panel stack" }, h("h3", null, "从关键选择前分叉"), h("p", { class: "hint" }, "选择一个检查点，回到当时的合法局面。分叉之后需要重新作选择，原记录不会覆盖。"), checkpoints.length ? h("div", { class: "item-list" }, checkpoints.map((cp) => h("div", { class: "item" }, h("div", null, h("strong", null, `${nodeNames[cp.snapshot.node]} · ${cp.action === "submit-entry" ? "契约参与" : cp.action === "submit-redemption" ? "回收选择" : "历史档案"}`), h("p", null, `当时可用 ${coins(cp.snapshot.wallet.cashCents)} 金币`)), button("从这里分叉", () => { try {
+      const exposures = mergeFundingExposures(profile.funding_exposure, fundingExposureArchive.entries);
+      const inheritedForecasts = cp.snapshot.node === "N4" || cp.snapshot.node === "N6" ? profile.forecasts.filter((forecast) => forecast.caseId === current.caseId && !forecast.withdrawn).map((forecast) => ({ ...forecast, priorExposure: true })) : [];
+      const hadUnplacedForecast = !inheritedForecasts.length && profile.forecasts.some((forecast) => forecast.caseId === current.caseId && !forecast.withdrawn);
+      cancelMarketRequest(); run = forkRun(current, cp.id); priorExposure = true;
+      profile = updateJourney({ ...emptyResearchProfile(current.observationEnabled, "fork"), funding_exposure: exposures, forecasts: inheritedForecasts }, run);
+      selectedCard = null; changeScreen("game"); queueMarket();
+      if (inheritedForecasts.length) flash("已保留原局事前预期作为模拟参考；分叉不作为可比的新观察。");
+      else if (hadUnplacedForecast) flash("此分叉与原预期的先后无法确认，预期不会用于比较。");
+    } catch (error) { flash(errorMessage(error)); } }, "small secondary")))) : h("p", { class: "hint" }, "当前记录还没有这些经营检查点。先继续旅程，或打开一条模拟路径。")),
+    h("section", { class: "panel stack" }, h("h3", null, "局面、选择与依据"), h("div", { class: "timeline" }, current.history.filter((event) => event.type === "choice" || event.type === "market").slice().reverse().map((event) => h("div", { class: "timeline-item" }, h("strong", null, `${nodeNames[event.node]} · ${event.message}`), h("p", null, `依据 ${event.id}${event.snapshot ? ` · 当时可用 ${coins(event.snapshot.cashCents)} 金币` : ""}`)))), h("p", { class: "hint" }, `当前推荐：${profile.enabled ? recommendResearch(profile).reason : "观察未启用"}`)),
+    profile.enabled ? preferencePanel() : null, h("div", { class: "button-row" }, button("回到旅程", () => changeScreen(current.phase === "ended" ? "report" : "game"), "secondary"))), h("aside", { class: "side-column" }, h("section", { class: "panel stack" }, h("h3", null, "分叉边界"), h("p", { class: "hint" }, "改变参与量或回收后，现金、可买项目和后续状态可能改变。分叉不会继承原来的后续感受和理由。")))));
+}
+async function openDemo(path: "A" | "B"): Promise<void> {
+  if (demoLoading) return; demoLoading = true; render();
+  try {
+    if (!manifest) manifest = await loadMarketInitial();
+    const generated = await makeDemoPath(path, manifest.cases[0]!.caseId);
+    markExternalExposure(generated.caseId); cancelMarketRequest();
+    run = generated; profile = updateJourney({ ...emptyResearchProfile(true, "demo"), funding_exposure: structuredClone(fundingExposureArchive.entries) }, generated); priorExposure = true; demoLoading = false; changeScreen("judge");
+    flash(`模拟路径${path === "A" ? "甲" : "乙"}已生成，可查看依据或从检查点分叉。`);
+  } catch (error) { demoLoading = false; flash(`生成模拟路径失败：${errorMessage(error)}`); }
+}
+async function compareJudgeStudy(): Promise<void> {
+  if (judgeStudyLoading) return; judgeStudyLoading = true; render();
+  try {
+    if (!manifest) manifest = await loadMarketInitial();
+    const caseId = manifest.cases.find((item) => item.caseId !== run?.caseId)?.caseId ?? manifest.cases[0]!.caseId;
+    const schedule = { startingCashCents: 7200, participationCents: 2000, t1: 0 as const, t2: 0 as const };
+    const instances = ["独立完成", "提示后完成", "结论待核查"].map((label) => {
+      const id = uid("judge-study");
+      const staged = startHistory(emptyResearchProfile(true, "demo"), { id, caseId, questionVersion: "d2-v1", schedule, initialClaim: "unknown", priorExposure: false });
+      return { label, id, staged };
+    });
+    const data = await loadResearchCase(caseId, true);
+    const correct = compareSchedule(data, schedule).direction;
+    judgeStudy = instances.map((item, index) => {
+      let simulated = showHistoryEvidence(item.staged, item.id, data);
+      if (index === 1) simulated = markHistoryHelp(simulated, item.id, "hint");
+      const answer: Direction = index === 2 ? correct === "outperform" ? "underperform" : "outperform" : correct;
+      const result = submitHistory(simulated, item.id, { comparison: answer, reason: "模拟：比较同口径数字" });
+      return { label: item.label, status: result.profile.knowledge_observations.find((observation) => observation.dimension === "K1")?.text ?? "未观察", recommendation: result.recommendation.reason, help: result.recommendation.help === "self" ? "建议自主" : result.recommendation.help === "step" ? "建议分步" : "建议提示" };
+    });
+    markExternalExposure(caseId);
+    judgeStudyLoading = false; render();
+  } catch (error) { judgeStudyLoading = false; flash(`研究对照加载失败：${errorMessage(error)}`); }
+}
+const researchUI = new ResearchUI({ getRun: () => run!, getProfile: () => profile, setProfile, getManifest: () => manifest, back: () => changeScreen(run?.phase === "ended" ? "report" : "game"), refresh: () => render(), notify: flash, uid, isCaseKnown: (caseId) => caseId === run?.caseId && priorExposure, wasCaseSeen: (caseId) => seenCases.has(caseId), markCaseSeen: markExternalExposure });
+function render(preserve = true): void {
+  const active = preserve ? (document.activeElement as HTMLElement | null)?.dataset.focusKey : undefined;
+  const open = preserve ? [...app.querySelectorAll("details[open] > summary")].map((element) => element.textContent ?? "") : [];
+  const scrollPositions = preserve ? [...app.querySelectorAll<HTMLElement>("[data-scroll-key]")].map((element) => [element.dataset.scrollKey!, element.scrollLeft] as const) : [];
+  const scroll = window.scrollY;
+  let content: HTMLElement;
+  if (screen === "intro" || !run) content = intro();
+  else if (screen === "report") content = report();
+  else if (screen === "judge") content = judge();
+  else if (screen === "d1" || screen === "d2") content = h("div", { class: "app-shell" }, topbar(), screen === "d1" ? researchUI.renderFunding() : researchUI.renderHistory());
+  else content = h("div", null, h("div", { class: "app-shell" }, topbar()), gameView({ run, manifest, selectedCard, selectedRetain, selectedUpgrade, entryCents, reserveCents, marketLoading, marketError, battleFeedback, action, selectCard: (id) => { selectedCard = id; render(); }, selectRetain: (id) => { selectedRetain = id; render(); }, selectUpgrade: (id) => { selectedUpgrade = id; render(); }, setEntry: (amount, redraw) => { entryCents = amount; if (redraw) render(); }, setReserve: (amount) => { reserveCents = amount; }, retryMarket, extraCamp: () => researchUI.campExtras(), openReport: () => changeScreen("report"), openTask: (task) => changeScreen(task) }));
+  const wrapper = h("div", { class: `adventure${screen === "game" && run?.phase === "battle" ? " battle-active" : ""}` }, content, storageError ? h("div", { class: "toast", role: "status" }, "浏览器无法保存进度，请检查本地存储设置。") : null, toastMessage ? h("div", { class: "toast", role: "status" }, toastMessage) : null, modal);
+  app.replaceChildren(wrapper);
+  for (const summary of app.querySelectorAll<HTMLElement>("details > summary")) if (open.includes(summary.textContent ?? "")) (summary.parentElement as HTMLDetailsElement).open = true;
+  for (const [key, left] of scrollPositions) { const element = app.querySelector<HTMLElement>(`[data-scroll-key="${CSS.escape(key)}"]`); if (element) element.scrollLeft = left; }
+  if (preserve) { if (active) { const target = app.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(active)}"]`); if (target && !(target instanceof HTMLButtonElement && target.disabled)) target.focus({ preventScroll: true }); else if (active.startsWith("play-card")) { const hand = app.querySelector<HTMLElement>('.battle-hand-panel [data-scroll-key="battle-hand"]'); const box = hand?.getBoundingClientRect(); const visible = [...(hand?.querySelectorAll<HTMLElement>(".game-card") ?? [])].find((card) => { const rect = card.getBoundingClientRect(); return !!box && rect.right > box.left && rect.left < box.right; }); (visible ?? hand)?.focus({ preventScroll: true }); } } window.scrollTo(0, scroll); }
+}
+try { const value: unknown = JSON.parse(localStorage.getItem(SEEN_KEY) ?? "[]"); if (Array.isArray(value)) seenCases = new Set(value.filter((item): item is string => typeof item === "string")); } catch { storageError = true; }
+try {
+  const raw = localStorage.getItem(FUNDING_EXPOSURE_KEY);
+  const archive = parseFundingExposureArchive(raw, Date.now(), RETENTION_MS);
+  if (raw && !archive) { localStorage.removeItem(FUNDING_EXPOSURE_KEY); fundingArchiveExpired = true; }
+  fundingExposureArchive = archive ?? { version: 1, createdAt: Date.now(), entries: [] };
+} catch { storageError = true; }
+realSave = readSave();
+if (realSave) { run = realSave.run; profile = realSave.profile; if (profile.enabled) { profile.funding_exposure = fundingArchiveExpired ? [] : mergeFundingExposures(profile.funding_exposure, fundingExposureArchive.entries); rememberFundingExposures(profile); } observationStartedAt = realSave.observationStartedAt; priorExposure = !!realSave.priorExposure || (fundingArchiveExpired && profile.enabled); save(); }
+render(false);
+loadInitial();
