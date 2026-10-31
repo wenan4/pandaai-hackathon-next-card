@@ -255,7 +255,7 @@ def day_ret(close: pd.Series, d: str) -> float | None:
 
 # ---------------------------------------------------------------- 主流程
 
-def scan():
+def scan(*, include_r3: bool = True):
     days, t_days, pools, px, bench, sectors, adj = load()
     groups = by_symbol(px, days)
     bench_close = bench.set_index("date")["close"].reindex(days)
@@ -288,14 +288,15 @@ def scan():
                 if c["pass"]:
                     stats[rid]["passed"] += 1
                     cands[rid].append(Candidate(rid, s, name, t, liq, c))
-            c = check_r3_basic(g, t, split_dates.get(s, set()))
-            if c is not None:
-                stats["R3"]["evaluated"] += 1
-                if c["pass_basic"]:
-                    cands["R3"].append(Candidate("R3", s, name, t, liq, c))
+            if include_r3:
+                c = check_r3_basic(g, t, split_dates.get(s, set()))
+                if c is not None:
+                    stats["R3"]["evaluated"] += 1
+                    if c["pass_basic"]:
+                        cands["R3"].append(Candidate("R3", s, name, t, liq, c))
 
     # R3 的行业 / 基准条件：申万一级归属用当前分类（接口不提供历史归属，见 docs/data-feasibility.md）
-    membership = data.industry_membership("L1")
+    membership = data.industry_membership("L1") if include_r3 else None
     r3 = []
     for cand in cands["R3"]:
         trig = cand.checks["surges"][-1]["date"]
