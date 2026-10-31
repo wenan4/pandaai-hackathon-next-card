@@ -1,0 +1,24 @@
+# PR 和 main 检查；网站发布由 Cloudflare Pages 原生 Git 集成负责。
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      # 与 Pages 共用发布前检查；失败时 Pages 不会发布该提交。
+      - run: npm run build:pages
