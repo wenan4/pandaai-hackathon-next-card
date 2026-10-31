@@ -52,6 +52,7 @@ const comparison = record({ caseId: id, title: z.string(), dates: z.tuple([z.str
 const history = record({
   id, caseId: id, questionVersion: id, schedule: fixedSchedule,
   initialClaim: z.union([direction, z.literal("unknown")]), priorExposure: z.boolean(),
+  exposedCaseIdsAfterLock: z.array(id.refine((value) => !!value.trim())).min(1).optional(),
   shown: record({ primary: comparison, other: comparison.optional(), otherPriorExposure: z.boolean().optional() }).nullable(),
   helpUsed: help, answerExposed: z.boolean(), submitted: z.boolean(),
   final: record({ comparison: direction.optional(), historyDifference: direction.optional(), boundary: boundary.optional(), reason: z.string(), process: z.enum(["kept", "revised", "undetermined"]) }).nullable(),

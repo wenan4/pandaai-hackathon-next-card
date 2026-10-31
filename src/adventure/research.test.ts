@@ -7,7 +7,7 @@ import { resetMarketCacheForTest } from "./market";
 import type { ResearchMarketCase } from "./market";
 import {
   addUserReason, attachFundingFinalQuote, calibrationForDisplay, compareRecommendationPlans, compareSchedule, compareSelfForecast, declarePriorExposure, emptyResearchProfile, evaluateFundingPractice,
-  evaluateHistoryPractice, fundingQuestionKey, fundingScenarioFromRun, guidanceForTask, markFundingAnswerExposed, markFundingHelp, markHistoryAnswerExposed, markHistoryHelp,
+  evaluateHistoryPractice, fundingQuestionKey, fundingScenarioFromRun, guidanceForTask, markFundingAnswerExposed, markFundingHelp, markHistoryAnswerExposed, markHistoryHelp, markPendingHistoryExposure,
   mechanicalFundingExample, observeJourney, recommendationPlan, recommendResearch, recordCalibrationAction, recordCalibrationFeeling, revokeResearch, saveForecast, setHelpPreference, setResearchGoal,
   showHistoryEvidence, simulateFundingPlan, startHistory, submitFunding, submitHistory, updateJourney,
 } from "./research";
@@ -34,6 +34,63 @@ function observationRun() {
   ];
   return run;
 }
+
+function fullHistoryAnswers(primary: ResearchMarketCase, secondary: ResearchMarketCase) {
+  const first = compareSchedule(primary, schedule); const second = compareSchedule(secondary, schedule);
+  const historyDifference = second.asset.gainCents > first.asset.gainCents ? "outperform" : second.asset.gainCents < first.asset.gainCents ? "underperform" : "equal";
+  return { comparison: first.direction, historyDifference, boundary: "only_samples" as const, reason: "按同一日程核对" } as const;
+}
+
+describe("external exposure after a history question was locked", () => {
+  it("preserves the locked facts and excludes both affected steps after JSON recovery", () => {
+    const locked = initial(emptyResearchProfile(), "late-primary", a);
+    const originalAttempt = structuredClone(locked.research_process[0]!);
+    const exposed = markPendingHistoryExposure(locked, "lantern-a");
+    expect(exposed).not.toBe(locked);
+    expect(locked.research_process[0]).toEqual(originalAttempt);
+    expect(exposed.research_process[0]).toMatchObject({ id: originalAttempt.id, schedule, initialClaim: "outperform", priorExposure: false, exposedCaseIdsAfterLock: ["lantern-a"], shown: null });
+    expect(markPendingHistoryExposure(exposed, "lantern-a")).toBe(exposed);
+    const restored = JSON.parse(JSON.stringify(exposed)) as ResearchProfile;
+    const shown = showHistoryEvidence(restored, "late-primary", a, b);
+    const result = submitHistory(shown, "late-primary", fullHistoryAnswers(a, b));
+    for (const dimension of ["K1", "K2"]) {
+      expect(result.profile.knowledge_evidence.find((entry) => entry.dimension === dimension)).toMatchObject({ independent: false, counted: false, priorExposure: false, exclusion_reason: expect.stringContaining("锁题后在其他入口展示过相关资料") });
+    }
+    expect(result.profile.research_process[0]?.priorExposure).toBe(false);
+    expect(result.changes.every((change) => change.explanation.includes("其他入口"))).toBe(true);
+    expect(markPendingHistoryExposure(result.profile, "lantern-a")).toBe(result.profile);
+  });
+
+  it("excludes only K2 when a later secondary case was shown elsewhere after locking", () => {
+    const locked = initial(emptyResearchProfile(), "late-secondary", a);
+    const exposed = markPendingHistoryExposure(locked, "lantern-b"); // The secondary is selected later.
+    const shown = showHistoryEvidence(exposed, "late-secondary", a, b);
+    const result = submitHistory(shown, "late-secondary", fullHistoryAnswers(a, b));
+    expect(result.profile.knowledge_evidence.find((entry) => entry.dimension === "K1")).toMatchObject({ independent: true, counted: true, priorExposure: false });
+    expect(result.profile.knowledge_evidence.find((entry) => entry.dimension === "K2")).toMatchObject({ independent: false, counted: false, priorExposure: false, exclusion_reason: expect.stringContaining("其他入口") });
+    expect(result.profile.research_process[0]?.exposedCaseIdsAfterLock).toEqual(["lantern-b"]);
+  });
+
+  it("excludes the presenting question, records other pending questions, and ignores disabled records", () => {
+    let profile = initial(emptyResearchProfile(), "current", c);
+    profile = initial(profile, "other", c);
+    const updated = markPendingHistoryExposure(profile, "lantern-d", "current");
+    expect(updated.research_process.find((item) => item.id === "current")?.exposedCaseIdsAfterLock).toBeUndefined();
+    expect(updated.research_process.find((item) => item.id === "other")?.exposedCaseIdsAfterLock).toEqual(["lantern-d"]);
+    expect(markPendingHistoryExposure(updated, "lantern-d", "current")).toBe(updated);
+    const disabled = emptyResearchProfile(false);
+    expect(markPendingHistoryExposure(disabled, "lantern-c")).toBe(disabled);
+  });
+
+  it("retains unrelated external displays without downgrading either answered case", () => {
+    let profile = initial(emptyResearchProfile(), "unrelated", a);
+    profile = markPendingHistoryExposure(profile, "lantern-c");
+    expect(profile.research_process[0]?.exposedCaseIdsAfterLock).toEqual(["lantern-c"]);
+    profile = showHistoryEvidence(profile, "unrelated", a, b);
+    const result = submitHistory(profile, "unrelated", fullHistoryAnswers(a, b));
+    expect(result.profile.knowledge_evidence.map((entry) => [entry.dimension, entry.counted, entry.independent])).toEqual([["K1", true, true], ["K2", true, true]]);
+  });
+});
 
 describe("data-driven research observations", () => {
   it("T32: an empty profile reports unobserved, not a low ability", () => {

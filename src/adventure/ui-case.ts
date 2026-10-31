@@ -1,4 +1,11 @@
 import { relatedCaseIds } from "./market";
+import type { Run } from "./types";
+
+/** A submitted order is not a quote. Legacy applied quotes remain conservative evidence. */
+export function hasAppliedNonEntryQuote(run: Pick<Run, "history">): boolean {
+  return run.history.some((event) => event.type === "market" && event.action === "apply-quote"
+    && typeof event.data?.stage === "string" && event.data.stage !== "entry");
+}
 
 /** Case windows that overlap are treated as already seen together. */
 export function hasSeenRelatedCase(seen: ReadonlySet<string>, caseId: string): boolean {

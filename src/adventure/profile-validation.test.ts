@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { ResearchMarketCase } from "./market";
 import { validateResearchProfile } from "./profile-validation";
 import {
-  addUserReason, declarePriorExposure, emptyResearchProfile, mechanicalFundingExample, recordCalibrationAction,
+  addUserReason, declarePriorExposure, emptyResearchProfile, markPendingHistoryExposure, mechanicalFundingExample, recordCalibrationAction,
   recordCalibrationFeeling, revokeResearch, saveForecast, setHelpPreference, setResearchGoal, showHistoryEvidence,
   startHistory, submitFunding, submitHistory,
 } from "./research";
@@ -61,6 +61,21 @@ describe("research profile recovery validation", () => {
     const profile = emptyResearchProfile();
     profile.funding_exposure = [{ caseId: "lantern-a", help: "step", answerExposed: true, priorExposure: false }];
     expect(validateResearchProfile(profile, "real")).toMatchObject({ ok: true, profile: { funding_exposure: profile.funding_exposure } });
+  });
+
+  it("round-trips optional post-lock exposure and rejects malformed IDs without changing legacy records", () => {
+    const schedule = { startingCashCents: 7200, participationCents: 2000, t1: 0, t2: 0 } as const;
+    const locked = startHistory(emptyResearchProfile(), { id: "locked", caseId: "lantern-c", questionVersion: "v1", schedule, initialClaim: "unknown", priorExposure: false });
+    const exposed = markPendingHistoryExposure(locked, "lantern-d");
+    const restored = validateResearchProfile(JSON.parse(JSON.stringify(exposed)), "real");
+    expect(restored).toMatchObject({ ok: true, profile: { research_process: [{ priorExposure: false, exposedCaseIdsAfterLock: ["lantern-d"] }] } });
+    const legacy = validateResearchProfile(JSON.parse(JSON.stringify(locked)), "real");
+    expect(legacy.ok).toBe(true);
+    for (const invalid of [null, [], [""], ["  "], [12], "lantern-d"]) {
+      const damaged = JSON.parse(JSON.stringify(exposed));
+      damaged.research_process[0].exposedCaseIdsAfterLock = invalid;
+      expect(validateResearchProfile(damaged, "real").ok).toBe(false);
+    }
   });
 
   it("rejects missing required fields and malformed legacy fields rather than replacing evidence", () => {

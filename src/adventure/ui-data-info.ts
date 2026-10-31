@@ -51,6 +51,11 @@ function shownQuotes(run: Run): ShownQuote[] {
   return quotes;
 }
 
+/** Whether the data panel will actually show any validated, applied quote. */
+export function dataInfoShowsQuote(run: Run | null): boolean {
+  return !!run && shownQuotes(run).length > 0;
+}
+
 /** Presentation only: reads metadata and the current run; never fetches any stage. */
 export function dataInfoContent(manifest: MarketManifest | null, run: Run | null): HTMLElement {
   const current = run && manifest?.cases.find((item) => item.caseId === run.caseId);

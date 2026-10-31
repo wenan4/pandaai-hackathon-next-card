@@ -3,7 +3,7 @@ import { h, type Child } from "../ui/dom";
 import { createRun, forkRun, pendingMarketStep, reduceRun } from "./engine";
 import { CARDS, ENEMIES } from "./content";
 import { discardRejectedMarketStage, loadMarketInitial, loadMarketInitialCase, loadMarketStage, loadResearchCase, type MarketInitialCase, type MarketManifest } from "./market";
-import { addUserReason, compareSchedule, compareSelfForecast, declarePriorExposure, emptyResearchProfile, markHistoryHelp, recommendResearch, revokeResearch, setHelpPreference, setResearchGoal, showHistoryEvidence, startHistory, submitHistory, updateJourney, type Direction, type Goal, type HelpPreference, type ResearchProfile } from "./research";
+import { addUserReason, compareSchedule, compareSelfForecast, declarePriorExposure, emptyResearchProfile, markHistoryHelp, markPendingHistoryExposure, recommendResearch, revokeResearch, setHelpPreference, setResearchGoal, showHistoryEvidence, startHistory, submitHistory, updateJourney, type Direction, type Goal, type HelpPreference, type ResearchProfile } from "./research";
 import type { CardId, Run, RunAction } from "./types";
 import { button, coins, dateText, pill } from "./ui-components";
 import { gameView, nodeNames, type GameReceipt } from "./ui-game";
@@ -16,7 +16,7 @@ import type { AdventureSave } from "./save-state";
 import { reportView } from "./ui-report";
 import { casesAreRelated, chooseAdventureCase, hasSeenRelatedCase, independentBattleSeed } from "./ui-case";
 import { CalibrationDemoUI } from "./ui-calibration-demo";
-import { dataInfoContent } from "./ui-data-info";
+import { dataInfoContent, dataInfoShowsQuote } from "./ui-data-info";
 import { pileView, type PileKind } from "./ui-piles";
 import { enemyPlanView } from "./ui-enemy";
 
@@ -31,6 +31,8 @@ let recovery: RecoveryState | null = null;
 let observationStartedAt = Date.now();
 let priorExposure = false;
 let seenCases = new Set<string>();
+let seenDirty = false;
+let externalSaveDirty = false;
 let fundingExposureArchive: FundingExposureArchive = { version: 1, createdAt: Date.now(), entries: [] };
 let screen: Screen = "intro";
 let manifest: MarketManifest | null = null;
@@ -61,12 +63,24 @@ let judgeStudyLoading = false;
 let judgeStudy: { label: string; status: string; recommendation: string; help: string }[] | null = null;
 let demoVersion = 0;
 let judgeStudyVersion = 0;
+let pendingDemo: { version: number; path: "A" | "B"; origin: Run | null; generated: Run } | null = null;
+let pendingDataInfo: { displayedRun: Run; dialog: HTMLElement } | null = null;
 let requestVersion = 0;
 let idCounter = 0;
 const uid = (prefix: string): string => `${prefix}-${Date.now().toString(36)}-${++idCounter}`;
 const errorMessage = (error: unknown): string => error instanceof TypeError && /fetch|network/i.test(error.message) ? "网络连接暂时不可用，请重试。" : error instanceof Error ? error.message : "加载未完成，请重试。";
+const documentVisible = (): boolean => !document.visibilityState || document.visibilityState === "visible";
+const canPresentGame = (): boolean => !recovery && screen === "game" && !modal && documentVisible();
+const canPresentTask = (task: "D1" | "D2"): boolean => !recovery && screen === task.toLowerCase() && !modal && documentVisible();
+const canPresentJudge = (): boolean => !recovery && screen === "judge" && !modal && documentVisible();
+
+function discardPendingJudge(): void {
+  demoVersion++; judgeStudyVersion++; pendingDemo = null; demoLoading = false; judgeStudyLoading = false;
+  calibrationDemoUI.leave();
+}
 
 function resetGameUi(): void {
+  discardPendingJudge(); pendingDataInfo = null;
   selectedCard = null; selectedRetain = null; selectedUpgrade = null; selectedReward = null;
   battleFeedback = ""; gameFeedback = null; toastMessage = "";
   window.clearTimeout(toastTimer); toastTimer = 0;
@@ -86,7 +100,7 @@ function save(): boolean {
   if (!run || run.source !== "real") return true;
   const data: Save = { schema: "nextcard-adventure-save-v1", savedAt: Date.now(), observationStartedAt, priorExposure, tutorialStep, run, profile };
   if (!writeLocal(SAVE_KEY, JSON.stringify(data))) return false;
-  realSave = data;
+  realSave = data; externalSaveDirty = false;
   return true;
 }
 function rememberFundingExposures(next: ResearchProfile): void {
@@ -109,7 +123,10 @@ function flash(message: string): void {
 }
 function changeScreen(next: Screen): void {
   if ((screen === "d1" || screen === "d2") && next !== screen) researchUI.leave();
+  if (screen === "judge" && next !== screen) discardPendingJudge();
+  pendingDataInfo = null;
   screen = next; selectedCard = null; modal = null; render(false); window.scrollTo({ top: 0, behavior: "auto" });
+  resumePresentations();
 }
 function showDialog(title: string, body: Child, actions: Child[]): void {
   const active = document.activeElement as HTMLElement | null;
@@ -133,10 +150,11 @@ function showDialog(title: string, body: Child, actions: Child[]): void {
   }, 0);
 }
 function closeDialog(): void {
-  const opener = modalOpener; modal = null; modalOpener = null; render();
+  const opener = modalOpener; modal = null; modalOpener = null; pendingDataInfo = null; render();
   const keyed = opener?.key ? app.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(opener.key)}"]`) : null;
   const named = [...app.querySelectorAll<HTMLButtonElement>("button")].find((element) => element.textContent === opener?.label && !element.disabled && element.getClientRects().length > 0);
   (keyed ?? named)?.focus({ preventScroll: true });
+  resumePresentations();
 }
 function restoredTutorial(current: Run, saved?: number): number {
   if (current.source !== "real" || current.node !== "N1" || current.phase !== "battle" || !current.battle) return 4;
@@ -177,22 +195,51 @@ function invalidatePendingComparison(existing: ResearchProfile, exposedCase: str
   }) };
 }
 /** External displays reveal a case independently of this real run's natural timeline. */
-function markExternalExposure(caseId: string, invalidatePending = true): void {
+function markExternalExposure(caseId: string, invalidatePending = true, excludeAttemptId?: string): void {
   if (recovery) return;
-  seenCases.add(caseId);
-  if (realSave && casesAreRelated(realSave.run.caseId, caseId)) {
-    realSave = { ...realSave, priorExposure: true, profile: invalidatePending ? invalidatePendingComparison(realSave.profile, caseId) : realSave.profile };
-    if (run?.source === "real" && run.id === realSave.run.id) { priorExposure = true; profile = realSave.profile; }
-    writeLocal(SAVE_KEY, JSON.stringify(realSave));
-  }
-  writeLocal(SEEN_KEY, JSON.stringify([...seenCases]));
+  rememberSeenCase(caseId);
+  if (!realSave) return;
+  const currentReal = !!run && run.source === "real" && run.id === realSave.run.id;
+  const related = casesAreRelated(realSave.run.caseId, caseId);
+  const previous = currentReal ? profile : realSave.profile;
+  // A user's retrospective disclosure is not an actual post-lock display.
+  const pending = invalidatePending ? markPendingHistoryExposure(previous, caseId, excludeAttemptId) : previous;
+  const nextProfile = related && invalidatePending ? invalidatePendingComparison(pending, caseId) : pending;
+  if (nextProfile === realSave.profile && (!related || realSave.priorExposure)) return;
+  if (currentReal) { profile = nextProfile; if (related) priorExposure = true; }
+  realSave = currentReal && run ? { schema: "nextcard-adventure-save-v1", savedAt: Date.now(), observationStartedAt, priorExposure, tutorialStep, run, profile: nextProfile }
+    : { ...realSave, profile: nextProfile, ...(related ? { priorExposure: true } : {}) };
+  externalSaveDirty = !writeLocal(SAVE_KEY, JSON.stringify(realSave));
 }
-/** Showing this run's own T0 history affects later replays, not its current forecast. */
+/** Natural displays affect later replays and locked research questions, not this run's forecast. */
 function markNaturalArchiveSeen(caseId: string): void {
   if (recovery) return;
-  if (seenCases.has(caseId)) return;
-  seenCases.add(caseId);
-  writeLocal(SEEN_KEY, JSON.stringify([...seenCases]));
+  rememberSeenCase(caseId);
+  if (!run || run.source !== "real" || !realSave || run.id !== realSave.run.id) return;
+  const nextProfile = markPendingHistoryExposure(profile, caseId);
+  if (nextProfile === profile) return;
+  profile = nextProfile;
+  realSave = { schema: "nextcard-adventure-save-v1", savedAt: Date.now(), observationStartedAt, priorExposure, tutorialStep, run, profile };
+  externalSaveDirty = !writeLocal(SAVE_KEY, JSON.stringify(realSave));
+}
+function flushSeenCases(): void {
+  if (!seenDirty || recovery) return;
+  try {
+    const raw = localStorage.getItem(SEEN_KEY);
+    const existing: unknown = raw === null ? [] : JSON.parse(raw);
+    if (!Array.isArray(existing) || !existing.every((item) => typeof item === "string" && item.length > 0)) { storageError = true; return; }
+    for (const caseId of existing as string[]) seenCases.add(caseId);
+    if (writeLocal(SEEN_KEY, JSON.stringify([...seenCases]))) seenDirty = false;
+  } catch { storageError = true; }
+}
+function flushExternalSave(): void {
+  if (!externalSaveDirty || recovery || !realSave) return;
+  if (run?.source === "real" && run.id === realSave.run.id) { save(); return; }
+  if (writeLocal(SAVE_KEY, JSON.stringify(realSave))) externalSaveDirty = false;
+}
+function rememberSeenCase(caseId: string): void {
+  if (!seenCases.has(caseId)) { seenCases.add(caseId); seenDirty = true; }
+  flushSeenCases();
 }
 function startRun(enabled: boolean): void {
   if (recovery) return;
@@ -205,11 +252,12 @@ function startRun(enabled: boolean): void {
   if (!writeLocal(SAVE_KEY, JSON.stringify(nextSave))) { flash("未能保存新旅程；原来的本地记录未替换，请检查存储设置后重试。"); return; }
   cancelMarketRequest(); resetInitialCase();
   if (expiredArchive && !clearFundingExposures()) fundingExposureArchive = { version: 1, createdAt: now, entries: [] };
-  resetGameUi(); run = nextRun; profile = nextProfile; realSave = nextSave; priorExposure = chosen.priorExposure; observationStartedAt = now; tutorialStep = 0; entryCents = 0; reserveCents = 0;
+  resetGameUi(); run = nextRun; profile = nextProfile; realSave = nextSave; externalSaveDirty = false; priorExposure = chosen.priorExposure; observationStartedAt = now; tutorialStep = 0; entryCents = 0; reserveCents = 0;
   changeScreen("game"); ensureInitialCase();
 }
 function action(next: RunAction): void {
   if (recovery || !run) return;
+  if (next.type === "apply-quote" && !canPresentGame()) return;
   const previousPhase = run.phase; const previousNode = run.node;
   const before = run;
   let updatedRun: Run;
@@ -252,8 +300,11 @@ function action(next: RunAction): void {
       battleFeedback = intent.kind === "attack" ? `对方攻击 ${intent.amount} · 生命减少 ${lost}` : `对方获得 ${intent.amount} 护盾`;
     } else if (run.phase === "battle" && previousPhase !== "battle") battleFeedback = "";
     researchUI.afterAction(next);
-    if (run.source === "real" && next.type === "apply-quote" && ["t1", "t2", "t3"].includes(next.quote.step)) {
-      seenCases.add(run.caseId); writeLocal(SEEN_KEY, JSON.stringify([...seenCases]));
+    const showsMarketResult = next.type === "apply-quote" && (["t1", "t2", "t3"].includes(next.quote.step)
+      || (next.quote.step !== "entry" && before.market.order?.kind === "sell" && /[1-9]/.test(before.wallet.shareUnits)));
+    if (showsMarketResult) {
+      if (run.source === "real") markNaturalArchiveSeen(run.caseId);
+      else markExternalExposure(run.caseId);
     }
     if (profile.enabled) profile = updateJourney(profile, run);
     if (next.type === "play-card" || next.type === "end-turn") { selectedCard = null; selectedRetain = null; }
@@ -272,15 +323,19 @@ function action(next: RunAction): void {
   } catch (error) { gameFeedback = null; flash(errorMessage(error)); }
 }
 function queueMarket(): void {
-  if (recovery || !run || run.phase !== "market" || marketLoading || marketError) return;
+  if (!canPresentGame() || !run || run.phase !== "market" || marketLoading || marketError) return;
   const pending = pendingMarketStep(run); if (!pending) return;
   const capturedRun = run; const version = ++requestVersion; marketLoading = true; render();
-  void Promise.resolve().then(() => version === requestVersion && run === capturedRun ? loadMarketStage(pending.caseId, pending.stage, pending.unlocked) : null).then((quote) => {
-    if (!quote || version !== requestVersion || run !== capturedRun) return;
-    marketLoading = false; action({ type: "apply-quote", quote });
+  void Promise.resolve().then(() => version === requestVersion && run === capturedRun && canPresentGame() ? loadMarketStage(pending.caseId, pending.stage, pending.unlocked) : null).then((quote) => {
+    if (version !== requestVersion || run !== capturedRun) return;
+    marketLoading = false;
+    if (!quote || !canPresentGame()) { if (canPresentGame()) queueMarket(); return; }
+    action({ type: "apply-quote", quote });
   }).catch((error: unknown) => {
     if (version !== requestVersion || run !== capturedRun) return;
-    marketLoading = false; marketError = errorMessage(error); render();
+    marketLoading = false;
+    if (!canPresentGame()) return;
+    marketError = errorMessage(error); render();
   });
 }
 function retryMarket(): void { marketError = null; queueMarket(); render(); }
@@ -305,7 +360,7 @@ function clearAllLocalRecords(): void {
     const message = outcome === "changed" ? "本机记录已变化，未开始清除；请重新读取后再确认。" : outcome === "failed-uncertain" ? "清除未完成，原记录也未能完全恢复；部分本机内容可能已变化。请先下载此前读取的备份。" : "未能完成清除，原记录已保留；请检查存储设置后重试。";
     enterRecovery(inspectLocalStorage(), backup, message, wasUncertain || outcome === "failed-uncertain"); render(); return;
   }
-  recovery = null; storageError = false; fundingExposureArchive = { version: 1, createdAt: Date.now(), entries: [] }; seenCases.clear(); cancelMarketRequest(); resetInitialCase(); resetJudgeDemos(); resetGameUi(); run = null; realSave = null; profile = emptyResearchProfile(); modal = null; changeScreen("intro"); flash("本地冒险记录已清除。");
+  recovery = null; storageError = false; fundingExposureArchive = { version: 1, createdAt: Date.now(), entries: [] }; seenCases.clear(); seenDirty = false; externalSaveDirty = false; cancelMarketRequest(); resetInitialCase(); resetJudgeDemos(); resetGameUi(); run = null; realSave = null; profile = emptyResearchProfile(); modal = null; changeScreen("intro"); flash("本地冒险记录已清除。");
 }
 function settings(): void {
   const state = !recovery && run?.observationEnabled && profile.enabled;
@@ -332,12 +387,30 @@ function settings(): void {
         } catch (error) { flash(errorMessage(error)); }
       }, "secondary"), button("取消", closeDialog, "ghost")]);
     }, "secondary"), priorExposure ? pill("此案例按已见处理", "blue") : null) : null,
-    state ? button("撤销观察并删除观察记录", () => showDialog("撤销本局观察？", h("p", { class: "hint" }, run?.source === "real" ? "目标、预期、感受、原因、研究观察与跨局提示暴露记录将删除；冒险进度会保留。" : "当前模拟的观察会删除；真实旅程与其观察保留。"), [button("确认撤销", () => { if (run?.source === "real" && !clearFundingExposures()) { flash("未能删除本地观察记录，请检查存储设置后重试。"); return; } profile = revokeResearch(profile); if (run) run.observationEnabled = false; modal = null; const saved = save(); flash(saved ? "观察已撤销，游戏进度保留。" : "已停止观察，但未能更新本地存档，请检查存储设置。"); }, "danger"), button("返回", closeDialog, "secondary")]), "secondary") : null,
+    state ? button("撤销观察并删除观察记录", () => showDialog("撤销本局观察？", h("p", { class: "hint" }, run?.source === "real" ? "目标、预期、感受、原因、研究观察与跨局提示暴露记录将删除；冒险进度会保留。" : "当前模拟的观察会删除；真实旅程与其观察保留。"), [button("确认撤销", () => { if (run?.source === "real" && !clearFundingExposures()) { flash("未能删除本地观察记录，请检查存储设置后重试。"); return; } profile = revokeResearch(profile); if (run) run.observationEnabled = false; modal = null; const saved = save(); flash(saved ? "观察已撤销，游戏进度保留。" : "已停止观察，但未能更新本地存档，请检查存储设置。"); resumePresentations(); }, "danger"), button("返回", closeDialog, "secondary")]), "secondary") : null,
     button("清除全部本地记录", () => showDialog("清除这台设备的冒险记录？", h("p", { class: "hint" }, "当前冒险与本局观察会删除，此操作无法撤销。旧版 v0.3 存档不受影响。"), [button("确认清除", clearAllLocalRecords, "danger"), button("返回", closeDialog, "secondary")]), "danger"));
   showDialog("旅程与隐私设置", body, [button("完成", closeDialog, "secondary")]);
 }
 function dataInfo(): void {
-  showDialog("关于这段历史", dataInfoContent(manifest, run), [button("知道了", closeDialog, "secondary")]);
+  const displayedRun = run;
+  showDialog("关于这段历史", dataInfoContent(manifest, displayedRun), [button("知道了", closeDialog, "secondary")]);
+  pendingDataInfo = displayedRun && modal && dataInfoShowsQuote(displayedRun) ? { displayedRun, dialog: modal } : null;
+  presentDataInfo();
+}
+function presentDataInfo(): void {
+  const pending = pendingDataInfo;
+  if (!pending) return;
+  if (modal !== pending.dialog || run !== pending.displayedRun) { pendingDataInfo = null; return; }
+  if (!documentVisible() || !pending.dialog.isConnected) return;
+  pendingDataInfo = null;
+  if (pending.displayedRun.source === "real") markNaturalArchiveSeen(pending.displayedRun.caseId);
+  else markExternalExposure(pending.displayedRun.caseId);
+}
+function archiveShown(view: HTMLDetailsElement, displayedRun: Run): boolean {
+  if (!canPresentGame() || run !== displayedRun || !view.isConnected || !view.open || view.closest("[inert]")) return false;
+  if (displayedRun.source === "real") markNaturalArchiveSeen(displayedRun.caseId);
+  else markExternalExposure(displayedRun.caseId);
+  return true;
 }
 function openPile(pile: PileKind): void {
   if (!run?.battle || run.phase !== "battle") return;
@@ -392,24 +465,31 @@ function judge(): HTMLElement {
 }
 function resetJudgeDemos(): void {
   demoVersion++; judgeStudyVersion++;
-  demoLoading = false; judgeStudyLoading = false; judgeStudy = null;
+  pendingDemo = null; demoLoading = false; judgeStudyLoading = false; judgeStudy = null;
   calibrationDemoUI.reset();
+}
+function publishPendingDemo(): void {
+  const pending = pendingDemo;
+  if (!pending || pending.version !== demoVersion || pending.origin !== run || !canPresentJudge()) return;
+  pendingDemo = null;
+  markExternalExposure(pending.generated.caseId); cancelMarketRequest(); resetInitialCase(); resetGameUi();
+  run = pending.generated; profile = updateJourney({ ...emptyResearchProfile(true, "demo"), funding_exposure: structuredClone(fundingExposureArchive.entries) }, pending.generated); priorExposure = true; changeScreen("judge"); ensureInitialCase();
+  flash(`模拟路径${pending.path === "A" ? "甲" : "乙"}已生成，可查看依据或从检查点分叉。`);
 }
 async function openDemo(path: "A" | "B"): Promise<void> {
   if (demoLoading) return;
-  const version = ++demoVersion;
+  const version = ++demoVersion; const origin = run;
   demoLoading = true; render();
   try {
     const available = manifest ?? await loadMarketInitial();
     if (version !== demoVersion || screen !== "judge") return;
     manifest = available;
     const generated = await makeDemoPath(path, available.cases[0]!.caseId);
-    if (version !== demoVersion || screen !== "judge") return;
-    markExternalExposure(generated.caseId); cancelMarketRequest(); resetInitialCase(); resetGameUi();
-    run = generated; profile = updateJourney({ ...emptyResearchProfile(true, "demo"), funding_exposure: structuredClone(fundingExposureArchive.entries) }, generated); priorExposure = true; changeScreen("judge"); ensureInitialCase();
-    flash(`模拟路径${path === "A" ? "甲" : "乙"}已生成，可查看依据或从检查点分叉。`);
+    if (version !== demoVersion || screen !== "judge" || run !== origin) return;
+    pendingDemo = { version, path, origin, generated };
+    publishPendingDemo();
   } catch (error) { if (version === demoVersion && screen === "judge") flash(`生成模拟路径失败：${errorMessage(error)}`); }
-  finally { if (version === demoVersion) { demoLoading = false; if (screen === "judge") render(); } }
+  finally { if (version === demoVersion && !pendingDemo) { demoLoading = false; if (screen === "judge") render(); } }
 }
 async function compareJudgeStudy(): Promise<void> {
   if (judgeStudyLoading) return;
@@ -436,7 +516,6 @@ async function compareJudgeStudy(): Promise<void> {
       const result = submitHistory(simulated, item.id, { comparison: answer, reason: "模拟：比较同口径数字" });
       return { label: item.label, status: result.profile.knowledge_observations.find((observation) => observation.dimension === "K1")?.text ?? "未观察", recommendation: result.recommendation.reason, help: result.recommendation.help === "self" ? "建议自主" : result.recommendation.help === "step" ? "建议分步" : "建议提示" };
     });
-    markExternalExposure(caseId);
   } catch (error) { if (version === judgeStudyVersion && screen === "judge") flash(`研究对照加载失败：${errorMessage(error)}`); }
   finally { if (version === judgeStudyVersion) { judgeStudyLoading = false; if (screen === "judge") render(); } }
 }
@@ -502,7 +581,9 @@ function restoreStoredState(read: StorageRead): void {
       return;
     }
   }
-  recovery = null; storageError = false; seenCases = read.seen;
+  recovery = null; storageError = false;
+  if (seenDirty) for (const caseId of seenCases) read.seen.add(caseId);
+  seenCases = read.seen;
   fundingExposureArchive = expiredObservation || expiredArchive ? { version: 1, createdAt: now, entries: [] } : read.archive ?? { version: 1, createdAt: now, entries: [] };
   realSave = restored; run = restored?.run ?? null; profile = restored?.profile ?? emptyResearchProfile();
   observationStartedAt = restored?.observationStartedAt ?? now; priorExposure = !!restored?.priorExposure;
@@ -544,7 +625,7 @@ function replaceRecoveredRun(enabled: boolean): void {
     render(); return;
   }
   recovery = null; storageError = false; cancelMarketRequest(); resetInitialCase(); resetJudgeDemos();
-  run = nextRun; realSave = nextSave; profile = nextProfile; seenCases = new Set(); fundingExposureArchive = { version: 1, createdAt: now, entries: [] };
+  run = nextRun; realSave = nextSave; profile = nextProfile; seenCases = new Set(); seenDirty = false; externalSaveDirty = false; fundingExposureArchive = { version: 1, createdAt: now, entries: [] };
   resetGameUi(); observationStartedAt = now; priorExposure = false; tutorialStep = 0; entryCents = 0; reserveCents = 0; modal = null;
   changeScreen("game"); ensureInitialCase();
 }
@@ -563,8 +644,8 @@ function recoveryView(): HTMLElement {
     h("div", { class: "button-row" }, button("清除现有冒险与观察，开始新旅程", () => askRecoveryReplacement(true), "gold", !state.current || !manifest?.cases.length, "replace-storage"), button("清除后只玩游戏", () => askRecoveryReplacement(false), "secondary", !state.current || !manifest?.cases.length, "replace-storage-game")),
     initialError ? h("p", { class: "hint" }, "案例目录暂时未加载。", button("重试数据", loadInitial, "small secondary", initialLoading)) : null));
 }
-const researchUI = new ResearchUI({ getRun: () => run!, getProfile: () => profile, setProfile, getManifest: () => manifest, retryManifest: loadInitial, manifestLoading: () => initialLoading, manifestError: () => initialError, back: () => changeScreen(run?.phase === "ended" ? "report" : "game"), openTask: (task) => changeScreen(task === "D1" ? "d1" : "d2"), refresh: () => render(), revealResult: revealResearchResult, notify: flash, uid, isCaseKnown: (caseId) => !!run && casesAreRelated(caseId, run.caseId) && priorExposure, wasCaseSeen: (caseId) => hasSeenRelatedCase(seenCases, caseId), markCaseSeen: markExternalExposure });
-const calibrationDemoUI = new CalibrationDemoUI({ refresh: () => render(), isVisible: () => screen === "judge", onExposed: markExternalExposure });
+const researchUI = new ResearchUI({ getRun: () => run!, getProfile: () => profile, setProfile, getManifest: () => manifest, retryManifest: loadInitial, manifestLoading: () => initialLoading, manifestError: () => initialError, back: () => changeScreen(run?.phase === "ended" ? "report" : "game"), openTask: (task) => changeScreen(task === "D1" ? "d1" : "d2"), refresh: () => render(), revealResult: revealResearchResult, notify: flash, uid, canPresentData: canPresentTask, isCaseKnown: (caseId) => !!run && casesAreRelated(caseId, run.caseId) && priorExposure, wasCaseSeen: (caseId) => hasSeenRelatedCase(seenCases, caseId), markCaseSeen: (caseId, attemptId) => markExternalExposure(caseId, true, attemptId) });
+const calibrationDemoUI = new CalibrationDemoUI({ refresh: () => render(), isVisible: () => screen === "judge", canPresentData: canPresentJudge, onExposed: markExternalExposure });
 function render(preserve = true): void {
   const active = preserve ? (document.activeElement as HTMLElement | null)?.dataset.focusKey : undefined;
   const open = preserve ? [...app.querySelectorAll("details[open] > summary")].map((element) => element.textContent ?? "") : [];
@@ -576,7 +657,7 @@ function render(preserve = true): void {
   else if (screen === "report") content = report();
   else if (screen === "judge") content = judge();
   else if (screen === "d1" || screen === "d2") content = h("div", { class: "app-shell" }, topbar(), screen === "d1" ? researchUI.renderFunding() : researchUI.renderHistory());
-  else content = h("div", null, h("div", { class: "app-shell" }, topbar()), gameView({ run, initialCase, initialCaseError, initialCaseLoading, retryInitialCase, selectedCard, selectedRetain, selectedUpgrade, selectedReward, entryCents, reserveCents, marketLoading, marketError, battleFeedback, gameFeedback, tutorialStep, action, selectCard: (id) => { selectedCard = id; if (id && run?.node === "N1" && tutorialStep < 2) { tutorialStep = 2; save(); } render(); }, selectRetain: (id) => { selectedRetain = id; render(); }, selectUpgrade: (id) => { selectedUpgrade = id; render(); }, selectReward, setEntry: (amount, redraw) => { entryCents = amount; if (redraw) render(); }, setReserve: (amount) => { reserveCents = amount; }, retryMarket, extraCamp: () => researchUI.campExtras(), openReport: () => changeScreen("report"), openTask: (task) => changeScreen(task), archiveShown: (caseId) => { if (run?.source === "real") markNaturalArchiveSeen(caseId); else markExternalExposure(caseId); }, nextTutorial: () => setTutorialStep(tutorialStep + 1), skipTutorial: () => setTutorialStep(4), openPile, openEnemyPlan }));
+  else content = h("div", null, h("div", { class: "app-shell" }, topbar()), gameView({ run, initialCase, initialCaseError, initialCaseLoading, retryInitialCase, selectedCard, selectedRetain, selectedUpgrade, selectedReward, entryCents, reserveCents, marketLoading, marketError, battleFeedback, gameFeedback, tutorialStep, action, selectCard: (id) => { selectedCard = id; if (id && run?.node === "N1" && tutorialStep < 2) { tutorialStep = 2; save(); } render(); }, selectRetain: (id) => { selectedRetain = id; render(); }, selectUpgrade: (id) => { selectedUpgrade = id; render(); }, selectReward, setEntry: (amount, redraw) => { entryCents = amount; if (redraw) render(); }, setReserve: (amount) => { reserveCents = amount; }, retryMarket, extraCamp: () => researchUI.campExtras(), openReport: () => changeScreen("report"), openTask: (task) => changeScreen(task), archiveShown, nextTutorial: () => setTutorialStep(tutorialStep + 1), skipTutorial: () => setTutorialStep(4), openPile, openEnemyPlan }));
   content.inert = !!modal;
   const wrapper = h("div", { class: `adventure${screen === "game" && run?.phase === "battle" ? " battle-active" : ""}` }, content, storageError ? h("div", { class: "toast", role: "status" }, "浏览器无法保存进度，请检查本地存储设置。") : null, toastMessage ? h("div", { class: "toast", role: "status" }, toastMessage) : null, modal);
   app.replaceChildren(wrapper);
@@ -584,6 +665,19 @@ function render(preserve = true): void {
   for (const [key, left] of scrollPositions) { const element = app.querySelector<HTMLElement>(`[data-scroll-key="${CSS.escape(key)}"]`); if (element) element.scrollLeft = left; }
   if (preserve) { if (active) { const target = (modal ?? app).querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(active)}"]`); if (target && !(target instanceof HTMLButtonElement && target.disabled)) target.focus({ preventScroll: true }); else if (active.startsWith("play-card") || active.startsWith("tutorial-")) { const hand = app.querySelector<HTMLElement>('.battle-hand-panel [data-scroll-key="battle-hand"]'); const box = hand?.getBoundingClientRect(); const visible = [...(hand?.querySelectorAll<HTMLElement>(".game-card") ?? [])].find((card) => { const rect = card.getBoundingClientRect(); return !!box && rect.right > box.left && rect.left < box.right; }); (visible ?? hand)?.focus({ preventScroll: true }); } } window.scrollTo(0, scroll); }
 }
+function resumePresentations(): void {
+  if (recovery || !documentVisible()) return;
+  flushSeenCases(); flushExternalSave(); presentDataInfo();
+  if (modal) return;
+  publishPendingDemo();
+  researchUI.resumePendingPresentation(); calibrationDemoUI.resumePendingPresentation();
+  if (canPresentGame() && run) {
+    const view = app.querySelector<HTMLDetailsElement>('[data-archive-view="true"]');
+    if (view && archiveShown(view, run) && !run.history.some((event) => event.action === "open-archive")) action({ type: "open-archive" });
+  }
+  queueMarket();
+}
+if (typeof document.addEventListener === "function") document.addEventListener("visibilitychange", () => { if (documentVisible()) { render(); resumePresentations(); } });
 restoreStoredState(inspectLocalStorage());
 render(false);
 loadInitial();

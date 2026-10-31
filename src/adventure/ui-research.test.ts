@@ -1,11 +1,12 @@
 import { readFile } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeCalibrationDemo } from "./calibration-demo";
-import { reduceRun } from "./engine";
+import { createRun, reduceRun } from "./engine";
 import { loadMarketInitial, loadMarketStage, loadResearchCase, resetMarketCacheForTest, type MarketManifest } from "./market";
-import { compareSchedule, emptyResearchProfile, fundingScenarioFromRun, setHelpPreference, setResearchGoal, showHistoryEvidence, simulateFundingPlan, startHistory, type ResearchProfile } from "./research";
+import { validateResearchProfile } from "./profile-validation";
+import { compareSchedule, declarePriorExposure, emptyResearchProfile, fundingScenarioFromRun, markPendingHistoryExposure, setHelpPreference, setResearchGoal, showHistoryEvidence, simulateFundingPlan, startHistory, type ResearchProfile } from "./research";
 import type { ResearchMarketCase } from "./market";
-import type { Run } from "./types";
+import type { CardId, Run } from "./types";
 import { hasSeenRelatedCase } from "./ui-case";
 import { coins } from "./ui-components";
 import { ResearchUI } from "./ui-research";
@@ -74,8 +75,26 @@ async function fixture(): Promise<{ run: Run; manifest: MarketManifest }> {
   run.source = "real";
   return { run, manifest: await loadMarketInitial() };
 }
+async function earlyExitWithShares(): Promise<Run> {
+  let run = createRun({ seed: 104, caseId: "lantern-a" });
+  for (const step of ["C02", "C03", "C01", "end", "C01", "C04", "C02", "C02", "end", "C02", "end", "C01"] as (CardId | "end")[]) {
+    if (step === "end") run = reduceRun(run, { type: "end-turn" });
+    else {
+      const card = run.deck.find((item) => item.cardId === step && run.battle?.hand.includes(item.instanceId));
+      if (!card) throw new Error(`Missing card ${step}`);
+      run = reduceRun(run, { type: "play-card", cardInstanceId: card.instanceId });
+    }
+  }
+  run = reduceRun(run, { type: "choose-reward", cardId: null });
+  run = reduceRun(run, { type: "submit-entry", amountCents: 2000 });
+  run = reduceRun(run, { type: "continue" });
+  run = reduceRun(run, { type: "apply-quote", quote: await loadMarketStage(run.caseId, "entry", true) });
+  run = reduceRun(run, { type: "choose-route", enemyId: "pursuer" });
+  while (run.status === "active") run = reduceRun(run, { type: "end-turn" });
+  return run;
+}
 function harness(run: Run, manifest: MarketManifest, initial: ResearchProfile, seen = new Set<string>()) {
-  let profile = initial; let section: "D1" | "D2" = "D1"; let inert = false; let id = 0; let currentManifest: MarketManifest | null = manifest; let loading = false; let error: string | null = null;
+  let currentRun = run; let profile = initial; let section: "D1" | "D2" = "D1"; let inert = false; let hidden = false; let id = 0; let currentManifest: MarketManifest | null = manifest; let loading = false; let error: string | null = null;
   const retryManifest = vi.fn();
   const root = new FakeElement("root"); root.root = true;
   const render = (): void => {
@@ -83,10 +102,28 @@ function harness(run: Run, manifest: MarketManifest, initial: ResearchProfile, s
     if (inert) content.setAttribute("inert", "");
     root.replaceChildren(content);
   };
-  const ui = new ResearchUI({ getRun: () => run, getProfile: () => profile, setProfile: (value) => { profile = value; render(); }, getManifest: () => currentManifest, retryManifest, manifestLoading: () => loading, manifestError: () => error,
-    back: vi.fn(), openTask: (task) => { ui.leave(); section = task; render(); }, refresh: render, notify: (message) => { throw new Error(message); }, uid: (prefix) => `${prefix}-${++id}`,
-    isCaseKnown: () => false, wasCaseSeen: (caseId) => hasSeenRelatedCase(seen, caseId), markCaseSeen: (caseId) => { seen.add(caseId); } });
-  return { root, ui, render, retryManifest, get profile() { return profile; }, set profile(value: ResearchProfile) { profile = value; }, set section(value: "D1" | "D2") { section = value; }, set inert(value: boolean) { inert = value; }, set manifest(value: MarketManifest | null) { currentManifest = value; }, set loading(value: boolean) { loading = value; }, set error(value: string | null) { error = value; }, seen };
+  const ui = new ResearchUI({ getRun: () => currentRun, getProfile: () => profile, setProfile: (value) => { profile = value; render(); }, getManifest: () => currentManifest, retryManifest, manifestLoading: () => loading, manifestError: () => error,
+    back: vi.fn(), openTask: (task) => { ui.leave(); section = task; render(); }, refresh: render, canPresentData: (task) => section === task && !inert && !hidden, notify: (message) => { throw new Error(message); }, uid: (prefix) => `${prefix}-${++id}`,
+    isCaseKnown: () => false, wasCaseSeen: (caseId) => hasSeenRelatedCase(seen, caseId), markCaseSeen: (caseId, excludeAttemptId) => { seen.add(caseId); profile = markPendingHistoryExposure(profile, caseId, excludeAttemptId); } });
+  return { root, ui, render, retryManifest, get profile() { return profile; }, set profile(value: ResearchProfile) { profile = value; }, set run(value: Run) { currentRun = value; }, set section(value: "D1" | "D2") { section = value; }, set inert(value: boolean) { inert = value; }, set hidden(value: boolean) { hidden = value; }, set manifest(value: MarketManifest | null) { currentManifest = value; }, set loading(value: boolean) { loading = value; }, set error(value: string | null) { error = value; }, seen };
+}
+
+async function delayedCase(caseId: string): Promise<{ requested: ReturnType<typeof vi.fn>; decoded: ReturnType<typeof vi.fn>; release: () => void }> {
+  const body = await readFile(`public/data/adventure/research/${caseId}.json`, "utf8");
+  const original = globalThis.fetch;
+  let release: () => void = () => { throw new Error("load gate not installed"); };
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const requested = vi.fn(); const decoded = vi.fn();
+  vi.stubGlobal("fetch", async (input: string | URL | Request) => {
+    const path = typeof input === "string" ? input : input instanceof URL ? input.pathname : new URL(input.url).pathname;
+    if (!path.endsWith(`/research/${caseId}.json`)) return original(input);
+    requested(); await gate;
+    const response = new Response(body, { status: 200, headers: { "Content-Type": "application/json" } });
+    const originalJson = response.json.bind(response);
+    response.json = async () => { const data = await originalJson(); decoded(); return data; };
+    return response;
+  });
+  return { requested, decoded, release };
 }
 async function completePrimaryHistory(state: ReturnType<typeof harness>): Promise<void> {
   state.section = "D2"; state.render(); buttonAt(state.root, "锁定并查看同期资料").fire("click");
@@ -542,5 +579,252 @@ describe("research UI help and next steps", () => {
     expect(state.profile.funding_attempts).toHaveLength(0);
     state.ui.leave(); state.render();
     expect(buttonAt(state.root, "自主尝试").attributes["aria-pressed"]).toBe("true");
+  });
+});
+
+describe("research data presentation while backgrounded or obscured", () => {
+  it("restores a locked task after a true external display and excludes its later result", async () => {
+    const { run, manifest } = await fixture();
+    const schedule = { startingCashCents: 7200, participationCents: 2000, t1: 0, t2: 0 } as const;
+    let profile = startHistory(emptyResearchProfile(), { id: "locked-before-external", caseId: "lantern-a", questionVersion: "d2-v1", schedule, initialClaim: "underperform", priorExposure: false });
+    profile = markPendingHistoryExposure(profile, "lantern-a");
+    const restored = validateResearchProfile(JSON.parse(JSON.stringify(profile)), "real");
+    if (!restored.ok) throw new Error(restored.reason);
+    const state = harness(run, manifest, restored.profile, new Set(["lantern-a"]));
+    state.section = "D2"; state.render();
+    expect(state.root.textContent).toContain("锁题时未见 · 锁题后已在其他入口展示");
+    buttonAt(state.root, "继续加载已锁定资料").fire("click");
+    await vi.waitFor(() => expect(state.profile.research_process[0]?.shown).not.toBeNull());
+    const attempt = state.profile.research_process[0]!;
+    expect(attempt).toMatchObject({ id: "locked-before-external", schedule, initialClaim: "underperform", priorExposure: false, exposedCaseIdsAfterLock: ["lantern-a"] });
+    change(selectAt(state.root, "本案例结果相对同期基准"), attempt.shown!.primary.direction);
+    change(selectAt(state.root, "这次主要依据什么"), "根据同日期的数字比较");
+    buttonAt(state.root, "提交这次研究").fire("click");
+    expect(state.profile.knowledge_evidence.find((item) => item.dimension === "K1")).toMatchObject({ priorExposure: false, counted: false, independent: false, exclusion_reason: expect.stringContaining("锁题后在其他入口展示") });
+    expect(state.root.textContent).toContain("锁题后在其他入口展示过相关资料");
+  });
+
+  it("uses recorded post-lock displays for a later second case even if the global seen set is unavailable", async () => {
+    const { run, manifest } = await fixture();
+    const schedule = { startingCashCents: 7200, participationCents: 2000, t1: 0, t2: 0 } as const;
+    let profile = startHistory(emptyResearchProfile(), { id: "secondary-later", caseId: "lantern-a", questionVersion: "d2-v1", schedule, initialClaim: "unknown", priorExposure: false });
+    profile = markPendingHistoryExposure(profile, "lantern-b");
+    const restored = validateResearchProfile(JSON.parse(JSON.stringify(profile)), "real");
+    if (!restored.ok) throw new Error(restored.reason);
+    const state = harness(run, manifest, restored.profile); // No persisted seen-case key.
+    state.section = "D2"; state.render();
+    buttonAt(state.root, "继续加载已锁定资料").fire("click");
+    await vi.waitFor(() => expect(state.profile.research_process[0]?.shown).not.toBeNull());
+    expect(state.profile.research_process[0]?.exposedCaseIdsAfterLock).toEqual(["lantern-b"]);
+    buttonAt(state.root, "再查看另一段历史（复习）").fire("click");
+    await vi.waitFor(() => expect(state.profile.research_process[0]?.shown?.other).toBeDefined());
+    const shown = state.profile.research_process[0]!.shown!;
+    expect(shown.otherPriorExposure).toBe(true);
+    change(selectAt(state.root, "本案例结果相对同期基准"), shown.primary.direction);
+    const difference = shown.other!.asset.gainCents > shown.primary.asset.gainCents ? "outperform" : shown.other!.asset.gainCents < shown.primary.asset.gainCents ? "underperform" : "equal";
+    change(selectAt(state.root, "另一段历史的结果相对第一段"), difference);
+    change(selectAt(state.root, "这些结果能说明什么"), "only_samples");
+    change(selectAt(state.root, "这次主要依据什么"), "查看了不同片段的差异");
+    buttonAt(state.root, "提交这次研究").fire("click");
+    expect(state.profile.knowledge_evidence.find((item) => item.dimension === "K1")).toMatchObject({ counted: true, independent: true });
+    expect(state.profile.knowledge_evidence.find((item) => item.dimension === "K2")).toMatchObject({ counted: false, independent: false, exclusion_reason: expect.stringContaining("其他入口") });
+  });
+
+  it("does not record the task's own first display as external exposure", async () => {
+    const { run, manifest } = await fixture(); const state = harness(run, manifest, emptyResearchProfile());
+    state.section = "D2"; state.render(); buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    await vi.waitFor(() => expect(state.profile.research_process[0]?.shown).not.toBeNull());
+    const attempt = state.profile.research_process[0]!;
+    expect(attempt.exposedCaseIdsAfterLock).toBeUndefined();
+    change(selectAt(state.root, "本案例结果相对同期基准"), attempt.shown!.primary.direction);
+    change(selectAt(state.root, "这次主要依据什么"), "根据同日期的数字比较");
+    buttonAt(state.root, "提交这次研究").fire("click");
+    expect(state.profile.knowledge_evidence.find((item) => item.dimension === "K1")).toMatchObject({ counted: true, independent: true });
+  });
+
+  it("holds an old locked current case until the outstanding settlement completes", async () => {
+    const pending = await earlyExitWithShares();
+    const manifest = await loadMarketInitial();
+    const schedule = { startingCashCents: 7200, participationCents: 2000, t1: 0, t2: 0 } as const;
+    const profile = startHistory(emptyResearchProfile(), { id: "legacy-locked", caseId: pending.caseId, questionVersion: "d2-v1", schedule, initialClaim: "underperform", priorExposure: false });
+    const state = harness(pending, manifest, profile);
+    const fetchSpy = vi.fn(globalThis.fetch); vi.stubGlobal("fetch", fetchSpy);
+    state.section = "D2"; state.render(); await flush();
+    expect(state.root.textContent).toContain("历史对照台暂时等待结算");
+    expect(state.root.textContent).not.toContain("案例固定日程盈亏");
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(state.profile.research_process[0]).toMatchObject({ id: "legacy-locked", schedule, initialClaim: "underperform", priorExposure: false, shown: null });
+    const settled = reduceRun(pending, { type: "apply-quote", quote: await loadMarketStage(pending.caseId, "exit-after-entry", true) });
+    state.ui.leave(); state.run = settled; state.render();
+    buttonAt(state.root, "继续加载已锁定资料").fire("click");
+    await vi.waitFor(() => expect(state.profile.research_process[0]?.shown).not.toBeNull());
+    expect(state.profile.research_process[0]).toMatchObject({ id: "legacy-locked", schedule, initialClaim: "underperform", priorExposure: false });
+  });
+
+  it("keeps an unrelated saved primary visible, but hides a saved related secondary until settlement", async () => {
+    const pending = await earlyExitWithShares(); const manifest = await loadMarketInitial();
+    const primary = JSON.parse(await readFile("public/data/adventure/research/lantern-b.json", "utf8")) as ResearchMarketCase;
+    const other = JSON.parse(await readFile("public/data/adventure/research/lantern-a.json", "utf8")) as ResearchMarketCase;
+    const schedule = { startingCashCents: 7200, participationCents: 2000, t1: 0, t2: 0 } as const;
+    let profile = startHistory(emptyResearchProfile(), { id: "legacy-pair", caseId: "lantern-b", questionVersion: "d2-v1", schedule, initialClaim: "unknown", priorExposure: false });
+    profile = showHistoryEvidence(profile, "legacy-pair", primary, other);
+    const state = harness(pending, manifest, profile);
+    state.section = "D2"; state.render();
+    expect(state.root.textContent).toContain("历史对照台暂时等待结算");
+    expect(state.root.textContent).toContain(primary.title);
+    expect(state.root.textContent).not.toContain(other.title);
+    expect(state.profile.research_process[0]?.shown?.other?.caseId).toBe("lantern-a");
+    const settled = reduceRun(pending, { type: "apply-quote", quote: await loadMarketStage(pending.caseId, "exit-after-entry", true) });
+    state.ui.leave(); state.run = settled; state.render();
+    expect(state.root.textContent).toContain(other.title);
+  });
+
+  it("treats a real early execution as seen when it is the second comparison case", async () => {
+    let run = await earlyExitWithShares();
+    run = reduceRun(run, { type: "apply-quote", quote: await loadMarketStage(run.caseId, "exit-after-entry", true) });
+    expect(run.phase).toBe("ended");
+    const all = await loadMarketInitial();
+    const manifest = { ...all, cases: all.cases.filter((item) => item.caseId === "lantern-a" || item.caseId === "lantern-b") };
+    const state = harness(run, manifest, emptyResearchProfile());
+    state.section = "D2"; state.render(); buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    await vi.waitFor(() => expect(state.profile.research_process[0]?.shown).not.toBeNull());
+    expect(state.profile.research_process[0]).toMatchObject({ caseId: "lantern-b", priorExposure: false });
+    buttonAt(state.root, "再查看另一段历史（复习）").fire("click");
+    await vi.waitFor(() => expect(state.profile.research_process[0]?.shown?.other).toBeDefined());
+    const attempt = state.profile.research_process[0]!;
+    expect(attempt.shown?.other?.caseId).toBe("lantern-a");
+    expect(attempt.shown?.otherPriorExposure).toBe(true);
+    change(selectAt(state.root, "本案例结果相对同期基准"), attempt.shown!.primary.direction);
+    const shown = attempt.shown!;
+    const difference = shown.other!.asset.gainCents > shown.primary.asset.gainCents ? "outperform" : shown.other!.asset.gainCents < shown.primary.asset.gainCents ? "underperform" : "equal";
+    change(selectAt(state.root, "另一段历史的结果相对第一段"), difference);
+    change(selectAt(state.root, "这些结果能说明什么"), "only_samples");
+    change(selectAt(state.root, "这次主要依据什么"), "查看了不同片段的差异");
+    buttonAt(state.root, "提交这次研究").fire("click");
+    expect(state.profile.knowledge_evidence.find((item) => item.dimension === "K1")).toMatchObject({ priorExposure: false, counted: true });
+    expect(state.profile.knowledge_evidence.find((item) => item.dimension === "K2")).toMatchObject({ priorExposure: true, counted: false });
+  });
+
+  it.each(["modal", "background"] as const)("reveals a locked primary once after %s becomes visible", async (obstacle) => {
+    const { run, manifest } = await fixture();
+    const gate = await delayedCase("lantern-a");
+    const state = harness(run, manifest, setHelpPreference(emptyResearchProfile(), "help", "step"));
+    state.section = "D2"; state.render();
+    change(selectAt(state.root, "初步判断"), "underperform");
+    buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    await vi.waitFor(() => expect(gate.requested).toHaveBeenCalledOnce());
+    const locked = structuredClone(state.profile.research_process[0]!);
+    expect(locked).toMatchObject({ initialClaim: "underperform", priorExposure: false, shown: null });
+    if (obstacle === "modal") state.inert = true; else state.hidden = true;
+    state.render(); gate.release();
+    await vi.waitFor(() => expect(gate.decoded).toHaveBeenCalledOnce()); await flush();
+    state.ui.resumePendingPresentation(); await flush();
+    expect(state.root.textContent).not.toContain("案例固定日程盈亏");
+    expect(state.profile.research_process[0]?.shown).toBeNull();
+    expect(state.profile.research_process[0]?.helpUsed).toBe("self");
+    expect(state.seen.has("lantern-a")).toBe(false);
+
+    state.inert = false; state.hidden = false; state.render(); state.ui.resumePendingPresentation();
+    await vi.waitFor(() => expect(state.profile.research_process[0]?.shown).not.toBeNull());
+    expect(state.root.textContent).toContain("案例固定日程盈亏");
+    expect(state.profile.research_process).toHaveLength(1);
+    expect(state.profile.research_process[0]).toMatchObject({ id: locked.id, caseId: locked.caseId, schedule: locked.schedule, initialClaim: locked.initialClaim, priorExposure: false });
+    expect(state.seen.has("lantern-a")).toBe(true);
+    await vi.waitFor(() => expect(state.profile.research_process[0]?.helpUsed).toBe("step"));
+    state.ui.resumePendingPresentation();
+    expect(state.profile.research_process).toHaveLength(1);
+  });
+
+  it.each([false, true])("keeps primary visible while a second case waits and captures actual previous exposure (%s)", async (alreadySeen) => {
+    const { run, manifest } = await fixture();
+    const state = harness(run, manifest, emptyResearchProfile());
+    state.section = "D2"; state.render(); buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    await vi.waitFor(() => expect(state.profile.research_process[0]?.shown).not.toBeNull());
+    const primary = structuredClone(state.profile.research_process[0]!.shown!.primary);
+    const gate = await delayedCase("lantern-b");
+    buttonAt(state.root, "再查看另一段历史（未见）").fire("click");
+    await vi.waitFor(() => expect(gate.requested).toHaveBeenCalledOnce());
+    state.inert = true; state.render(); gate.release();
+    await vi.waitFor(() => expect(gate.decoded).toHaveBeenCalledOnce()); await flush();
+    expect(state.profile.research_process[0]?.shown?.primary).toEqual(primary);
+    expect(state.profile.research_process[0]?.shown?.other).toBeUndefined();
+    expect(state.root.textContent).toContain("案例固定日程盈亏");
+    expect(state.root.textContent).not.toContain("另一段历史的结果相对第一段");
+    expect(state.seen.has("lantern-b")).toBe(false);
+    if (alreadySeen) state.seen.add("lantern-b");
+    state.inert = false; state.render(); state.ui.resumePendingPresentation();
+    await vi.waitFor(() => expect(state.profile.research_process[0]?.shown?.other).toBeDefined());
+    expect(state.profile.research_process[0]?.priorExposure).toBe(false);
+    expect(state.profile.research_process[0]?.shown?.otherPriorExposure).toBe(alreadySeen);
+    expect(state.seen.has("lantern-b")).toBe(true);
+  });
+
+  it("drops a late response on leave and can resume the same saved locked question", async () => {
+    const { run, manifest } = await fixture();
+    const gate = await delayedCase("lantern-a");
+    const state = harness(run, manifest, emptyResearchProfile());
+    state.section = "D2"; state.render(); buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    await vi.waitFor(() => expect(gate.requested).toHaveBeenCalledOnce());
+    const locked = structuredClone(state.profile.research_process[0]!);
+    state.ui.leave(); state.section = "D1"; state.render(); gate.release();
+    await vi.waitFor(() => expect(gate.decoded).toHaveBeenCalledOnce()); await flush();
+    state.ui.resumePendingPresentation();
+    expect(state.profile.research_process[0]?.shown).toBeNull();
+    expect(state.seen.has("lantern-a")).toBe(false);
+    state.section = "D2"; state.render();
+    buttonAt(state.root, "继续加载已锁定资料").fire("click");
+    await vi.waitFor(() => expect(state.profile.research_process[0]?.shown).not.toBeNull());
+    expect(state.profile.research_process).toHaveLength(1);
+    expect(state.profile.research_process[0]).toMatchObject({ id: locked.id, schedule: locked.schedule, priorExposure: false });
+  });
+
+  it("drops a pending response if the run is replaced before the request resolves", async () => {
+    const { run, manifest } = await fixture();
+    const gate = await delayedCase("lantern-a");
+    const state = harness(run, manifest, emptyResearchProfile());
+    state.section = "D2"; state.render(); buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    await vi.waitFor(() => expect(gate.requested).toHaveBeenCalledOnce());
+    state.run = createRun({ seed: 44 }); gate.release();
+    await vi.waitFor(() => expect(gate.decoded).toHaveBeenCalledOnce()); await flush();
+    state.ui.resumePendingPresentation();
+    expect(state.profile.research_process[0]?.shown).toBeNull();
+    expect(state.seen.has("lantern-a")).toBe(false);
+  });
+
+  it("preserves a prior-exposure correction made while the original task waits", async () => {
+    const { run, manifest } = await fixture();
+    const gate = await delayedCase("lantern-a");
+    const state = harness(run, manifest, emptyResearchProfile());
+    state.section = "D2"; state.render(); buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    await vi.waitFor(() => expect(gate.requested).toHaveBeenCalledOnce());
+    const id = state.profile.research_process[0]!.id;
+    state.inert = true; state.render(); gate.release();
+    await vi.waitFor(() => expect(gate.decoded).toHaveBeenCalledOnce()); await flush();
+    state.profile = declarePriorExposure(state.profile, { id: "disclosure", caseId: "lantern-a", priorToTasks: true }).profile;
+    state.inert = false; state.render(); state.ui.resumePendingPresentation();
+    await vi.waitFor(() => expect(state.profile.research_process[0]?.shown).not.toBeNull());
+    expect(state.profile.research_process[0]).toMatchObject({ id, priorExposure: false });
+    expect(state.profile.prior_exposure_disclosures).toHaveLength(1);
+    change(selectAt(state.root, "本案例结果相对同期基准"), state.profile.research_process[0]!.shown!.primary.direction);
+    change(selectAt(state.root, "这次主要依据什么"), "根据同日期的数字比较");
+    buttonAt(state.root, "提交这次研究").fire("click");
+    expect(state.profile.knowledge_evidence.find((item) => item.id === `${id}:K1`)).toMatchObject({ priorExposure: true, counted: false });
+  });
+
+  it("reveals in play-only mode without saving research answers or observations", async () => {
+    const { run, manifest } = await fixture();
+    const gate = await delayedCase("lantern-a");
+    const state = harness(run, manifest, emptyResearchProfile(false));
+    const original = JSON.stringify(state.profile);
+    state.section = "D2"; state.render(); buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    await vi.waitFor(() => expect(gate.requested).toHaveBeenCalledOnce());
+    state.hidden = true; state.render(); gate.release();
+    await vi.waitFor(() => expect(gate.decoded).toHaveBeenCalledOnce()); await flush();
+    expect(state.root.textContent).not.toContain("案例固定日程盈亏");
+    expect(state.seen.has("lantern-a")).toBe(false);
+    state.hidden = false; state.render(); state.ui.resumePendingPresentation();
+    await vi.waitFor(() => expect(state.root.textContent).toContain("案例固定日程盈亏"));
+    expect(state.seen.has("lantern-a")).toBe(true);
+    expect(JSON.stringify(state.profile)).toBe(original);
   });
 });

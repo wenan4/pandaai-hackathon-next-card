@@ -4,7 +4,7 @@ import { compareSelfForecast, type ContractAction, type Feeling, type Forecast }
 import type { Run } from "./types";
 import { button, coins, note, pill } from "./ui-components";
 
-interface Context { refresh: () => void; isVisible: () => boolean; onExposed: (caseId: string) => void }
+interface Context { refresh: () => void; isVisible: () => boolean; canPresentData: () => boolean; onExposed: (caseId: string) => void }
 const feelingOptions: [Feeling, string][] = [["low", "不太在意"], ["mild", "轻微在意"], ["noticeable", "明显在意"], ["strong", "强烈在意"], ["unknown", "说不清"]];
 const actionOptions: [ContractAction, string][] = [["continue", "继续持有"], ["half", "回收一半"], ["all", "全部回收"], ["unknown", "不确定"]];
 const affectResult = { stronger: "比事前预想更强", similar: "与事前预想接近", weaker: "比事前预想更轻", unknown: "信息不足" } as const;
@@ -13,6 +13,7 @@ const actionResult = { same: "与预想一致", different: "与预想不同", un
 /** A self-contained judge simulation. It never writes a forecast or response to a profile. */
 export class CalibrationDemoUI {
   private run: Run | null = null;
+  private pendingRun: Run | null = null;
   private loading = false;
   private error: string | null = null;
   private epoch = 0;
@@ -21,22 +22,39 @@ export class CalibrationDemoUI {
   private afterFeeling: Feeling = "noticeable";
   private afterAction: ContractAction = "half";
   constructor(private ctx: Context) {}
-  reset(): void {
+  /** Abandon unseen work on navigation or run replacement; keep previously presented results. */
+  leave(): void {
     this.epoch++;
+    this.pendingRun = null; this.loading = false; this.error = null;
+  }
+  reset(): void {
+    this.leave();
     this.run = null; this.loading = false; this.error = null;
     this.beforeFeeling = "mild"; this.beforeAction = "continue";
     this.afterFeeling = "noticeable"; this.afterAction = "half";
   }
+  /** Flush only after the judge page is foregrounded and unobscured. */
+  resumePendingPresentation(): void {
+    if (!this.pendingRun || !this.ctx.isVisible() || !this.ctx.canPresentData()) return;
+    const run = this.pendingRun;
+    this.pendingRun = null; // refresh may synchronously call the hook again.
+    this.run = run; this.loading = false;
+    this.ctx.refresh();
+    this.ctx.onExposed(run.caseId);
+  }
   private async load(): Promise<void> {
-    if (this.loading) return;
+    if (this.loading || this.pendingRun) return;
     const epoch = ++this.epoch;
     this.loading = true; this.error = null; this.ctx.refresh();
     try {
       const run = await makeCalibrationDemo();
       if (epoch !== this.epoch || !this.ctx.isVisible()) return;
-      this.run = run; this.ctx.onExposed(run.caseId);
+      this.pendingRun = run;
     } catch (error) { if (epoch === this.epoch && this.ctx.isVisible()) this.error = error instanceof Error ? error.message : "案例加载失败，请重试。"; }
-    finally { if (epoch === this.epoch) { this.loading = false; if (this.ctx.isVisible()) this.ctx.refresh(); } }
+    finally { if (epoch === this.epoch) {
+      if (this.pendingRun) this.resumePendingPresentation();
+      else { this.loading = false; if (this.ctx.isVisible()) this.ctx.refresh(); }
+    } }
   }
   private select<T extends string>(label: string, value: T, options: [T, string][], set: (value: T) => void): HTMLElement {
     return h("label", { class: "field" }, label, h("select", { "data-focus-key": `sim-${label}`, onchange: (event: Event) => { set((event.currentTarget as HTMLSelectElement).value as T); this.ctx.refresh(); } }, options.map(([id, title]) => h("option", { value: id, selected: id === value }, title))));

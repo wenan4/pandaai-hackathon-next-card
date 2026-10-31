@@ -43,7 +43,7 @@ export interface GameViewContext {
   openTask: (task: "d1" | "d2") => void;
   openPile: (pile: PileKind) => void;
   openEnemyPlan: () => void;
-  archiveShown: (caseId: string) => void;
+  archiveShown: (view: HTMLDetailsElement, displayedRun: Run) => boolean;
   nextTutorial: () => void;
   skipTutorial: () => void;
 }
@@ -190,7 +190,8 @@ function archiveView(ctx: GameViewContext): HTMLElement {
   if (!c) return ctx.initialCaseError ? h("div", { class: "stack" }, note(`历史档案暂时无法加载：${ctx.initialCaseError}`, true), button("重试加载档案", ctx.retryInitialCase, "small secondary", ctx.initialCaseLoading)) : h("p", { class: "hint", role: "status" }, "正在加载本局已固定案例的历史档案……");
   const a = c.history.asset; const b = c.history.benchmark;
   const view = details("翻开已购买的历史档案", h("p", { class: "hint" }, `截至 ${dateText(c.decisionDate)} 的资料；绿色为案例资产，金色为${c.benchmark}。两条线各自从同一起点比较，不包含未来行情。`), chart(a, b, "案例资产与同期基准的历史走势"), h("div", { class: "metric-grid" }, metric("案例这一段", `${((a.at(-1)! / a[0]! - 1) * 100).toFixed(1)}%`), metric("同期基准", `${((b.at(-1)! / b[0]! - 1) * 100).toFixed(1)}%`)));
-  view.addEventListener("toggle", () => { if (!view.open) return; ctx.archiveShown(ctx.run.caseId); if (!ctx.run.history.some((event) => event.action === "open-archive")) ctx.action({ type: "open-archive" }); });
+  view.setAttribute("data-archive-view", "true");
+  view.addEventListener("toggle", () => { if (!ctx.archiveShown(view, ctx.run)) return; if (!ctx.run.history.some((event) => event.action === "open-archive")) ctx.action({ type: "open-archive" }); });
   return view;
 }
 function entryPanel(ctx: GameViewContext): HTMLElement {

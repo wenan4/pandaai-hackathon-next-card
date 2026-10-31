@@ -854,6 +854,8 @@ export interface StartHistory {
   priorExposure: boolean;
 }
 export interface HistoryAttempt extends StartHistory {
+  /** Data shown elsewhere after this question was locked and before it was submitted. */
+  exposedCaseIdsAfterLock?: string[];
   shown: { primary: HistoryComparison; other?: HistoryComparison; otherPriorExposure?: boolean } | null;
   helpUsed: HelpPreference;
   answerExposed: boolean;
@@ -906,6 +908,26 @@ export function startHistory(profile: ResearchProfile, input: StartHistory): Res
   const attempt: HistoryAttempt = { ...input, priorExposure: input.priorExposure || shownBefore || hasDeclaredPriorExposure(profile, input.caseId) || previous.some((a) => a.priorExposure), schedule: { ...input.schedule }, shown: null, helpUsed, answerExposed: previous.some((a) => a.answerExposed), submitted: false, final: null };
   return { ...profile, research_process: [...profile.research_process, attempt] };
 }
+
+/** Record a real external display without changing the locked claim or already submitted facts. */
+export function markPendingHistoryExposure(profile: ResearchProfile, caseId: string, excludeAttemptId?: string): ResearchProfile {
+  if (!profile.enabled) return profile;
+  requireId(caseId);
+  let changed = false;
+  const attempts = profile.research_process.map((attempt) => {
+    if (attempt.submitted || attempt.id === excludeAttemptId || attempt.exposedCaseIdsAfterLock?.includes(caseId)) return attempt;
+    // The second case may not have been chosen yet. Keep the real display fact;
+    // only relevant primary/secondary relationships affect the eventual result.
+    changed = true;
+    return { ...attempt, exposedCaseIdsAfterLock: [...(attempt.exposedCaseIdsAfterLock ?? []), caseId] };
+  });
+  return changed ? { ...profile, research_process: attempts } : profile;
+}
+
+function exposedAfterLock(attempt: HistoryAttempt, caseId: string): boolean {
+  const related = relatedCaseIds(caseId);
+  return (attempt.exposedCaseIdsAfterLock ?? []).some((id) => related.includes(id));
+}
 /** Only records what was actually shown. A second historical case is optional. */
 export function showHistoryEvidence(profile: ResearchProfile, id: string, primary: ResearchMarketCase, other?: ResearchMarketCase, otherPriorExposure = false): ResearchProfile {
   return updateAttempt(profile, id, (a) => {
@@ -948,17 +970,21 @@ export function submitHistory(profile: ResearchProfile, id: string, answers: His
   let next = updateAttempt(profile, id, (a) => ({ ...a, submitted: true, final: { ...answers, process } }));
   const changes: ProfileChange[] = [];
   const primaryPrior = attempt.priorExposure || hasDeclaredPriorExposure(profile, attempt.caseId);
-  const shared = { caseId: attempt.caseId, independent: attempt.helpUsed === "self" && !attempt.answerExposed && !primaryPrior, help: attempt.helpUsed, answerExposed: attempt.answerExposed, priorExposure: primaryPrior, evidence_ids: [id], };
+  const primaryExposedAfter = exposedAfterLock(attempt, attempt.caseId);
+  const exposureReason = "锁题后在其他入口展示过相关资料，本项作为复核，不计为新的独立依据。";
+  const shared = { caseId: attempt.caseId, independent: attempt.helpUsed === "self" && !attempt.answerExposed && !primaryPrior && !primaryExposedAfter, help: attempt.helpUsed, answerExposed: attempt.answerExposed, priorExposure: primaryPrior, evidence_ids: [id], };
   if (feedback.comparison) {
-    const result = recordKnowledge(next, { ...shared, id: `${id}:K1`, questionKey: `D2:${attempt.caseId}:benchmark:${attempt.questionVersion}`, dimension: "K1", correct: feedback.comparison.correct, detail: `同一日程中资产盈亏 ${(attempt.shown.primary.asset.gainCents / 100).toFixed(2)}，同期基准 ${(attempt.shown.primary.benchmark.gainCents / 100).toFixed(2)} 金币。` });
+    const result = recordKnowledge(next, { ...shared, id: `${id}:K1`, questionKey: `D2:${attempt.caseId}:benchmark:${attempt.questionVersion}`, dimension: "K1", correct: feedback.comparison.correct, detail: `同一日程中资产盈亏 ${(attempt.shown.primary.asset.gainCents / 100).toFixed(2)}，同期基准 ${(attempt.shown.primary.benchmark.gainCents / 100).toFixed(2)} 金币。` }, primaryExposedAfter ? exposureReason : undefined);
     next = result.profile; changes.push(result.change);
   }
   if (feedback.k2Correct !== null && attempt.shown.other && feedback.historyDifference) {
     const expected = feedback.historyDifference.expected;
     const pair = [attempt.caseId, attempt.shown.other.caseId].sort().join(":");
     const k2PriorExposure = primaryPrior || !!attempt.shown.otherPriorExposure || hasDeclaredPriorExposure(profile, attempt.shown.other.caseId);
+    const k2ExposedAfter = primaryExposedAfter || exposedAfterLock(attempt, attempt.shown.other.caseId);
     const overlap = relatedCaseIds(attempt.caseId).includes(attempt.shown.other.caseId);
-    const result = recordKnowledge(next, { ...shared, priorExposure: k2PriorExposure, independent: !overlap && attempt.helpUsed === "self" && !attempt.answerExposed && !k2PriorExposure, id: `${id}:K2`, questionKey: `D2:${pair}:boundary:${attempt.questionVersion}`, dimension: "K2", correct: feedback.k2Correct, detail: `固定日程下新片段相对原片段为 ${expected}；这只描述样本，不预测未来。` }, overlap ? "这两段历史互相重叠，只作相关情境练习，不增加独立依据。" : undefined);
+    const exclusion = [overlap ? "这两段历史互相重叠，只作相关情境练习，不增加独立依据。" : "", k2ExposedAfter ? exposureReason : ""].filter(Boolean).join(" ");
+    const result = recordKnowledge(next, { ...shared, priorExposure: k2PriorExposure, independent: !overlap && attempt.helpUsed === "self" && !attempt.answerExposed && !k2PriorExposure && !k2ExposedAfter, id: `${id}:K2`, questionKey: `D2:${pair}:boundary:${attempt.questionVersion}`, dimension: "K2", correct: feedback.k2Correct, detail: `固定日程下新片段相对原片段为 ${expected}；这只描述样本，不预测未来。` }, exclusion || undefined);
     next = result.profile; changes.push(result.change);
   }
   const explained = explainTaskGuidance(profile, next, changes, "D2");
