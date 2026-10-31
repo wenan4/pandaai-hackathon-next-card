@@ -89,8 +89,8 @@ input[type=range] { width: 100%; accent-color: #64926f; }
 details { border-top: 1px solid #e6e8d9; padding-top: 13px; }
 details summary { cursor: pointer; color: #597b60; font-size: .85rem; font-weight: 700; list-style: none; }
 details summary::-webkit-details-marker { display: none; }
-details summary::after { content: "+"; float: right; color: #91a58b; font-size: 1.1rem; }
-details[open] summary::after { content: "−"; }
+details > summary::after { content: "+"; float: right; color: #91a58b; font-size: 1.1rem; }
+details[open] > summary::after { content: "−"; }
 details > :not(summary) { margin-top: 12px; }
 
 /* The first page keeps the illustrated city visible and lets the invitation breathe. */
