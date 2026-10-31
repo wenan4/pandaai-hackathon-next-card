@@ -1,9 +1,11 @@
 import "./ui-report.css";
 import { h, type Child } from "../ui/dom";
 import { gameplayHighlights } from "./gameplay-highlights";
-import { recommendResearch, type Direction, type Knowledge, type KnowledgeEvidence, type Reason, type ResearchProfile } from "./research";
+import { recommendationPlan, type Direction, type Knowledge, type KnowledgeEvidence, type Reason, type ResearchProfile } from "./research";
+import type { MarketManifest } from "./market";
 import type { Run } from "./types";
 import { button, coins, deckSummary, details, moneyHistory, pill } from "./ui-components";
+import { taskAvailability } from "./ui-availability";
 import { nodeNames } from "./ui-game";
 
 const names: Record<Knowledge, string> = { K1: "同期比较", K2: "样本边界", K3: "可用现金" };
@@ -66,6 +68,8 @@ export function researchSummary(profile: ResearchProfile): HTMLElement {
 interface ReportContext {
   run: Run;
   profile: ResearchProfile;
+  manifest: MarketManifest | null;
+  wasCaseSeen: (caseId: string) => boolean;
   header: HTMLElement;
   preferences: Child;
   calibration: Child;
@@ -89,7 +93,8 @@ export function reportView(ctx: ReportContext): HTMLElement {
   const subtitle = active ? `现在位于${nodeNames[run.node]}，随时可以继续。` : run.status === "cleared" ? "你完成了守灯者的挑战。" : run.status === "returned" ? "这段旅程的发现，可以慢慢回看。" : "这次冒险结束了，带走的发现仍然属于你。";
   const highlights = gameplayHighlights(run).slice(0, 3);
   const observations = profile.enabled ? profile.journey_observations.slice(-2).reverse() : [];
-  const rec = recommendResearch(profile);
+  const plan = recommendationPlan(profile, taskAvailability(run, profile, ctx.manifest, ctx.wasCaseSeen));
+  const rec = plan.recommendation;
   const task = profile.enabled ? rec.task_id ?? "D1" : "D1";
   const alternate = task === "D1" ? "D2" : "D1";
   const taskName = (value: "D1" | "D2"): string => value === "D1" ? "资金安排台" : "历史对照台";
@@ -108,8 +113,9 @@ export function reportView(ctx: ReportContext): HTMLElement {
       highlights.length ? h("ul", { class: "report-highlight-list" }, highlights.map((item, index) => h("li", null, h("span", { class: "report-highlight-number", "aria-hidden": "true" }, String(index + 1).padStart(2, "0")), h("div", null, h("strong", null, item.title), h("p", null, item.text))))) : h("p", { class: "hint" }, "旅程刚开始，继续冒险会留下新的战斗记录。")),
     profile.enabled ? h("section", { class: "panel report-observations" }, h("h2", null, "这一路的线索"), observations.length ? h("ul", { class: "report-observation-list" }, observations.map((item) => h("li", null, item.text))) : h("p", { class: "hint" }, "暂时没有可描述的经营选择。"),
       h("div", { class: "report-knowledge" }, h("h3", null, "任务观察"), h("div", { class: "report-knowledge-list" }, (["K1", "K2", "K3"] as Knowledge[]).map((dimension) => { const item = profile.knowledge_observations.find((observation) => observation.dimension === dimension); return h("div", null, h("span", null, names[dimension]), h("strong", null, shortStatus[item?.status ?? "unobserved"] ?? "尚未观察")); })), h("p", { class: "fineprint" }, "只反映本次任务，未观察的保持未知。"))) : h("section", { class: "panel report-observations" }, h("h2", null, "这一路的线索"), h("p", { class: "hint" }, "你选择了只玩游戏；可以自由练习，不保存研究观察。")),
-    h("section", { class: "panel report-next" }, h("div", null, h("div", { class: "eyebrow" }, profile.enabled && rec.task_id ? "A SUGGESTED NEXT STEP" : "A STEP YOU CAN TRY"), h("h2", null, profile.enabled && rec.task_id ? `推荐 · ${taskName(task)}` : `可先试试${taskName(task)}`), h("p", { class: "hint" }, profile.enabled ? rec.reason : "两个练习都可自由选择或跳过。")), button(`打开${taskName(task)}`, () => ctx.openTask(task), "gold")),
+    h("section", { class: "panel report-next" }, h("div", null, h("div", { class: "eyebrow" }, profile.enabled && rec.task_id ? "A SUGGESTED NEXT STEP" : "A STEP YOU CAN TRY"), h("h2", null, profile.enabled && rec.task_id ? `推荐 · ${taskName(task)}` : `可先试试${taskName(task)}`), h("p", { class: "hint" }, rec.reason), h("p", { class: "fineprint" }, plan.offers[task])), button(`打开${taskName(task)}`, () => ctx.openTask(task), "gold")),
     h("section", { class: "panel report-more", "aria-label": "更多旅程内容" }, otherTask, evidence,
+      reportDetails("为什么这样推荐与选择帮助", h("div", { class: "report-expanded stack" }, h("p", { class: "hint" }, rec.reason), plan.continuity ? h("p", { class: "hint" }, plan.continuity) : null, h("p", { class: "hint" }, `帮助方式：${rec.help_reason}`), h("p", { class: "hint" }, `资金安排：${plan.offers.D1}`), h("p", { class: "hint" }, `历史对照：${plan.offers.D2}`), plan.observed_steps.map((item) => h("p", { class: "fineprint" }, item.text, item.excluded_evidence_ids?.length ? ` ${item.limitations.find((limit) => limit.includes("本人补充")) ?? "本人补充了先前已见，相关操作保留。"}` : "")))),
       reportDetails("查看牌组、金币账本与旅程依据", h("div", { class: "report-expanded stack" }, h("h3", null, "当前牌组"), deckSummary(run), h("h3", null, "金币往来"), moneyHistory(run), highlights.length ? h("div", null, h("h3", null, "旅程亮点依据"), highlights.map((item) => h("p", { class: "fineprint" }, `${item.title}：${item.evidenceIds.join("、")}`))) : null)),
       profile.enabled ? reportDetails("更改目标与帮助", ctx.preferences) : null),
     h("div", { class: "button-row report-actions" }, active ? button("返回营地", ctx.resume, "secondary") : button("再来一局", ctx.newRun, "secondary"), active ? null : button("回到首页", ctx.home, "ghost"))));

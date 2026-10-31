@@ -321,7 +321,7 @@ function preferencePanel(): HTMLElement {
     h("p", { class: "hint strong" }, "希望怎样获得帮助？"), h("p", { class: "fineprint" }, help ? "任务会使用你选择的帮助方式；随时可以调整。" : "尚未选择。进入任务后可查看建议，再决定是否使用帮助。"), h("div", { class: "selection-row" }, ([ ["self", "自主尝试"], ["hint", "给我提示"], ["step", "分步说明"] ] as const).map(([id, label]) => h("button", { type: "button", class: `choice${help === id ? " selected" : ""}`, "aria-pressed": String(help === id), "data-focus-key": `preference-help-${id}`, onclick: () => { setProfile(setHelpPreference(profile, uid("help"), id as HelpPreference)); if (modal) showDialog("目标与帮助（可跳过）", preferencePanel(), [button("完成", closeDialog, "secondary")]); } }, label))));
 }
 function report(): HTMLElement {
-  return reportView({ run: run!, profile, header: topbar(), preferences: profile.enabled ? preferencePanel() : null, calibration: profile.enabled ? researchUI.calibrationReport() : null,
+  return reportView({ run: run!, profile, manifest, wasCaseSeen: (caseId) => hasSeenRelatedCase(seenCases, caseId), header: topbar(), preferences: profile.enabled ? preferencePanel() : null, calibration: profile.enabled ? researchUI.calibrationReport() : null,
     openTask: (task) => changeScreen(task === "D1" ? "d1" : "d2"), resume: () => changeScreen("game"), newRun: () => askNewRun(profile.enabled), home: () => changeScreen("intro"),
     saveReason: (evidenceId, reason) => { if (!reason) { flash("请选择一个原因。"); return; } setProfile(addUserReason(profile, uid("reason"), evidenceId, reason)); flash("已保存你的补充。"); } });
 }
@@ -395,7 +395,7 @@ async function compareJudgeStudy(): Promise<void> {
   } catch (error) { if (version === judgeStudyVersion && screen === "judge") flash(`研究对照加载失败：${errorMessage(error)}`); }
   finally { if (version === judgeStudyVersion) { judgeStudyLoading = false; if (screen === "judge") render(); } }
 }
-const researchUI = new ResearchUI({ getRun: () => run!, getProfile: () => profile, setProfile, getManifest: () => manifest, back: () => changeScreen(run?.phase === "ended" ? "report" : "game"), openTask: (task) => changeScreen(task === "D1" ? "d1" : "d2"), refresh: () => render(), notify: flash, uid, isCaseKnown: (caseId) => !!run && casesAreRelated(caseId, run.caseId) && priorExposure, wasCaseSeen: (caseId) => hasSeenRelatedCase(seenCases, caseId), markCaseSeen: markExternalExposure });
+const researchUI = new ResearchUI({ getRun: () => run!, getProfile: () => profile, setProfile, getManifest: () => manifest, retryManifest: loadInitial, manifestLoading: () => initialLoading, manifestError: () => initialError, back: () => changeScreen(run?.phase === "ended" ? "report" : "game"), openTask: (task) => changeScreen(task === "D1" ? "d1" : "d2"), refresh: () => render(), notify: flash, uid, isCaseKnown: (caseId) => !!run && casesAreRelated(caseId, run.caseId) && priorExposure, wasCaseSeen: (caseId) => hasSeenRelatedCase(seenCases, caseId), markCaseSeen: markExternalExposure });
 const calibrationDemoUI = new CalibrationDemoUI({ refresh: () => render(), isVisible: () => screen === "judge", onExposed: markExternalExposure });
 function render(preserve = true): void {
   const active = preserve ? (document.activeElement as HTMLElement | null)?.dataset.focusKey : undefined;

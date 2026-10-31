@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeCalibrationDemo } from "./calibration-demo";
 import { reduceRun } from "./engine";
 import { loadMarketInitial, loadMarketStage, resetMarketCacheForTest, type MarketManifest } from "./market";
-import { emptyResearchProfile, setHelpPreference, type ResearchProfile } from "./research";
+import { emptyResearchProfile, fundingScenarioFromRun, setHelpPreference, showHistoryEvidence, simulateFundingPlan, startHistory, type ResearchProfile } from "./research";
+import type { ResearchMarketCase } from "./market";
 import type { Run } from "./types";
 import { hasSeenRelatedCase } from "./ui-case";
 import { ResearchUI } from "./ui-research";
@@ -70,20 +71,56 @@ async function fixture(): Promise<{ run: Run; manifest: MarketManifest }> {
   return { run, manifest: await loadMarketInitial() };
 }
 function harness(run: Run, manifest: MarketManifest, initial: ResearchProfile, seen = new Set<string>()) {
-  let profile = initial; let section: "D1" | "D2" = "D1"; let inert = false; let id = 0;
+  let profile = initial; let section: "D1" | "D2" = "D1"; let inert = false; let id = 0; let currentManifest: MarketManifest | null = manifest; let loading = false; let error: string | null = null;
+  const retryManifest = vi.fn();
   const root = new FakeElement("root"); root.root = true;
   const render = (): void => {
     const content = (section === "D1" ? ui.renderFunding() : ui.renderHistory()) as unknown as FakeElement;
     if (inert) content.setAttribute("inert", "");
     root.replaceChildren(content);
   };
-  const ui = new ResearchUI({ getRun: () => run, getProfile: () => profile, setProfile: (value) => { profile = value; render(); }, getManifest: () => manifest,
+  const ui = new ResearchUI({ getRun: () => run, getProfile: () => profile, setProfile: (value) => { profile = value; render(); }, getManifest: () => currentManifest, retryManifest, manifestLoading: () => loading, manifestError: () => error,
     back: vi.fn(), openTask: (task) => { ui.leave(); section = task; render(); }, refresh: render, notify: (message) => { throw new Error(message); }, uid: (prefix) => `${prefix}-${++id}`,
     isCaseKnown: () => false, wasCaseSeen: (caseId) => hasSeenRelatedCase(seen, caseId), markCaseSeen: (caseId) => { seen.add(caseId); } });
-  return { root, ui, render, get profile() { return profile; }, set profile(value: ResearchProfile) { profile = value; }, set section(value: "D1" | "D2") { section = value; }, set inert(value: boolean) { inert = value; }, seen };
+  return { root, ui, render, retryManifest, get profile() { return profile; }, set profile(value: ResearchProfile) { profile = value; }, set section(value: "D1" | "D2") { section = value; }, set inert(value: boolean) { inert = value; }, set manifest(value: MarketManifest | null) { currentManifest = value; }, set loading(value: boolean) { loading = value; }, set error(value: string | null) { error = value; }, seen };
 }
 
 describe("research UI help and next steps", () => {
+  it("retries a missing case catalogue without mistaking it for exhausted cases", async () => {
+    const { run, manifest } = await fixture();
+    const state = harness(run, manifest, emptyResearchProfile());
+    state.manifest = null; state.error = "网络不可用。"; state.section = "D2"; state.render();
+    expect(state.root.textContent).toContain("案例目录加载失败");
+    expect(state.root.textContent).not.toContain("目前没有可用的未见片段");
+    buttonAt(state.root, "重新加载案例目录").fire("click");
+    expect(state.retryManifest).toHaveBeenCalledOnce();
+    expect(state.profile.research_process).toHaveLength(0);
+    state.loading = true; state.error = null; state.render();
+    expect(buttonAt(state.root, "正在加载案例目录…").attributes.disabled).toBe("");
+    state.loading = false; state.manifest = manifest; state.render();
+    expect(buttonAt(state.root, "锁定并查看同期资料").attributes.disabled).toBeUndefined();
+    expect(state.profile.research_process).toHaveLength(0);
+  });
+  it("continues a locked task when the catalogue is missing and restores the second-case choice after recovery", async () => {
+    const { run, manifest } = await fixture();
+    const schedule = { startingCashCents: 7200, participationCents: 2000, t1: 0 as const, t2: 0 as const };
+    let profile = startHistory(emptyResearchProfile(), { id: "old-pending", caseId: "lantern-a", questionVersion: "d2-v1", schedule, initialClaim: "unknown", priorExposure: false });
+    const state = harness(run, manifest, profile);
+    state.manifest = null; state.section = "D2"; state.render();
+    expect(state.root.textContent).toContain("继续已锁定的历史研究");
+    buttonAt(state.root, "继续加载已锁定资料").fire("click");
+    await vi.waitFor(() => expect(state.profile.research_process[0]?.shown).not.toBeNull());
+    expect(state.profile.research_process[0]?.priorExposure).toBe(false);
+    state.manifest = manifest; state.render();
+    expect(buttonAt(state.root, "再查看另一段历史（未见）")).toBeDefined();
+    // Re-entering an already shown pending task retains the original pre-display exposure.
+    const primary = JSON.parse(await readFile("public/data/adventure/research/lantern-a.json", "utf8")) as ResearchMarketCase;
+    profile = showHistoryEvidence(startHistory(emptyResearchProfile(), { id: "shown-pending", caseId: "lantern-a", questionVersion: "d2-v1", schedule, initialClaim: "unknown", priorExposure: false }), "shown-pending", primary);
+    const shown = harness(run, manifest, profile); shown.manifest = null; shown.section = "D2"; shown.render();
+    shown.manifest = manifest; shown.render();
+    expect(buttonAt(shown.root, "再查看另一段历史（未见）")).toBeDefined();
+    expect(shown.profile.research_process[0]?.priorExposure).toBe(false);
+  });
   it("does not submit the selected mode as exposed when the task is still behind a modal", async () => {
     const { run, manifest } = await fixture();
     const state = harness(run, manifest, setHelpPreference(emptyResearchProfile(), "preferred", "step"));
@@ -172,6 +209,44 @@ describe("research UI help and next steps", () => {
     await vi.waitFor(() => expect(state.profile.research_process.at(-1)?.shown).not.toBeNull());
     expect(state.profile.research_process).toHaveLength(2);
     expect(state.profile.research_process.at(-1)).toMatchObject({ caseId: "lantern-b", priorExposure: false });
+  });
+
+  it("describes actual available resources and compares recommendation snapshots on submission", async () => {
+    const { run, manifest } = await fixture();
+    const state = harness(run, manifest, emptyResearchProfile(), new Set(["lantern-a", "lantern-b"]));
+    state.render();
+    expect(state.root.textContent).toContain("可用本局已发生的资金与采购日程");
+    buttonAt(state.root, "可以支付").fire("click");
+    buttonAt(state.root, "提交判断并保存计划").fire("click");
+    expect(state.root.textContent).toContain("目前可选历史片段均标为已见");
+    expect(state.root.textContent).toContain("推荐为何变化或维持");
+    expect(state.root.textContent).not.toContain("可以在新情境继续核对");
+  });
+
+  it("starts with an actual unaffordable purchase, preserves a manual choice, and falls back only when unreachable", async () => {
+    const fixtureState = await fixture(); let run = fixtureState.run;
+    const upgrade = run.deck.find((card) => card.cardId === "C07")!;
+    const later = run.deck.find((card) => card.cardId === "C01" && !card.upgraded)!;
+    run = reduceRun(run, { type: "upgrade-card", cardInstanceId: upgrade.instanceId });
+    run = reduceRun(run, { type: "purchase-attempted", purchase: "upgrade-card", cardInstanceId: later.instanceId });
+    const state = harness(run, fixtureState.manifest, emptyResearchProfile()); state.render();
+    let select = selectAt(state.root, "选择要核查的采购");
+    const selected = find(select, (item) => item.tag === "option" && "selected" in item.attributes)!;
+    expect(selected.textContent).toContain("原局尝试但未支付的采购");
+    const first = find(select, (item) => item.tag === "option" && item.textContent.includes("实际采购"))!;
+    change(select, first.attributes.value!);
+    select = selectAt(state.root, "选择要核查的采购");
+    expect(find(select, (item) => item.tag === "option" && "selected" in item.attributes)?.attributes.value).toBe(first.attributes.value);
+    const attempted = find(select, (item) => item.tag === "option" && item.textContent.includes("原局尝试但未支付"))!;
+    change(select, attempted.attributes.value!);
+    const moneyLabel = find(state.root, (item) => item.tag === "label" && item.textContent.startsWith("试算的参与金额"))!;
+    const money = find(moneyLabel, (item) => item.tag === "input")!;
+    change(money, "1000");
+    select = selectAt(state.root, "选择要核查的采购");
+    const derived = fundingScenarioFromRun(run)!;
+    const unpaid = simulateFundingPlan(derived.scenario, { ...derived.plan, participationCents: derived.scenario.startingCashCents }).rows.find((row) => row.canPay === false)!;
+    expect(find(select, (item) => item.tag === "option" && "selected" in item.attributes)?.attributes.value).toBe(unpaid.id);
+    expect(unpaid.id).not.toBe(attempted.attributes.value);
   });
 
   it("does not submit while another historical fragment is still loading", async () => {

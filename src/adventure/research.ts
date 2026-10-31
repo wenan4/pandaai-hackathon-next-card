@@ -69,6 +69,19 @@ export interface Recommendation {
   available_tasks: ["D1", "D2"];
   evidence_ids: string[];
 }
+/** What the task screens can actually offer now; no case counts or future prices. */
+export interface RecommendationAvailability {
+  funding: "journey" | "example" | "unavailable";
+  history: "unseen" | "review" | "pending" | "unavailable";
+}
+export interface RecommendationPlan {
+  recommendation: Recommendation;
+  offers: { D1: string; D2: string };
+  observed_steps: KnowledgeObservation[];
+  /** Why a completed task did not automatically replace the current route. */
+  continuity: string | null;
+}
+export interface RecommendationPlanChange { task_changed: boolean | null; explanation: string }
 export interface TaskGuidance {
   task_id: ResearchTask | null;
   help: HelpPreference;
@@ -187,7 +200,7 @@ function knowledgeFor(profile: ResearchProfile, dimension: Knowledge): Knowledge
 function refresh(profile: ResearchProfile): ResearchProfile {
   const observations = (["K1", "K2", "K3"] as const).map((d) => knowledgeFor(profile, d));
   return { ...profile, knowledge_observations: observations,
-    learning_needs: observations.filter((o) => o.status === "needs_confirmation" || o.status === "assisted" || o.status === "conflicting").map((o) => `${dimensionNames[o.dimension]}：${o.status === "assisted" ? "可在新情境自行练习" : o.status === "conflicting" ? "查看不同情境的依据" : "可先核对这一步"}`) };
+    learning_needs: observations.filter((o) => o.status === "needs_confirmation" || o.status === "assisted" || o.status === "conflicting").map((o) => `${dimensionNames[o.dimension]}：${o.status === "assisted" ? "可继续自行练习" : o.status === "conflicting" ? "查看不同情境的依据" : "可先核对这一步"}`) };
 }
 export function emptyResearchProfile(enabled = true, source: Run["source"] = "real"): ResearchProfile {
   return refresh({ version: "research-v1", enabled, source, journey_observations: [], knowledge_evidence: [], knowledge_observations: [], research_process: [], funding_attempts: [], funding_exposure: [], stated_interest: [], learning_needs: [], help_preference: [], user_reasons: [], forecasts: [], calibration: [], prior_exposure_disclosures: [], profile_changes: [], real_world_financial_capacity: "not_assessed", stable_trading_type: "not_established" });
@@ -345,7 +358,7 @@ export function guidanceForTask(profile: ResearchProfile, taskId: ResearchTask |
   const relevant = profile.knowledge_observations.filter((o) => taskId === "D1" ? o.dimension === "K3" : o.dimension !== "K3");
   const need = (["conflicting", "needs_confirmation", "assisted"] as const).map((status) => relevant.find((o) => o.status === status)).find((o) => o !== undefined);
   if (need) {
-    const why = need.status === "conflicting" ? "不同情境表现不同，可以先对照依据" : need.status === "assisted" ? "已有借助提示完成的记录，可以在新情境再练习" : "已有任务的结论仍待确认，可以先核对这一步";
+    const why = need.status === "conflicting" ? "不同情境表现不同，可以先对照依据" : need.status === "assisted" ? "已有借助提示完成的记录，可以继续练习" : "已有任务的结论仍待确认，可以先核对这一步";
     return { task_id: taskId, help: "hint", reason: `${dimensionNames[need.dimension]}：${why}；提示随时可关闭。`, explicit: false, evidence_ids: [...need.evidence_ids] };
   }
   const independent = relevant.find((o) => o.status === "independent");
@@ -370,6 +383,9 @@ function explainTaskGuidance(beforeProfile: ResearchProfile, afterProfile: Resea
 }
 
 export function recommendResearch(profile: ResearchProfile): Recommendation {
+  // A disabled profile may be an old in-memory object: do not inspect or
+  // reuse any preferences, observations, evidence or reasons it contains.
+  if (!profile.enabled) return { task_id: null, reason: "当前不生成观察；两个练习可自由选择或跳过。", reason_type: "observation_disabled", help: "hint", help_reason: "当前不生成观察，可自行选择自主、提示或分步。", help_explicit: false, help_evidence_ids: [], user_can_switch: true, available_tasks: ["D1", "D2"], evidence_ids: [] };
   const goal = profile.stated_interest.at(-1);
   const reason = profile.user_reasons.at(-1);
   const invalid = new Set((profile.prior_exposure_disclosures ?? []).flatMap((d) => d.evidenceIds));
@@ -391,13 +407,80 @@ export function recommendResearch(profile: ResearchProfile): Recommendation {
     const archive = [...profile.journey_observations].reverse().find((o) => o.rule_id === "J2-01");
     if (limited) { task = "D1"; why = "你曾遇到一次无法支付的采购，可以试算另一种安排。"; kind = "purchase_constraint"; ids = limited.evidence_ids; }
     else if (calibration) { task = "D1"; why = "这次自报感受比事前预想更强，可以比较不同参与金额。"; kind = "calibration"; ids = [calibration.forecastId]; }
-    else if (unresolved) { task = unresolved.dimension === "K3" ? "D1" : "D2"; why = `${dimensionNames[unresolved.dimension]}这一步可在新情境再核查。`; kind = "task_evidence"; ids = unresolved.evidence_ids; }
-    else if (lastEvidence) { task = lastEvidence.dimension === "K3" ? "D1" : "D2"; why = `${dimensionNames[lastEvidence.dimension]}已有一次任务记录，可以在新情境继续核对。`; kind = "task_evidence"; ids = [lastEvidence.id]; }
+    else if (unresolved) { task = unresolved.dimension === "K3" ? "D1" : "D2"; why = `${dimensionNames[unresolved.dimension]}这一步可以继续核查。`; kind = "task_evidence"; ids = unresolved.evidence_ids; }
+    else if (lastEvidence) { task = lastEvidence.dimension === "K3" ? "D1" : "D2"; why = `${dimensionNames[lastEvidence.dimension]}已有一次任务记录，可以继续核对。`; kind = "task_evidence"; ids = [lastEvidence.id]; }
     else if (archive) { task = "D2"; why = "你打开过历史资料，可以继续比较同期数据。"; kind = "archive_exploration"; ids = archive.evidence_ids; }
   }
   const guidance = guidanceForTask(profile, task);
   return { task_id: task, reason: why, reason_type: kind, help: guidance.help, help_reason: guidance.reason,
-    help_explicit: guidance.explicit, help_evidence_ids: guidance.evidence_ids, user_can_switch: true, available_tasks: ["D1", "D2"], evidence_ids: ids };
+    help_explicit: guidance.explicit, help_evidence_ids: [...guidance.evidence_ids], user_can_switch: true, available_tasks: ["D1", "D2"], evidence_ids: [...ids] };
+}
+
+/** Explain the existing route using only resources that the task screens can
+ * offer now. Availability never changes the user's goal or route by itself.
+ */
+export function recommendationPlan(profile: ResearchProfile, availability: RecommendationAvailability): RecommendationPlan {
+  const funding: Record<RecommendationAvailability["funding"], string> = {
+    journey: "可用本局已发生的资金与采购日程，调整参与金额并核对现金；不推断变化后的战斗。",
+    example: "本局暂无可用的完整资金日程，提供人工机制算例供练习；不作为独立能力依据。",
+    unavailable: "资金安排暂未准备好，可稍后重试。",
+  };
+  const history: Record<RecommendationAvailability["history"], string> = {
+    unseen: "目前有未标为已见的历史片段，可与同期基准对照；是否形成独立依据还取决于资料或答案暴露、实际帮助及本次是否为模拟。",
+    review: "目前可选历史片段均标为已见，仍可比较同期基准，作为复习。",
+    pending: "可继续已锁定的历史研究；依据资料或答案暴露、实际帮助及本次是否为模拟判断，资料未加载时可重试。",
+    unavailable: "历史目录尚未准备好或没有可用片段，可稍后重试。",
+  };
+  const recommendation = recommendResearch(profile);
+  const offers = { D1: funding[availability.funding], D2: history[availability.history] };
+  if (!profile.enabled) {
+    const practiceFunding: Record<RecommendationAvailability["funding"], string> = {
+      journey: "可用本局资金与采购日程试算；只作即时练习，不保存研究观察。",
+      example: "本局暂无可用的完整资金日程，可用人工机制算例练习；不保存研究观察。",
+      unavailable: "资金安排暂未准备好，可稍后重试。",
+    };
+    const practiceHistory: Record<RecommendationAvailability["history"], string> = {
+      unseen: "可用未标为已见的历史片段比较同期基准；只作即时练习，不保存研究观察。",
+      review: "目前可选历史片段均标为已见，仍可复习；不保存研究观察。",
+      pending: "当前可进行即时练习，不保存研究观察。",
+      unavailable: "历史目录尚未准备好或没有可用片段，可稍后重试。",
+    };
+    return { recommendation, offers: { D1: practiceFunding[availability.funding], D2: practiceHistory[availability.history] }, observed_steps: [], continuity: null };
+  }
+
+  const relevant: readonly Knowledge[] = recommendation.task_id === "D1" ? ["K3"] : recommendation.task_id === "D2" ? ["K1", "K2"] : [];
+  const observed_steps = profile.knowledge_observations
+    .filter((o) => relevant.includes(o.dimension) && (o.status !== "unobserved" || (o.excluded_evidence_ids?.length ?? 0) > 0))
+    .map((o) => ({ ...o, evidence_ids: [...o.evidence_ids], excluded_evidence_ids: [...(o.excluded_evidence_ids ?? [])], disclosure_ids: [...(o.disclosure_ids ?? [])], limitations: [...o.limitations] }));
+  const completed = profile.funding_attempts.length > 0 || profile.research_process.some((a) => a.submitted);
+  const explanations: Record<string, string> = {
+    stated_goal: "完成一次任务不会自动改变你选择的目标。",
+    user_reason: "完成一次任务不会自动改变你补充的需求。",
+    purchase_constraint: "一次任务不会改写当时采购未完成的事实。",
+    calibration: "一次任务不会改写你当时自报的感受；是否继续由你决定。",
+    task_evidence: "推荐依据任务中的观察，是否继续由你决定。",
+    archive_exploration: "推荐依据你打开过的历史资料，是否继续由你决定。",
+  };
+  const continuity = completed && recommendation.task_id ? explanations[recommendation.reason_type] ?? null : null;
+  return { recommendation, offers, observed_steps, continuity };
+}
+
+/** Compare actual snapshots captured around a submission; no prior plan is inferred. */
+export function compareRecommendationPlans(before: RecommendationPlan, after: RecommendationPlan): RecommendationPlanChange {
+  if (after.recommendation.reason_type === "observation_disabled") return { task_changed: null, explanation: "当前不生成观察；两个练习可自由选择或跳过。" };
+  const previous = before.recommendation.task_id;
+  const current = after.recommendation.task_id;
+  const task_changed = before.recommendation.reason_type === "observation_disabled" ? null : previous !== current;
+  const name = (task: ResearchTask | null): string => task === "D1" ? "资金安排台" : task === "D2" ? "历史对照台" : "自行选择";
+  const prefix = task_changed === null ? current ? `当前推荐${name(current)}。` : "当前可自行选择。"
+    : task_changed ? `下一步从${name(previous)}调整为${name(current)}。`
+    : current ? `推荐仍是${name(current)}。` : "仍可自行选择。";
+  const labels: Record<HelpPreference, string> = { self: "自主尝试", hint: "提示", step: "分步说明" };
+  const afterHelp = labels[after.recommendation.help];
+  const help = !current ? "" : after.recommendation.help_explicit ? `帮助以你选择的${afterHelp}为准。${after.recommendation.help_reason}`
+    : task_changed === false && before.recommendation.help !== after.recommendation.help ? `本任务的帮助建议从${labels[before.recommendation.help]}调整为${afterHelp}。${after.recommendation.help_reason}`
+    : `本任务的帮助建议为${afterHelp}。${after.recommendation.help_reason}`;
+  return { task_changed, explanation: `${prefix}${after.recommendation.reason}${after.continuity ?? ""}${help}` };
 }
 
 export type FundingEvent =

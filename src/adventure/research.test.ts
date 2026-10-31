@@ -6,12 +6,12 @@ import { calibrationDemoContext, makeCalibrationDemo } from "./calibration-demo"
 import { resetMarketCacheForTest } from "./market";
 import type { ResearchMarketCase } from "./market";
 import {
-  addUserReason, attachFundingFinalQuote, calibrationForDisplay, compareSchedule, compareSelfForecast, declarePriorExposure, emptyResearchProfile, evaluateFundingPractice,
+  addUserReason, attachFundingFinalQuote, calibrationForDisplay, compareRecommendationPlans, compareSchedule, compareSelfForecast, declarePriorExposure, emptyResearchProfile, evaluateFundingPractice,
   evaluateHistoryPractice, fundingQuestionKey, fundingScenarioFromRun, guidanceForTask, markFundingAnswerExposed, markFundingHelp, markHistoryAnswerExposed, markHistoryHelp,
-  mechanicalFundingExample, observeJourney, recommendResearch, recordCalibrationAction, recordCalibrationFeeling, revokeResearch, saveForecast, setHelpPreference, setResearchGoal,
+  mechanicalFundingExample, observeJourney, recommendationPlan, recommendResearch, recordCalibrationAction, recordCalibrationFeeling, revokeResearch, saveForecast, setHelpPreference, setResearchGoal,
   showHistoryEvidence, simulateFundingPlan, startHistory, submitFunding, submitHistory, updateJourney,
 } from "./research";
-import type { CalibrationContext, FixedSchedule, Forecast, ResearchProfile } from "./research";
+import type { CalibrationContext, FixedSchedule, Forecast, RecommendationPlan, ResearchProfile } from "./research";
 
 function data(id: string): ResearchMarketCase {
   return JSON.parse(readFileSync(join(process.cwd(), "public/data/adventure/research", `${id}.json`), "utf8")) as ResearchMarketCase;
@@ -530,5 +530,132 @@ describe("data-driven research observations", () => {
       vi.unstubAllGlobals();
       resetMarketCacheForTest();
     }
+  });
+});
+
+describe("recommendation plan and available task resources", () => {
+  const available = { funding: "journey", history: "review" } as const;
+
+  it("retains an actual purchase constraint after an independently answered simulated funding question", () => {
+    const run = observationRun();
+    run.history.push({ id: "limited-purchase", node: "N3", type: "choice", action: "purchase-attempted", message: "模拟：采购未完成", data: { reason: "insufficient-cash", purchase: "heal", priceCents: 1000 }, snapshot: decisionSnapshot(run) });
+    const profile = updateJourney(emptyResearchProfile(true, "demo"), run);
+    const beforeJSON = JSON.stringify(profile);
+    const before = recommendationPlan(profile, available);
+    expect(before.recommendation).toMatchObject({ task_id: "D1", reason_type: "purchase_constraint", evidence_ids: ["limited-purchase"] });
+
+    // A synthetic ledger is explicitly marked simulated and checks routing, not real historical data.
+    const example = mechanicalFundingExample();
+    const scenario = { ...example.scenario, caseId: "simulated-journey" };
+    const result = submitFunding(profile, scenario, { id: "simulated-funding", questionVersion: "v1", plan: example.plan, purchaseId: "buy-upgrade", canPay: true, revisedPlan: example.plan, help: "self", answerExposed: false, priorExposure: false });
+    expect(result.profile.knowledge_evidence.at(-1)).toMatchObject({ dimension: "K3", counted: true, independent: true });
+    const after = recommendationPlan(result.profile, available);
+    expect(after.recommendation).toMatchObject({ task_id: "D1", reason_type: "purchase_constraint", evidence_ids: ["limited-purchase"] });
+    expect(after.observed_steps).toMatchObject([{ dimension: "K3", status: "independent", evidence_ids: ["simulated-funding:K3"] }]);
+    expect(after.continuity).toContain("不会改写当时采购未完成的事实");
+    const change = compareRecommendationPlans(before, after);
+    expect(change).toMatchObject({ task_changed: false, explanation: expect.stringContaining("推荐仍是资金安排台") });
+    expect(change.explanation).toContain("无法支付的采购");
+    expect(change.explanation).toContain("帮助建议从提示调整为自主尝试");
+    expect(JSON.stringify(profile)).toBe(beforeJSON);
+    after.recommendation.evidence_ids.push("cannot-mutate-profile");
+    after.observed_steps[0]!.evidence_ids.push("cannot-mutate-profile");
+    expect(result.profile.journey_observations.at(-1)!.evidence_ids).toEqual(["limited-purchase"]);
+    expect(result.profile.knowledge_observations.find((item) => item.dimension === "K3")!.evidence_ids).toEqual(["simulated-funding:K3"]);
+  });
+
+  it("keeps a stated goal above an earlier purchase constraint and preserves the explicit help preference", () => {
+    const run = observationRun();
+    run.history.push({ id: "limited", node: "N3", type: "choice", action: "purchase-attempted", message: "模拟", data: { reason: "insufficient-cash", purchase: "heal", priceCents: 1000 }, snapshot: decisionSnapshot(run) });
+    let profile = updateJourney(emptyResearchProfile(true, "demo"), run);
+    const before = recommendationPlan(profile, available);
+    profile = setHelpPreference(setResearchGoal(profile, "my-goal", "history"), "my-help", "step");
+    const after = recommendationPlan(profile, available);
+    expect(after.recommendation).toMatchObject({ task_id: "D2", reason_type: "stated_goal", evidence_ids: ["my-goal"], help: "step", help_explicit: true, help_evidence_ids: ["my-help"] });
+    expect(compareRecommendationPlans(before, after)).toMatchObject({ task_changed: true, explanation: expect.stringContaining("从资金安排台调整为历史对照台") });
+    expect(compareRecommendationPlans(before, after).explanation).toContain("帮助以你选择的分步说明为准");
+    expect(profile.knowledge_evidence).toEqual([]);
+    expect(profile.funding_exposure).toEqual([]);
+    const need = addUserReason(updateJourney(emptyResearchProfile(true, "demo"), run), "need-upgrade", "limited", "upgrade");
+    expect(recommendationPlan(need, available).recommendation).toMatchObject({ task_id: "D1", reason_type: "user_reason", evidence_ids: ["need-upgrade", "limited"] });
+  });
+
+  it("describes unseen, review, pending and unavailable resources without promising new evidence", () => {
+    let profile = showHistoryEvidence(initial(emptyResearchProfile(true, "demo"), "helped-plan", a), "helped-plan", a);
+    profile = markHistoryHelp(profile, "helped-plan", "hint");
+    profile = submitHistory(profile, "helped-plan", { comparison: compareSchedule(a, schedule).direction, reason: "模拟：对照" }).profile;
+    expect(status(profile, "K1")).toBe("assisted");
+    expect(profile.learning_needs.join(" ")).not.toContain("新情境");
+    const snapshot = JSON.stringify(profile);
+    const review = recommendationPlan(profile, { funding: "example", history: "review" });
+    const unseen = recommendationPlan(profile, { funding: "example", history: "unseen" });
+    const pending = recommendationPlan(profile, { funding: "example", history: "pending" });
+    const unavailable = recommendationPlan(profile, { funding: "unavailable", history: "unavailable" });
+    for (const plan of [review, unseen, pending, unavailable]) {
+      expect(plan.recommendation).toMatchObject({ task_id: "D2", reason_type: "task_evidence", help: "hint" });
+      expect(plan.recommendation.reason).not.toContain("新情境");
+      expect(plan.recommendation.help_reason).not.toContain("新情境");
+      expect(plan.observed_steps).toMatchObject([{ dimension: "K1", status: "assisted" }]);
+    }
+    expect(review.offers.D1).toContain("人工机制算例");
+    expect(review.offers.D2).toContain("复习");
+    expect(unseen.offers.D2).toContain("未标为已见");
+    expect(unseen.offers.D2).toContain("还取决于资料或答案暴露、实际帮助及本次是否为模拟");
+    expect(pending.offers.D2).toContain("继续已锁定");
+    expect(pending.offers.D2).not.toContain("复习");
+    expect(unavailable.offers.D2).toContain("尚未准备好");
+    expect(JSON.stringify(profile)).toBe(snapshot);
+    let independent = showHistoryEvidence(initial(profile, "independent-plan", b), "independent-plan", b);
+    independent = submitHistory(independent, "independent-plan", { comparison: compareSchedule(b, schedule).direction, reason: "模拟：自主核对" }).profile;
+    const lastRecord = recommendationPlan(independent, { funding: "example", history: "review" });
+    expect(lastRecord.recommendation).toMatchObject({ task_id: "D2", reason_type: "task_evidence", help: "self" });
+    expect(lastRecord.recommendation.reason).not.toContain("新情境");
+    expect(lastRecord.recommendation.help_reason).not.toContain("新情境再");
+    expect(lastRecord.offers.D2).toContain("复习");
+  });
+
+  it("retains correction evidence and the chosen goal without implying an independent observation", () => {
+    let profile = setResearchGoal(emptyResearchProfile(true, "demo"), "history-goal", "history");
+    profile = showHistoryEvidence(initial(profile, "case-c", c), "case-c", c);
+    profile = submitHistory(profile, "case-c", { comparison: compareSchedule(c, schedule).direction, reason: "模拟：同期核查" }).profile;
+    const before = recommendationPlan(profile, available);
+    const corrected = declarePriorExposure(profile, { id: "seen-before", caseId: "lantern-d", priorToTasks: true }).profile;
+    const after = recommendationPlan(corrected, available);
+    expect(after.recommendation).toMatchObject({ task_id: "D2", reason_type: "stated_goal" });
+    expect(after.observed_steps).toMatchObject([{ dimension: "K1", status: "unobserved", excluded_evidence_ids: ["case-c:K1"], disclosure_ids: ["seen-before"] }]);
+    expect(after.continuity).toContain("不会自动改变你选择的目标");
+    expect(compareRecommendationPlans(before, after).explanation).toContain("推荐仍是历史对照台");
+    expect(corrected.knowledge_evidence[0]).toEqual(profile.knowledge_evidence[0]);
+  });
+
+  it("treats the artificial funding example as practice rather than independent ability evidence", () => {
+    const { scenario, plan } = mechanicalFundingExample();
+    const result = submitFunding(emptyResearchProfile(true, "demo"), scenario, { id: "example-practice", questionVersion: "v1", plan, purchaseId: "buy-upgrade", canPay: true, revisedPlan: plan, help: "self", answerExposed: false, priorExposure: false });
+    const recommendation = recommendationPlan(result.profile, { funding: "example", history: "unseen" });
+    expect(result.profile.knowledge_evidence.at(-1)).toMatchObject({ counted: false, independent: false });
+    expect(recommendation.offers.D1).toContain("不作为独立能力依据");
+    expect(recommendation.recommendation.task_id).toBeNull();
+    expect(recommendation.observed_steps).toEqual([]);
+  });
+
+  it("does not read stale observations or previous plans after observation is disabled", () => {
+    const poisoned = new Proxy(emptyResearchProfile(false), { get(target, property, receiver) {
+      if (property === "enabled") return Reflect.get(target, property, receiver);
+      throw new Error(`disabled profile must not read ${String(property)}`);
+    } });
+    const disabled = recommendationPlan(poisoned, { funding: "example", history: "review" });
+    expect(recommendResearch(poisoned)).toMatchObject({ task_id: null, reason_type: "observation_disabled", evidence_ids: [], help_evidence_ids: [] });
+    expect(disabled.recommendation).toMatchObject({ task_id: null, reason_type: "observation_disabled", help_explicit: false });
+    expect(disabled.observed_steps).toEqual([]);
+    expect(disabled.continuity).toBeNull();
+    const practice = recommendationPlan(poisoned, { funding: "journey", history: "unseen" });
+    expect(practice.offers.D1).toContain("不保存研究观察");
+    expect(practice.offers.D2).toContain("不保存研究观察");
+    expect(practice.offers.D2).not.toContain("形成独立依据");
+    expect(recommendationPlan(poisoned, { funding: "example", history: "pending" }).offers.D2).not.toContain("已锁定");
+    const old = new Proxy({} as RecommendationPlan, { get() { throw new Error("old plan must not be read"); } });
+    expect(compareRecommendationPlans(old, disabled)).toMatchObject({ task_changed: null, explanation: expect.stringContaining("不生成观察") });
+    const later = recommendationPlan(setResearchGoal(emptyResearchProfile(), "later-goal", "history"), available);
+    expect(compareRecommendationPlans(disabled, later)).toMatchObject({ task_changed: null, explanation: expect.stringContaining("当前推荐历史对照台") });
   });
 });

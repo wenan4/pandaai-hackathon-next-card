@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeCalibrationDemo } from "./calibration-demo";
 import { reduceRun } from "./engine";
 import { gameplayHighlights } from "./gameplay-highlights";
-import { loadMarketStage, resetMarketCacheForTest, type ResearchMarketCase } from "./market";
+import { loadMarketInitial, loadMarketStage, resetMarketCacheForTest, type ResearchMarketCase } from "./market";
 import { compareSchedule, declarePriorExposure, emptyResearchProfile, setResearchGoal, showHistoryEvidence, startHistory, submitHistory, updateJourney } from "./research";
 import { reportView, researchSummary } from "./ui-report";
 
@@ -61,7 +61,7 @@ describe("compact journey report", () => {
     run.source = "real";
     const profile = setResearchGoal(updateJourney(emptyResearchProfile(), run), "history-goal", "history");
     const openTask = vi.fn(); const resume = vi.fn();
-    const view = reportView({ run, profile, header: new FakeElement("header") as unknown as HTMLElement, preferences: new FakeElement("div") as unknown as HTMLElement,
+    const view = reportView({ run, profile, manifest: await loadMarketInitial(), wasCaseSeen: () => false, header: new FakeElement("header") as unknown as HTMLElement, preferences: new FakeElement("div") as unknown as HTMLElement,
       calibration: null, openTask, saveReason: vi.fn(), resume, newRun: vi.fn(), home: vi.fn() }) as unknown as FakeElement;
     const visible = visibleText(view);
     for (const item of gameplayHighlights(run)) expect(visible).toContain(item.text);
@@ -89,7 +89,7 @@ describe("compact journey report", () => {
 
   it("keeps game achievements visible for a simulated play-only journey without showing research observations", async () => {
     const run = await makeCalibrationDemo(); run.source = "fork";
-    const view = reportView({ run, profile: emptyResearchProfile(false, "fork"), header: new FakeElement("header") as unknown as HTMLElement,
+    const view = reportView({ run, profile: emptyResearchProfile(false, "fork"), manifest: null, wasCaseSeen: () => false, header: new FakeElement("header") as unknown as HTMLElement,
       preferences: null, calibration: null, openTask: vi.fn(), saveReason: vi.fn(), resume: vi.fn(), newRun: vi.fn(), home: vi.fn() }) as unknown as FakeElement;
     const visible = visibleText(view);
     expect(visible).toContain("模拟 · 分叉");
@@ -98,6 +98,21 @@ describe("compact journey report", () => {
     expect(visible).not.toContain("任务观察");
     expect(visible).not.toContain("查看观察依据与研究过程");
     expect(visible).toContain("查看牌组、金币账本与旅程依据");
+  });
+
+  it("says when a recommended exercise is only a mechanical example or a review", async () => {
+    const run = await makeCalibrationDemo(); run.source = "real";
+    const manifest = await loadMarketInitial();
+    const base = { run, manifest, wasCaseSeen: (id: string) => id === "lantern-a" || id === "lantern-b", header: new FakeElement("header") as unknown as HTMLElement,
+      preferences: null, calibration: null, openTask: vi.fn(), saveReason: vi.fn(), resume: vi.fn(), newRun: vi.fn(), home: vi.fn() };
+    const funding = reportView({ ...base, profile: setResearchGoal(emptyResearchProfile(), "funding-goal", "funding") }) as unknown as FakeElement;
+    expect(visibleText(funding)).toContain("人工机制算例供练习");
+    expect(visibleText(funding)).toContain("不作为独立能力依据");
+    const history = reportView({ ...base, profile: setResearchGoal(emptyResearchProfile(), "history-goal", "history") }) as unknown as FakeElement;
+    expect(visibleText(history)).toContain("目前可选历史片段均标为已见");
+    expect(visibleText(history)).toContain("作为复习");
+    expect(visibleText(history)).not.toContain("新情境");
+    expect(visibleText(history)).toContain("为什么这样推荐与选择帮助");
   });
 });
 
