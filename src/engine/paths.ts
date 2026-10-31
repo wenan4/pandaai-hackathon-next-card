@@ -1,6 +1,6 @@
 // 事件工厂与“按字段派生事件”：游戏壳、评委面板、测试共用同一套事件生成逻辑。
 import { MAX_FLIPS, followupFor } from "./rounds";
-import type { Action, Card, ExplainKind, GameEvent, Reaction, RoundConfig, Stage, Verdict } from "./types";
+import type { Action, Card, ExplainKind, FollowupAnswer, GameEvent, Reaction, RoundConfig, Stage, Verdict } from "./types";
 
 type PayloadOf<T extends GameEvent["type"]> = Extract<GameEvent, { type: T }>["payload"];
 
@@ -22,7 +22,7 @@ export interface RoundSpec {
   final: Verdict;
   action: Action;
   /** 追问答案；null 表示跳过。只有触发追问时才生成事件 */
-  followupAnswer?: string | null;
+  followupAnswer?: FollowupAnswer | null;
 }
 
 /**
@@ -49,7 +49,7 @@ export function eventsFromSpecs(specs: RoundSpec[], rounds: RoundConfig[], sessi
     push(`${r}:final`, ev(r, "pre_reveal", "final_assessment", { verdict: spec.final }));
     push(`${r}:decision`, ev(r, "pre_reveal", "decision", { action: spec.action }));
     const q = followupFor({ final: spec.final, flips: spec.flips, action: spec.action }, cfg);
-    if (q) push(`${r}:followup`, ev(r, "pre_reveal", "followup_answer", { question: q, answer: spec.followupAnswer ?? null }));
+    if (q) push(`${r}:followup`, ev(r, "pre_reveal", "followup_answer", { question: q, answer: spec.followupAnswer ?? "skipped" }));
   }
   return out;
 }

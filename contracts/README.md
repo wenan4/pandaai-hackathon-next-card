@@ -115,25 +115,16 @@ node scripts/export-json-schema.mjs --check   # 只检查是否落后于 TS
 
 导出的 JSON Schema 不包含 `superRefine` 里的跨字段校验（O4 的 N/M 与规则编号、完成状态与帮助归因、`ready_for_B = S1 && S2`、任务 B 的缺失指标与降级结论、事件序列的 `event_id` 唯一与阶段匹配等）。这些规则只在 zod 校验器里生效。Python 数据脚本如果要校验这些，需要用 TS 校验器，或者在脚本里自己重写。
 
-## 与 PRD / 已有实现的差异
+## 运行实现与契约（YOU-185）
 
-契约按 PRD v0.3 写。下面这些地方与 PRD 原文或 `main` 上现有实现不同，各自说明处理方式：
+迁移已完成：游戏、面板直接使用 `contracts/events.ts` 和 `common.ts` 的类型；新事件写入、存档恢复、公开引擎输出、结构化导出和数据加载均经过 zod 校验。`pass / self / unsure` 已改为 `skip / solo / insufficient`；追问和揭晓后自述只写固定语义。
 
-| 项 | PRD / 现有实现 | 契约 | 处理 |
-|---|---|---|---|
-| 下一步枚举 | `src/engine/types.ts` 用 `pass` | `skip` | 引擎对齐契约时改名；PRD 的“先不跟”在界面层 |
-| 协助档位 | 引擎用 `self` | `solo` | 同上 |
-| 第一反应 | 引擎有 `unsure` | 与最终判断共用 `supports / refutes / insufficient` | 同上；PRD §2 把“不确定”并入“证据不足” |
-| `self_note` | 引擎 `payload.text` 自由文字 | `payload.note` 固定选项 | PRD §4.1：补一句不收集自由文字 |
-| `assist_switch` | `{ level }` | `{ task, step?, from, to, by }` | 需要 `by` 区分用户明确选择与系统建议 |
-| `assist_exposure.kind` | `feedback` | `answer_feedback` | 对齐 PRD 措辞 |
-| `task_step` | 带 `correct`、`aligned`、`window_extended` | 带 `content_id`、`attempt`、`actions` | 是否正确、是否独立由事件序列与数据派生，不信提交时的字段 |
-| `followup_answer.answer` | `string \| null` | 固定语义枚举，含 `skipped` | 跳过明确记录，不用 `null` |
-| 主题来源 | 引擎 `o3d / style_default / chooser` | `focus / style / user / bet / only_available` | PRD §5.2 的来源标记 |
-| 数据文件 `schema` 标记 | 现有产物是 `draft…` 临时标记 | `next-card/data@v0.3` | 校验器暂时两者都接受；脚本下次生成必须改写成正式值 |
-| `taskA.json` 的 `generated_at` | 现有脚本未写 | 契约要求 | 校验器对 taskA 暂放宽为可选，脚本补上后改回必填 |
-
-`main` 上的引擎、游戏壳和评委面板还没有改用这些类型，那是后续各 issue 的工作；本 PR 不改 `src/`。
+- `evaluate`、`habits`、`recommend`、`settle` 返回正式输出结构；`structuredResult` 返回 `StructuredResultSchema`。页面使用 `evaluateView / recommendView` 的展示投影保留逐条原因与摘要，同一套计算不另写判断逻辑。投影不是对外 JSON。
+- `task_step` 只写 `content_id / attempt / answer / actions`，不收 `correct` 或自报“独立”。标准答案由已校验的任务数据派生，任务 B 还核对锁定与打开检验段的先后事件。内容 ID 带题目数据标识，换数据不会重新解释旧答案。帮助和重试历史保留。
+- 数据标记只接受 `next-card/data@v0.3`；撤销了冻结时的 draft 兼容例外，`taskA.generated_at` 恢复必填。补充了揭晓执行窗口的缺失端点（null）和可选停牌／跌停标记，让不能执行的记录可被明确降级；已有正常产物保持兼容，JSON Schema 同步生成。
+- 存档使用 `nextcard:v2`。检测到 v1 或不兼容记录时，显示说明并等待用户选择“清除旧记录并重新开始”，不静默混用，也不清除其他应用的数据。
+- 结算按 T+1 开盘与 T+20 收盘计算。缺有效端点、停牌、T+1 开盘涨停或 T+20 跌停时，采取保守的“不结算、原有代币不变”口径，`settlement_note` 写明原因；这不是可成交保证。模拟走势用 `counterfactual=true` 标注，不改变画像。
+- `contracts/examples/path-yi.events.json` 的六轮重放与 `result.path-yi.json` 全字段一致；R6 虽是过去型命题，仍按证据边界情境计入 O3。该回归不等于第二幕 UI 已发布。
 
 ## 不在契约内
 

@@ -4,10 +4,10 @@ import { BET_FAMILY_COPY, TRADING_VIEW } from "../config/copy";
 import { AVAILABLE_TOPICS, ENGINE_CONFIG } from "../config/engine";
 import { ROUNDS } from "../config/rounds";
 import { PRESETS } from "../panel/presets";
-import { evaluate } from "./evaluate";
+import { evaluateView as evaluate } from "./evaluate";
 import { actionHabits, betTopic } from "./habits";
 import { eventsFromSpecs, type RoundSpec } from "./paths";
-import { recommend } from "./recommend";
+import { recommendView as recommend } from "./recommend";
 
 const specs = (id: string) => PRESETS.find((p) => p.id === id)!.specs;
 
@@ -19,7 +19,7 @@ describe("行动习惯（YOU-165）：只计数，不进入能力观察", () => 
     expect(h.backed_families).toEqual([{ family: "steady_trend", rounds: ["R2"], frequent: false }]);
     expect(betTopic(h)).toBeUndefined();
     expect(h.decision_chains.map((c) => [c.round_id, c.flips, c.final, c.action])).toEqual([
-      ["R1", ["elephant", "fox"], "refutes", "pass"],
+      ["R1", ["elephant", "fox"], "refutes", "skip"],
       ["R2", ["elephant"], "supports", "follow"],
       ["R3", ["elephant", "fox"], "supports", "wait"],
     ]);

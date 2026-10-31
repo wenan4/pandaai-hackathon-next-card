@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import reveal from "../../public/data/cases_reveal.json";
 import { ROUNDS } from "../config/rounds";
-import { evaluate } from "../engine/evaluate";
+import { evaluateView as evaluate } from "../engine/evaluate";
 import { eventsFromSpecs } from "../engine/paths";
-import { recommend } from "../engine/recommend";
+import { recommendView as recommend } from "../engine/recommend";
 import type { GameEvent } from "../engine/types";
 import { runChecks, type Engine } from "./checks";
 import { PRESETS } from "./presets";

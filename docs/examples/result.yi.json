@@ -1,235 +1,302 @@
 {
-  "format": "next-card/result@v0.3-native",
   "rules_version": "v0.3",
   "provenance": {
     "kind": "simulated_path",
     "path_id": "乙",
+    "session_id": "example",
     "event_count": 15
   },
-  "profile": {
-    "rules_version": "v0.3",
-    "observations": {
-      "O1": {
-        "id": "O1",
-        "status": "observed",
-        "aggregation": "partial",
-        "summary": "只见一次；还没有第二个情境可以对照",
-        "instances": [
-          {
-            "context": "R1",
-            "rule": "O1-a",
-            "outcome": "consistent",
-            "assisted": false,
-            "event_ids": [
-              "R1:flip:elephant",
-              "R1:flip:fox",
-              "R1:final"
-            ]
-          }
-        ],
-        "understanding_unclear": false
+  "style": {
+    "species": "elephant",
+    "counted_first_flips": [
+      {
+        "round_id": "R1",
+        "card": "elephant"
       },
-      "O2": {
-        "id": "O2",
-        "status": "observed",
-        "aggregation": "partial",
-        "summary": "只见一次；还没有第二个情境可以对照",
-        "instances": [
-          {
-            "context": "R2",
-            "rule": "O2-a",
-            "outcome": "consistent",
-            "assisted": false,
-            "event_ids": [
-              "R2:flip:elephant",
-              "R2:final"
-            ]
-          }
-        ],
-        "understanding_unclear": false
-      },
-      "O3": {
-        "id": "O3",
-        "status": "not_observed",
-        "aggregation": "partial",
-        "summary": "未观察到；还没有第二个情境可以对照",
-        "instances": [
-          {
-            "context": "R3",
-            "rule": "O3-g",
-            "outcome": "unchecked",
-            "assisted": false,
-            "event_ids": [
-              "R3:flip:elephant",
-              "R3:flip:fox",
-              "R3:final"
-            ]
-          }
-        ],
-        "understanding_unclear": false
-      },
-      "O4": {
-        "id": "O4",
-        "status": "observed",
-        "aggregation": "single",
-        "summary": "本局 2 次可比较情境中调整 2 次（独立 2，有帮助 0）",
-        "instances": [
-          {
-            "context": "R1",
-            "rule": "O4-a",
-            "outcome": "consistent",
-            "assisted": false,
-            "event_ids": [
-              "R1:initial",
-              "R1:flip:elephant",
-              "R1:flip:fox",
-              "R1:final"
-            ]
-          },
-          {
-            "context": "R2",
-            "rule": "O4-a",
-            "outcome": "consistent",
-            "assisted": false,
-            "event_ids": [
-              "R2:initial",
-              "R2:flip:elephant",
-              "R2:final"
-            ]
-          }
-        ],
-        "understanding_unclear": false
+      {
+        "round_id": "R3",
+        "card": "elephant"
       }
+    ],
+    "excluded_named_flips": [
+      {
+        "round_id": "R2",
+        "card": "elephant"
+      }
+    ],
+    "counts": {
+      "fox": 0,
+      "elephant": 2,
+      "leopard": 0
     },
-    "task_observations": {
-      "O1": [],
-      "O2": [],
-      "O5": []
-    },
-    "style": {
-      "species": "elephant",
-      "first_flips": [
+    "scope": "本局倾向：只统计说法没有直接点名的牌的首翻，不代表稳定特点。"
+  },
+  "observations": [
+    {
+      "id": "O1",
+      "aggregate": "partial",
+      "state": "observed",
+      "scenarios": [
         {
-          "round_id": "R1",
-          "card": "elephant",
-          "counted": true
-        },
-        {
-          "round_id": "R2",
-          "card": "elephant",
-          "counted": false
-        },
-        {
-          "round_id": "R3",
-          "card": "elephant",
-          "counted": true
+          "scenario": "R1",
+          "state": "observed",
+          "rule": "O1-a",
+          "evidence_event_ids": [
+            "R1:flip:fox",
+            "R1:final"
+          ],
+          "assistance": "none"
         }
       ],
-      "counts": {
-        "fox": 0,
-        "elephant": 2,
-        "leopard": 0
-      }
+      "task_scenarios": []
     },
-    "help_preference": {
-      "level": "hint",
-      "source": "explain_count",
-      "explain_count": 0
+    {
+      "id": "O2",
+      "aggregate": "partial",
+      "state": "observed",
+      "scenarios": [
+        {
+          "scenario": "R2",
+          "state": "observed",
+          "rule": "O2-a",
+          "evidence_event_ids": [
+            "R2:flip:elephant",
+            "R2:final"
+          ],
+          "assistance": "none"
+        }
+      ],
+      "task_scenarios": []
     },
-    "flags": {
-      "o3d": false
+    {
+      "id": "O3",
+      "aggregate": "partial",
+      "state": "not_observed",
+      "scenarios": [
+        {
+          "scenario": "R3",
+          "state": "not_observed",
+          "rule": "O3-g",
+          "evidence_event_ids": [
+            "R3:final"
+          ],
+          "assistance": "none"
+        }
+      ],
+      "task_scenarios": []
+    },
+    {
+      "id": "O4",
+      "state": "observed",
+      "rule": "O4-a",
+      "opportunities": 2,
+      "revisions": 2,
+      "independent_revisions": 2,
+      "assisted_revisions": 0,
+      "evidence_event_ids": [
+        "R1:initial",
+        "R1:final",
+        "R2:initial",
+        "R2:final"
+      ]
     }
+  ],
+  "help_preference": {
+    "suggested_assist": "hint",
+    "user_selected": null,
+    "state": "uncertain",
+    "rule": "default",
+    "explain_count": 0,
+    "basis_id": "help.default"
   },
   "progress": {
     "K": 0,
     "S1": false,
     "S2": false,
     "rounds_completed": 3,
-    "taskA_steps_done": [],
+    "taskA_completed_steps": [],
     "taskB_done": false,
     "ready_for_B": false
   },
-  "habits": {
-    "aligned": [
-      "R1",
-      "R2"
-    ],
-    "diverged": [
-      "R3"
-    ],
-    "under_insufficient": {
-      "follow": [],
-      "pass": [],
-      "wait": []
+  "unknowns": [
+    "能不能自己设计验证方法",
+    "希望得到多少帮助（只看了这几轮）",
+    "长期的交易偏好"
+  ],
+  "action_profile": {
+    "aligned": {
+      "count": 2,
+      "of": 3,
+      "rounds": [
+        "R1",
+        "R2"
+      ]
     },
-    "backed_families": [
-      {
-        "family": "steady_trend",
+    "diverged": {
+      "count": 1,
+      "rounds": [
+        "R3"
+      ]
+    },
+    "by_verdict": {
+      "supports": {
+        "follow": {
+          "count": 1,
+          "rounds": [
+            "R2"
+          ]
+        },
+        "skip": {
+          "count": 0,
+          "rounds": []
+        },
+        "wait": {
+          "count": 1,
+          "rounds": [
+            "R3"
+          ]
+        }
+      },
+      "refutes": {
+        "follow": {
+          "count": 0,
+          "rounds": []
+        },
+        "skip": {
+          "count": 1,
+          "rounds": [
+            "R1"
+          ]
+        },
+        "wait": {
+          "count": 0,
+          "rounds": []
+        }
+      },
+      "insufficient": {
+        "follow": {
+          "count": 0,
+          "rounds": []
+        },
+        "skip": {
+          "count": 0,
+          "rounds": []
+        },
+        "wait": {
+          "count": 0,
+          "rounds": []
+        }
+      }
+    },
+    "follow_total": {
+      "count": 1,
+      "rounds": [
+        "R2"
+      ]
+    },
+    "scope": "本局习惯：只描述选择，不推断风险偏好。认可一个说法但先不跟，同样是合理的选择。"
+  },
+  "backed_families": {
+    "by_family": {
+      "relative_strength": {
+        "count": 0,
+        "rounds": []
+      },
+      "steady_trend": {
+        "count": 1,
         "rounds": [
           "R2"
-        ],
-        "frequent": false
-      }
-    ],
-    "decision_chains": [
-      {
-        "round_id": "R1",
-        "flips": [
-          "elephant",
-          "fox"
-        ],
-        "explained": [],
-        "initial": "supports",
-        "final": "refutes",
-        "action": "pass",
-        "followup": null
+        ]
       },
-      {
-        "round_id": "R2",
-        "flips": [
-          "elephant"
-        ],
-        "explained": [],
-        "initial": "refutes",
-        "final": "supports",
-        "action": "follow",
-        "followup": null
-      },
-      {
-        "round_id": "R3",
-        "flips": [
-          "elephant",
-          "fox"
-        ],
-        "explained": [],
-        "initial": "supports",
-        "final": "supports",
-        "action": "wait",
-        "followup": "等未来走势"
+      "volume_surge": {
+        "count": 0,
+        "rounds": []
       }
-    ],
-    "counts": {
-      "follow": 1,
-      "pass": 1,
-      "wait": 1
-    }
+    },
+    "frequent": [],
+    "coverage_limited": [
+      "relative_strength",
+      "steady_trend",
+      "volume_surge"
+    ]
   },
+  "decision_chains": [
+    {
+      "round_id": "R1",
+      "looked_at": [
+        "elephant",
+        "fox"
+      ],
+      "explains": [],
+      "initial_reaction": "supports",
+      "verdict": "refutes",
+      "action": "skip",
+      "followup": null,
+      "aligned": true,
+      "pattern_family": "relative_strength"
+    },
+    {
+      "round_id": "R2",
+      "looked_at": [
+        "elephant"
+      ],
+      "explains": [],
+      "initial_reaction": "refutes",
+      "verdict": "supports",
+      "action": "follow",
+      "followup": null,
+      "aligned": true,
+      "pattern_family": "steady_trend"
+    },
+    {
+      "round_id": "R3",
+      "looked_at": [
+        "elephant",
+        "fox"
+      ],
+      "explains": [],
+      "initial_reaction": "supports",
+      "verdict": "supports",
+      "action": "wait",
+      "followup": {
+        "question": "waiting",
+        "answer": "future_trend"
+      },
+      "aligned": false,
+      "pattern_family": "volume_surge"
+    }
+  ],
+  "trading_view": [
+    {
+      "refers_to": "action_profile",
+      "template_id": "tv.action.verdict_vs_step_split",
+      "scope_rounds": [
+        "R3"
+      ],
+      "reads_as": "第 3 轮你判断“支持”，下一步仍选了先看看；判断与下一步在这里是分开记录的。"
+    }
+  ],
   "recommendation": {
-    "route": "R-A2",
     "task": "A",
+    "rule": "R-A2",
     "steps": [
       1,
       2
     ],
     "topic": null,
     "topic_source": null,
+    "topic_sources": [],
+    "topic_conflict": false,
     "assist": "hint",
     "guess_first": false,
-    "reason": "用同期对照判断只见过一次，换一只股票再练一次；拉长窗口判断只见过一次，换一只股票再练一次。"
-  },
-  "unknowns": [
-    "能不能自己设计验证方法",
-    "希望得到多少帮助（只看了这几轮）",
-    "长期的交易偏好"
-  ]
+    "reason_id": "R-A2.foundation",
+    "reason_text": "用同期对照判断只见过一次，换一只股票再练一次；拉长窗口判断只见过一次，换一只股票再练一次。",
+    "resources": [
+      {
+        "name": "QuantSkills skill-quant-research",
+        "use": "拟参考研究验证步骤；实际采用条目待核验",
+        "status": "planned_reference"
+      }
+    ]
+  }
 }

@@ -1,35 +1,29 @@
-// 结构化结果导出（YOU-169）：把同一次 evaluate / recommend / 行动习惯的输出合成一份 JSON，
-// 供 PandaAI 侧读取。只含选择事件派生的结果，不含姓名、设备等个人信息。
-import type { EngineConfig } from "./evaluate";
-import { evaluate } from "./evaluate";
-import { actionHabits, betTopic } from "./habits";
+import { StructuredResultSchema, type Provenance as ContractProvenance, type TradingViewItem } from "../../contracts/outputs";
+import { evaluate, type EngineConfig } from "./evaluate";
+import { habits } from "./habits";
 import { recommend } from "./recommend";
+import { TOPIC_OF_BET_FAMILY } from "../../contracts/common";
 import type { GameEvent, TopicId } from "./types";
 
-export const RESULT_FORMAT = "next-card/result@v0.3-native";
-
-export interface Provenance {
-  /** user_session：本机真实体验；simulated_path：评委面板或文档里的模拟路径；judge_fork：评委在某条基线上改过字段的反事实 */
-  kind: "user_session" | "simulated_path" | "judge_fork";
-  path_id?: string;
-  /** judge_fork 的基线，不冒充玩家新增表现 */
-  fork_of?: string;
-  event_count: number;
-}
-
+export type Provenance = Omit<ContractProvenance, "session_id">;
 export function structuredResult(events: readonly GameEvent[], cfg: EngineConfig, topics: TopicId[], provenance: Omit<Provenance, "event_count">, unknowns: string[]) {
   const { profile, progress } = evaluate(events, cfg);
-  const habits = actionHabits(events, cfg.rounds);
-  return {
-    format: RESULT_FORMAT,
-    rules_version: cfg.rules_version,
-    provenance: { ...provenance, event_count: events.length },
-    profile,
-    progress,
-    /** 行动习惯：只计数，不进入能力观察；常押形态只影响任务 B 的默认主题 */
-    habits,
-    recommendation: recommend(profile, progress, topics, { betTopic: betTopic(habits) }),
-    unknowns,
-  };
+  const action = habits(events, cfg.rounds);
+  const frequent = action.backed_families.frequent.slice().sort((a,b) => action.backed_families.by_family[b].count - action.backed_families.by_family[a].count);
+  const trading: TradingViewItem[] = [];
+  const o1 = profile.observations.find(o => o.id === "O1");
+  if (o1?.id === "O1" && o1.aggregate === "repeated") trading.push({ refers_to: "O1", template_id: "tv.o1.relative_vs_absolute", scope_rounds: o1.scenarios.flatMap(s => s.scenario.startsWith("R") ? [s.scenario] : []) as TradingViewItem["scope_rounds"], reads_as: "这两轮里，你用同期对照区分了绝对涨幅与相对市场的表现。" });
+  const split = action.decision_chains.find(c => !c.aligned);
+  if (split) trading.push({ refers_to: "action_profile", template_id: "tv.action.verdict_vs_step_split", scope_rounds: [split.round_id], reads_as: `第 ${split.round_id.slice(1)} 轮你判断“${split.verdict === "refutes" ? split.pattern_family === "relative_strength" ? "没跑赢" : "不支持" : split.verdict === "supports" ? "支持" : "证据不足"}”，下一步仍选了${({follow:"跟",skip:"不跟",wait:"先看看"})[split.action]}；判断与下一步在这里是分开记录的。` });
+  const family = frequent[0];
+  if (family) {
+    const ids = action.backed_families.by_family[family].rounds;
+    const familyName = { relative_strength: "相对强弱", steady_trend: "稳步上行", volume_surge: "放量异动" }[family];
+    trading.push({ refers_to: "backed_families", template_id: "tv.bet.repeated_family", scope_rounds: ids, reads_as: `本局你${ids.length === 2 ? "两次" : `${ids.length} 次`}跟了同一类${familyName}的形态（第 ${ids.map(r => r.slice(1)).join("、")} 轮）。这只描述这一局的选择。` });
+  }
+  return StructuredResultSchema.parse({ rules_version: cfg.rules_version, provenance: { ...provenance, session_id: events[0]?.session_id ?? "empty-session", event_count: events.length },
+    style: profile.style, observations: profile.observations, help_preference: profile.help_preference, progress, unknowns, ...action, trading_view: trading,
+    recommendation: recommend(profile, progress, topics, { betTopic: family ? TOPIC_OF_BET_FAMILY[family] : undefined, userTopic: events.filter(e => e.type === "topic_select" && e.payload.source === "user").map(e => e.type === "topic_select" ? e.payload.topic : undefined).at(-1) }),
+  });
 }
 export type StructuredResult = ReturnType<typeof structuredResult>;

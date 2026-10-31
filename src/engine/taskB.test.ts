@@ -1,10 +1,11 @@
+import { beginTaskB } from "./fixtures/taskRules";
 import { describe, expect, it } from "vitest";
 import { TaskBDataSchema } from "../../contracts";
 import taskB from "../../public/data/taskB_cheetah.json";
 import cases from "./fixtures/taskB_verdict_cases.json";
-import { ENGINE_CONFIG } from "../config/engine";
+import { TEST_CONFIG as ENGINE_CONFIG } from "./fixtures/taskRules";
 import { PRESETS } from "../panel/presets";
-import { evaluate } from "./evaluate";
+import { evaluateView as evaluate } from "./evaluate";
 import { eventFactory, eventsFromSpecs, type EventMaker } from "./paths";
 import { answerKey, comparison, verdict, type SegmentsLike } from "./taskB";
 
@@ -53,12 +54,12 @@ describe("taskB_cheetah.json", () => {
 
 describe("任务 B 的提交只产生 O5，且独立与否由事件推导", () => {
   const base = () => eventsFromSpecs(PRESETS.find((p) => p.id === "yi")!.specs, ENGINE_CONFIG.rounds);
-  const submit = (ev: EventMaker, answer: string, correct: boolean) => ev("taskB", "in_task", "task_step", { task: "B", step: 3, phase: "submit", answer, correct });
+  const submit = (ev: EventMaker, answer: string) => ev("taskB", "in_task", "task_step", { task: "B", step: 3, phase: "submit", answer, content_id: "sample-B3", attempt: 1, actions: ["rules_locked", "display_viewed", "test_viewed"] });
 
   it("一次提交与数据一致：独立完成，taskB_done 为真，O1–O4 不变", () => {
     const ev = eventFactory("t", "v0.3", 500);
     const before = evaluate(base(), ENGINE_CONFIG);
-    const after = evaluate([...base(), submit(ev, "no_observed_advantage|delta_low", true)], ENGINE_CONFIG);
+    const after = evaluate([...base(), ...beginTaskB(ev), submit(ev, "no_observed_advantage|delta_low")], ENGINE_CONFIG);
     expect(after.profile.task_observations.O5).toMatchObject([{ rule: "O5-t", outcome: "consistent", assisted: false }]);
     expect(after.progress.taskB_done).toBe(true);
     expect(after.profile.observations).toEqual(before.profile.observations);
@@ -66,28 +67,28 @@ describe("任务 B 的提交只产生 O5，且独立与否由事件推导", () =
 
   it("看过提示，或先交了一次对不上的答案再改：记为有帮助", () => {
     const ev = eventFactory("t", "v0.3", 500);
-    const hinted = evaluate([...base(), ev("taskB", "in_task", "assist_exposure", { task: "B", step: 3, content_id: "B3-hint", kind: "hint" }), submit(ev, "no_observed_advantage|delta_low", true)], ENGINE_CONFIG);
+    const hinted = evaluate([...base(), ev("taskB", "in_task", "assist_exposure", { task: "B", step: 3, content_id: "B3-hint", kind: "hint", attempt: 1 }), ...beginTaskB(ev), submit(ev, "no_observed_advantage|delta_low")], ENGINE_CONFIG);
     expect(hinted.profile.task_observations.O5[0]!.assisted).toBe(true);
-    const retried = evaluate([...base(), submit(ev, "both_segments|delta_high", false), submit(ev, "no_observed_advantage|delta_low", true)], ENGINE_CONFIG);
+    const retried = evaluate([...base(), ...beginTaskB(ev), submit(ev, "both_segments|delta_high"), ...beginTaskB(ev), submit(ev, "no_observed_advantage|delta_low")], ENGINE_CONFIG);
     expect(retried.profile.task_observations.O5.map((i) => [i.rule, i.assisted])).toEqual([["O5-r", false], ["O5-t", true]]);
   });
 
   it("先猜后验：先猜“会高出”、数据两段都没达到、之后答对，O4 增加一次修正；猜对或说不准不算", () => {
     const run = (guessAnswer: string) => {
       const ev = eventFactory("t", "v0.3", 500);
-      const guess = ev("taskB", "in_task", "task_step", { task: "B", step: 1, phase: "guess", answer: guessAnswer, correct: null });
-      return evaluate([...base(), guess, submit(ev, "no_observed_advantage|delta_low", true)], ENGINE_CONFIG);
+      const guess = ev("taskB", "in_task", "task_step", { task: "B", step: 1, phase: "guess", answer: guessAnswer, content_id: "sample-B1", attempt: 1, actions: [] });
+      return evaluate([...base(), guess, ...beginTaskB(ev), submit(ev, "no_observed_advantage|delta_low")], ENGINE_CONFIG);
     };
     const taskB = (out: ReturnType<typeof run>) => out.profile.observations.O4.instances.filter((i) => i.context === "taskB");
     expect(taskB(run("higher"))).toMatchObject([{ rule: "O4-a", outcome: "consistent", assisted: false }]);
     expect(taskB(run("higher"))[0]!.event_ids).toHaveLength(2);
     expect(taskB(run("not_higher"))).toEqual([]);
-    expect(taskB(run("unsure"))).toEqual([]);
+    expect(taskB(run("insufficient"))).toEqual([]);
   });
 
   it("重复提交同一答案不增加记录；只有对不上的提交时任务未完成", () => {
     const ev = eventFactory("t", "v0.3", 500);
-    const out = evaluate([...base(), submit(ev, "both_segments|delta_high", false), submit(ev, "both_segments|delta_high", false)], ENGINE_CONFIG);
+    const out = evaluate([...base(), ...beginTaskB(ev), submit(ev, "both_segments|delta_high"), ...beginTaskB(ev), submit(ev, "both_segments|delta_high")], ENGINE_CONFIG);
     expect(out.profile.task_observations.O5).toHaveLength(1);
     expect(out.progress.taskB_done).toBe(false);
   });

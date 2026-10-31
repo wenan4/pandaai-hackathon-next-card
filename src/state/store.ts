@@ -1,8 +1,10 @@
 // 游戏状态与本地存储。只存在本机 localStorage，不上传。
 import { CONTENT_VERSION } from "../config/constants";
-import type { Action, AssistLevel, Card, FollowupId, GameEvent, Profile, Reaction, Stage, Verdict } from "../engine/types";
+import { EventLogSchema } from "../../contracts/events";
+import type { Action, AssistLevel, Card, FollowupId, GameEvent, ProfileView, Reaction, Stage, Verdict } from "../engine/types";
 
-export const STORAGE_KEY = "nextcard:v1";
+export const STORAGE_KEY = "nextcard:v2";
+export const LEGACY_STORAGE_KEY = "nextcard:v1";
 export const NOTICE_VERSION = "notice-v1";
 
 export type Screen = "notice" | "start" | "round" | "profile" | "basis" | "share" | "taskA" | "updated" | "taskB" | "privacy" | "data";
@@ -15,7 +17,7 @@ export interface RoundUI {
   explained: Card[];
   final?: Verdict;
   action?: Action;
-  note: string;
+  note?: import("../../contracts/common").SelfNote;
   followup?: FollowupId | null;
   locked: boolean;
 }
@@ -54,7 +56,8 @@ export interface TaskBUI {
 }
 
 export interface State {
-  v: 1;
+  v: 2;
+  migrationPending?: boolean;
   session_id: string;
   notice_version?: string;
   screen: Screen;
@@ -66,10 +69,10 @@ export interface State {
   taskA: TaskAUI | null;
   taskB: TaskBUI | null;
   /** 进入任务前的画像，用于“画像更新”页对比 */
-  profileBeforeTask?: Profile;
+  profileBeforeTask?: ProfileView;
 }
 
-const newRound = (): RoundUI => ({ phase: "claim", flips: [], explained: [], note: "", locked: false });
+const newRound = (): RoundUI => ({ phase: "claim", flips: [], explained: [], locked: false });
 
 function newSessionId(): string {
   try {
@@ -81,7 +84,7 @@ function newSessionId(): string {
 
 export function freshState(noticeVersion?: string): State {
   return {
-    v: 1,
+    v: 2,
     session_id: newSessionId(),
     notice_version: noticeVersion,
     screen: noticeVersion === NOTICE_VERSION ? "start" : "notice",
@@ -94,13 +97,19 @@ export function freshState(noticeVersion?: string): State {
   };
 }
 
+export function restoreState(raw: string | null, legacyPresent = false): State {
+  if (raw) {
+    try {
+      const s = JSON.parse(raw) as State;
+      if (s.v === 2 && Array.isArray(s.rounds) && s.rounds.length === 3 && EventLogSchema.safeParse(s.events).success && s.events.every(e => e.session_id === s.session_id) && Number.isInteger(s.seq) && s.seq >= s.events.length) return s;
+    } catch { /* damaged or incompatible save: ask before replacing */ }
+  }
+  return { ...freshState(), migrationPending: !!raw || legacyPresent };
+}
+
 function load(): State {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const s = JSON.parse(raw) as State;
-      if (s.v === 1 && Array.isArray(s.events) && Array.isArray(s.rounds)) return s;
-    }
+    return restoreState(localStorage.getItem(STORAGE_KEY), localStorage.getItem(LEGACY_STORAGE_KEY) !== null);
   } catch {
     // 隐私模式或存储被禁用：照常游戏，只是不能续玩
   }
@@ -111,6 +120,7 @@ let state: State = load();
 const listeners = new Set<() => void>();
 
 function save(): void {
+  if (state.migrationPending) return;
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch {
@@ -138,7 +148,7 @@ type PayloadOf<T extends GameEvent["type"]> = Extract<GameEvent, { type: T }>["p
 /** 产生一个事件并写入状态（调用方负责在 update 里调用）。 */
 export function emit<T extends GameEvent["type"]>(s: State, round_id: string, stage: Stage, type: T, payload: PayloadOf<T>): void {
   s.seq += 1;
-  s.events.push({
+  const event = {
     event_id: `e${String(s.seq).padStart(4, "0")}`,
     session_id: s.session_id,
     content_version: CONTENT_VERSION,
@@ -146,7 +156,15 @@ export function emit<T extends GameEvent["type"]>(s: State, round_id: string, st
     round_id,
     type,
     payload,
-  } as GameEvent);
+  };
+  s.events = EventLogSchema.parse([...s.events, event]);
+}
+
+/** Called only after the migration notice's explicit restart button. */
+export function acceptStorageUpgrade(s: State): void {
+  if (!s.migrationPending) return;
+  try { localStorage.removeItem(LEGACY_STORAGE_KEY); localStorage.removeItem(STORAGE_KEY); } catch { /* private mode */ }
+  s.migrationPending = false;
 }
 
 /** 清除本游戏在本机存储的全部内容，回到开局告知。 */

@@ -25,5 +25,5 @@ export function forkEvents(original: readonly GameEvent[], specs: RoundSpec[], r
 }
 
 export function changeOnlyActions(events: readonly GameEvent[]): GameEvent[] {
-  return events.map((e) => e.type === "decision" ? { ...e, payload: { action: e.payload.action === "follow" ? "pass" : "follow" } } : e);
+  return events.map((e) => e.type === "decision" ? { ...e, payload: { action: e.payload.action === "follow" ? "skip" : "follow" } } : e);
 }

@@ -2,9 +2,9 @@
 // 每项都通过同一个 evaluate / recommend 重算，只改一个变量，再比较输出。
 import { AVAILABLE_TOPICS, ENGINE_CONFIG } from "../config/engine";
 import { ROUNDS } from "../config/rounds";
-import { evaluate as realEvaluate } from "../engine/evaluate";
+import { evaluateView as realEvaluate } from "../engine/evaluate";
 import { eventFactory, eventsFromSpecs, type RoundSpec } from "../engine/paths";
-import { recommend as realRecommend } from "../engine/recommend";
+import { recommendView as realRecommend } from "../engine/recommend";
 import { flipOutcomes, settle } from "../engine/settle";
 import type { Action, Card, GameEvent, Verdict } from "../engine/types";
 
@@ -20,11 +20,12 @@ export interface CheckResult {
   pass: boolean;
 }
 
+const CHECK_TASKS = { "A:1": {content_id: "check-A1", answer: "outperform", actions: ["aligned"]}, "A:2": {content_id: "check-A2", answer: "supports", actions: ["window_extended"]} } as import("../engine/taskRules").TaskRules;
 const REAL: Engine = { evaluate: realEvaluate, recommend: realRecommend };
 const VERDICT_FLIP: Record<Verdict, Verdict> = { supports: "refutes", refutes: "supports", insufficient: "refutes" };
 
 function run(engine: Engine, events: readonly GameEvent[]) {
-  const out = engine.evaluate(events, ENGINE_CONFIG);
+  const out = engine.evaluate(events, { ...ENGINE_CONFIG, tasks: { ...CHECK_TASKS, ...ENGINE_CONFIG.tasks } });
   return { ...out, plan: engine.recommend(out.profile, out.progress, AVAILABLE_TOPICS) };
 }
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -34,9 +35,9 @@ const planText = (p: ReturnType<typeof run>["plan"]) => `${p.route} · 任务 ${
 function hintedTaskA(start: number, steps: number[] = [1, 2], switchToSolo = false): GameEvent[] {
   const ev = eventFactory("check", "v0.3", start);
   return steps.flatMap((step) => [
-    ev("taskA", "in_task", "assist_exposure", { task: "A", step, content_id: `A${step}-hint`, kind: "hint" }),
-    ...(switchToSolo ? [ev("taskA", "in_task", "assist_switch", { task: "A", level: "self" })] : []),
-    ev("taskA", "in_task", "task_step", { task: "A", step, phase: "submit", answer: step === 1 ? "outperform" : "supports", correct: true, aligned: step === 1 ? true : undefined, window_extended: step === 2 ? true : undefined }),
+    ev("taskA", "in_task", "assist_exposure", { task: "A", step, content_id: `A${step}-hint`, kind: "hint", attempt: 1 }),
+    ...(switchToSolo ? [ev("taskA", "in_task", "assist_switch", { task: "A", from: "hint", to: "solo", by: "user" })] : []),
+    ev("taskA", "in_task", "task_step", { task: "A", step, phase: "submit", answer: ({ ...CHECK_TASKS, ...ENGINE_CONFIG.tasks })[`A:${step}`]!.answer, content_id: ({ ...CHECK_TASKS, ...ENGINE_CONFIG.tasks })[`A:${step}`]!.content_id, attempt: 1, actions: ({ ...CHECK_TASKS, ...ENGINE_CONFIG.tasks })[`A:${step}`]!.actions }),
   ]);
 }
 
@@ -45,7 +46,7 @@ function verifiedSpecs(action: Action): RoundSpec[] {
   return ROUNDS.map((r) => ({ round_id: r.round_id, flips: [r.key_card!], final: r.verdict, action, followupAnswer: null }));
 }
 
-export function runChecks(events: readonly GameEvent[], specs: RoundSpec[], outcomes: Record<string, number | null>, engine: Engine = REAL): CheckResult[] {
+export function runChecks(events: readonly GameEvent[], specs: RoundSpec[], outcomes: import("../engine/settle").Outcomes, engine: Engine = REAL): CheckResult[] {
   const base = run(engine, events);
   const results: CheckResult[] = [];
   const add = (name: string, expected: string, actual: string, pass: boolean) => results.push({ id: results.length + 1, name, expected, actual, pass });
@@ -73,7 +74,7 @@ export function runChecks(events: readonly GameEvent[], specs: RoundSpec[], outc
 
   // 3. 只改交易行动
   {
-    const cycle: Record<Action, Action> = { follow: "pass", pass: "wait", wait: "follow" };
+    const cycle: Record<Action, Action> = { follow: "skip", skip: "wait", wait: "follow" };
     const changed = events.map((e) => (e.type === "decision" ? ({ ...e, payload: { action: cycle[e.payload.action] } } as GameEvent) : e));
     const out = run(engine, changed);
     const ok = same(out.profile, base.profile) && same(out.progress, base.progress) && same(out.plan, base.plan);
@@ -101,10 +102,10 @@ export function runChecks(events: readonly GameEvent[], specs: RoundSpec[], outc
   // 5. 机械策略：不查证，或恒定一种判断
   {
     const strategies: [string, RoundSpec[]][] = [
-      ["全程不翻牌", ROUNDS.map((r) => ({ round_id: r.round_id, flips: [] as Card[], final: r.verdict, action: "pass" as Action, followupAnswer: null }))],
+      ["全程不翻牌", ROUNDS.map((r) => ({ round_id: r.round_id, flips: [] as Card[], final: r.verdict, action: "skip" as Action, followupAnswer: null }))],
       ...(["supports", "refutes", "insufficient"] as Verdict[]).map((v): [string, RoundSpec[]] => [
         `恒选${v}`,
-        ROUNDS.map((r) => ({ round_id: r.round_id, flips: [r.key_card!], final: v, action: "pass" as Action, followupAnswer: null })),
+        ROUNDS.map((r) => ({ round_id: r.round_id, flips: [r.key_card!], final: v, action: "skip" as Action, followupAnswer: null })),
       ]),
     ];
     const bad = strategies.filter(([, s]) => {
@@ -125,7 +126,7 @@ export function runChecks(events: readonly GameEvent[], specs: RoundSpec[], outc
 
   // 7. 看过提示再切到“我自己来”；带提示完成任务 A
   {
-    const out = run(engine, [...eventsFromSpecs(verifiedSpecs("pass"), ROUNDS, "check"), ...hintedTaskA(900, [1, 2], true)]);
+    const out = run(engine, [...eventsFromSpecs(verifiedSpecs("skip"), ROUNDS, "check"), ...hintedTaskA(900, [1, 2], true)]);
     const assisted = out.profile.task_observations.O1.every((i) => i.assisted) && out.profile.task_observations.O2.every((i) => i.assisted);
     const ok = assisted && out.progress.ready_for_B && out.plan.task === "B";
     add("看过提示后切到“我自己来”再提交", "记为在帮助下完成，不升级为独立；基础步骤完成后任务 B 开放",

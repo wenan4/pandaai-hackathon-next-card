@@ -1,5 +1,5 @@
 // 事件预处理：按轮整理揭晓前的有效事件。纯函数。
-import type { Action, Card, ExplainKind, FollowupId, GameEvent, Reaction, RoundConfig, Verdict } from "./types";
+import type { Action, Card, ExplainKind, FollowupId, FollowupAnswer, GameEvent, Reaction, RoundConfig, Verdict } from "./types";
 
 export const MAX_FLIPS = 2;
 
@@ -11,7 +11,7 @@ export interface RoundRecord {
   explains: { card: Card; kind: ExplainKind; content_id: string; event_id: string }[];
   final?: Verdict;
   action?: Action;
-  followup?: { question: FollowupId; answer: string | null };
+  followup?: { question: FollowupId; answer: FollowupAnswer };
   event_ids: { initial?: string; flips: string[]; final?: string; action?: string; followup?: string };
 }
 

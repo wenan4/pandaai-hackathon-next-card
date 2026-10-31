@@ -28,9 +28,10 @@ describe("结构化结果导出（YOU-169）", () => {
     });
   }
 
-  it("导出内容不含会话编号等可关联个人的信息", () => {
+  it("导出保留契约要求的匿名会话编号，不包含原始事件", () => {
     const p = PRESETS[0]!;
-    const text = JSON.stringify(structuredResult(eventsFromSpecs(p.specs, ROUNDS, "secret-session-id"), ENGINE_CONFIG, AVAILABLE_TOPICS, { kind: "user_session" }, UNKNOWN_YET));
-    expect(text).not.toContain("secret-session-id");
+    const text = JSON.stringify(structuredResult(eventsFromSpecs(p.specs, ROUNDS, "secret-session-id"), ENGINE_CONFIG, AVAILABLE_TOPICS, { kind: "real_session" }, UNKNOWN_YET));
+    expect(JSON.parse(text).provenance.session_id).toBe("secret-session-id");
+    expect(JSON.parse(text)).not.toHaveProperty("events");
   });
 });

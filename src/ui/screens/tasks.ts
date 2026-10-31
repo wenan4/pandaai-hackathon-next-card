@@ -1,9 +1,11 @@
+import { methodToolbar } from "../methodCards";
+import { nextAttempt } from "../../engine/taskRules";
 // 任务 A「同一起点，再比一次」、画像更新、任务 B「换一段数据，还成立吗？」
 import { ASSIST_COPY, CHANGE_REASON, OBS_COPY, STATUS_COPY, TASK_STATUS_COPY } from "../../config/copy";
 import { AVAILABLE_TOPICS, ENGINE_CONFIG } from "../../config/engine";
 import type { TaskAData, TaskBData } from "../../data/cases";
 import { eventsBeforeTask, profileChanges } from "../../engine/changes";
-import { evaluate } from "../../engine/evaluate";
+import { evaluateView as evaluate } from "../../engine/evaluate";
 import { compareToBenchmark, maxDrawdown, periodReturn } from "../../engine/metrics";
 import { answerKey, type TaskBAnswer } from "../../engine/taskB";
 import type { AssistLevel, ObsInstance } from "../../engine/types";
@@ -45,17 +47,17 @@ function assistBar(task: "A" | "B", current: AssistLevel): HTMLElement {
       const t = task === "A" ? s.taskA : s.taskB;
       if (!t) return;
       t.assist = level;
-      emit(s, `task${task}`, "in_task", "assist_switch", { task, level });
+      emit(s, `task${task}`, "in_task", "assist_switch", { task, from: current, to: level, by: "user" });
     });
   return h(
     "div",
     { class: "seg", role: "group", "aria-label": "协助档位" },
-    (["guide", "hint", "self"] as AssistLevel[]).map((l) => h("button", { "aria-pressed": String(current === l), onclick: () => pick(l) }, ASSIST_COPY[l].label)),
+    (["guide", "hint", "solo"] as AssistLevel[]).map((l) => h("button", { "aria-pressed": String(current === l), onclick: () => pick(l) }, ASSIST_COPY[l].label)),
   );
 }
 
 function hintBox(t: TaskAUI, step: number): HTMLElement | null {
-  if (t.assist === "self") return null;
+  if (t.assist === "solo") return null;
   const level = t.assist;
   const id = `A${step}-${level}`;
   const seen = t.exposures.includes(id);
@@ -64,7 +66,7 @@ function hintBox(t: TaskAUI, step: number): HTMLElement | null {
       update((s) => {
         if (!s.taskA || s.taskA.exposures.includes(id)) return;
         s.taskA.exposures.push(id);
-        emit(s, "taskA", "in_task", "assist_exposure", { task: "A", step, content_id: id, kind: level === "guide" ? "demo" : "hint" });
+        emit(s, "taskA", "in_task", "assist_exposure", { task: "A", step, content_id: id, kind: level === "guide" ? "demo" : "hint", attempt: nextAttempt(s.events, "A", step) });
       });
     return h("button", { class: "btn-line", onclick: show }, icon("bulb", 18), level === "guide" ? "带我做这一步" : "看一句提示");
   }
@@ -92,8 +94,9 @@ export function taskAScreen(s: State, d: TaskAData): HTMLElement {
       const x = st.taskA!;
       if (!x.answer || x.feedback?.step === step || (step === 1 ? !x.aligned : !x.windowExtended)) return;
       const correct = x.answer === (step === 1 ? step1Answer(d) : step2Answer(d));
-      emit(st, "taskA", "in_task", "task_step", { task: "A", step, phase: "submit", answer: x.answer, correct, aligned: step === 1 ? x.aligned : undefined, window_extended: step === 2 ? x.windowExtended : undefined });
-      emit(st, "taskA", "in_task", "assist_exposure", { task: "A", step, content_id: `A${step}-feedback`, kind: "feedback" });
+      const attempt = nextAttempt(st.events, "A", step);
+      emit(st, "taskA", "in_task", "task_step", { task: "A", step, content_id: ENGINE_CONFIG.tasks![`A:${step}`]!.content_id, attempt, phase: "submit", answer: x.answer, actions: [step === 1 ? "aligned" : "window_extended"] });
+      emit(st, "taskA", "in_task", "assist_exposure", { task: "A", step, content_id: `A${step}-feedback`, kind: "answer_feedback", attempt });
       x.feedback = { step, answer: x.answer, correct };
     });
   const guess = (v: string) =>
@@ -102,7 +105,7 @@ export function taskAScreen(s: State, d: TaskAData): HTMLElement {
       if (x.guess) return;
       x.guess = v;
       x.answer = v;
-      emit(st, "taskA", "in_task", "task_step", { task: "A", step, phase: "guess", answer: v, correct: null });
+      emit(st, "taskA", "in_task", "task_step", { task: "A", step, phase: "guess", answer: v, actions: [], content_id: ENGINE_CONFIG.tasks![`A:${step}`]!.content_id, attempt: nextAttempt(st.events, "A", step) });
     });
   const next = () =>
     update((st) => {
@@ -185,6 +188,7 @@ export function taskAScreen(s: State, d: TaskAData): HTMLElement {
     topbar({ title: `下一关 · 任务 A · 步骤 ${t.stepIndex + 1} / ${t.steps.length}`, onBack: () => go("profile") }),
     h("h1", { class: "display" }, step === 1 ? "同一起点，再比一次" : "拉长窗口，再看一次"),
     t.stepIndex === 0 ? h("p", { class: "small text-2" }, `为什么是这关：${t.reason}`) : null,
+    methodToolbar(s),
     assistBar("A", t.assist),
     body,
     needGuess ? null : hintBox(t, step),
@@ -357,40 +361,41 @@ export function taskBScreen(s: State, d: TaskBData): HTMLElement {
       const x = st.taskB!;
       if (x.guess) return;
       x.guess = v;
-      emit(st, "taskB", "in_task", "task_step", { task: "B", step: 1, phase: "guess", answer: v, correct: null });
+      emit(st, "taskB", "in_task", "task_step", { task: "B", step: 1, phase: "guess", answer: v, actions: [], content_id: ENGINE_CONFIG.tasks!["B:1"]!.content_id, attempt: nextAttempt(st.events, "B", 1) });
     });
   const lock = () =>
     update((st) => {
       const x = st.taskB!;
       if (x.locked) return;
       x.locked = true;
-      emit(st, "taskB", "in_task", "task_step", { task: "B", step: 1, phase: "submit", answer: "rules_locked", correct: null });
+      emit(st, "taskB", "in_task", "task_step", { task: "B", step: 1, phase: "submit", answer: "rules_locked", actions: ["rules_locked", "display_viewed"], content_id: ENGINE_CONFIG.tasks!["B:1"]!.content_id, attempt: nextAttempt(st.events, "B", 1) });
     });
   const openTest = () =>
     update((st) => {
       const x = st.taskB!;
       if (!x.locked || x.testOpened) return;
       x.testOpened = true;
-      emit(st, "taskB", "in_task", "task_step", { task: "B", step: 2, phase: "submit", answer: "test_opened", correct: null });
+      emit(st, "taskB", "in_task", "task_step", { task: "B", step: 2, phase: "submit", answer: "test_opened", actions: ["test_viewed"], content_id: ENGINE_CONFIG.tasks!["B:2"]!.content_id, attempt: nextAttempt(st.events, "B", 2) });
     });
   const showHint = () =>
     update((st) => {
       const x = st.taskB!;
       const level = x.assist ?? "hint";
-      if (level === "self") return;
+      if (level === "solo") return;
       const id = `B3-${level}`;
       x.exposures ??= [];
       if (x.exposures.includes(id)) return;
       x.exposures.push(id);
-      emit(st, "taskB", "in_task", "assist_exposure", { task: "B", step: 3, content_id: id, kind: level === "guide" ? "demo" : "hint" });
+      emit(st, "taskB", "in_task", "assist_exposure", { task: "B", step: 3, content_id: id, kind: level === "guide" ? "demo" : "hint", attempt: nextAttempt(st.events, "B", 3) });
     });
   const submit = () =>
     update((st) => {
       const x = st.taskB!;
       if (!x.answer || !x.why || x.feedback || !x.testOpened) return;
       const correct = x.answer === expected && x.why === WHY_OF[expected];
-      emit(st, "taskB", "in_task", "task_step", { task: "B", step: 3, phase: "submit", answer: `${x.answer}|${x.why}`, correct });
-      emit(st, "taskB", "in_task", "assist_exposure", { task: "B", step: 3, content_id: "B3-feedback", kind: "feedback" });
+      const attempt = nextAttempt(st.events, "B", 3);
+      emit(st, "taskB", "in_task", "task_step", { task: "B", step: 3, phase: "submit", answer: `${x.answer}|${x.why}`, content_id: ENGINE_CONFIG.tasks!["B:3"]!.content_id, attempt, actions: ["rules_locked", "display_viewed", "test_viewed"] });
+      emit(st, "taskB", "in_task", "assist_exposure", { task: "B", step: 3, content_id: "B3-feedback", kind: "answer_feedback", attempt });
       x.feedback = { answer: x.answer, why: x.why, correct };
     });
   const finish = () =>
@@ -411,7 +416,7 @@ export function taskBScreen(s: State, d: TaskBData): HTMLElement {
 
   const hintId = `B3-${assist}`;
   const hint =
-    assist === "self" || !t.testOpened
+    assist === "solo" || !t.testOpened
       ? null
       : exposures.includes(hintId)
         ? h("div", { class: "panel row", style: "align-items:flex-start" }, h("span", { style: "color:var(--ele);margin-top:2px" }, icon("bulb", 16, 2)), h("span", { class: "small", style: "white-space:pre-line" }, B_HINT[assist]))
@@ -428,11 +433,12 @@ export function taskBScreen(s: State, d: TaskBData): HTMLElement {
     h("h1", { class: "display" }, "换一段数据，还成立吗？"),
     h("p", { class: "small text-2" }, `为什么是这关：${t.reason}`),
     h("p", { class: "xs muted" }, `主题：猎豹题 · 放量上涨之后（${AVAILABLE_TOPICS.length === 1 ? "其他主题尚未开放" : "可在人物卡换题"}）`),
+    methodToolbar(s),
     assistBar("B", assist),
     ruleCard(d, t.locked),
     needGuess
       ? h("section", { class: "stack" }, h("h2", null, "先猜一下（之后可以改）"), h("p", { class: "small text-2" }, `放量上涨之后的 ${d.header.execution.horizon_days} 个交易日，收益为正的比例会比一般情况高出至少 ${(d.header.thresholds.advantage_margin * 100).toFixed(0)} 个百分点吗？`),
-          options([["higher", "会"], ["not_higher", "不会"], ["unsure", "说不准"]], undefined, false, guess))
+          options([["higher", "会"], ["not_higher", "不会"], ["insufficient", "说不准"]], undefined, false, guess))
       : null,
     !needGuess && !t.locked
       ? h("section", { class: "stack" }, h("p", { class: "xs muted" }, "锁定后才能看展示段；规则锁定后不能看着数据再改。"), h("button", { class: "btn", onclick: lock }, icon("lock", 18, 2), "锁定规则，查看展示段"))

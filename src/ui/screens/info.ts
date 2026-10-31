@@ -3,7 +3,7 @@ import { VERDICT_COPY } from "../../config/copy";
 import { ROUNDS } from "../../config/rounds";
 import type { DataHeader, TaskAData, TaskBData } from "../../data/cases";
 import type { Verdict } from "../../engine/types";
-import { clearAll, emit, go, NOTICE_VERSION, update, type State } from "../../state/store";
+import { acceptStorageUpgrade, getState, clearAll, emit, go, NOTICE_VERSION, update, type State } from "../../state/store";
 import { footer, label, topbar } from "../components";
 import { fmtDate, h } from "../dom";
 import { icon } from "../icons";
@@ -25,8 +25,10 @@ function noticeList(): HTMLElement {
 }
 
 export function noticeScreen(): HTMLElement {
+  const migration = getState().migrationPending;
   const ack = () =>
     update((s) => {
+      acceptStorageUpgrade(s);
       s.notice_version = NOTICE_VERSION;
       emit(s, "session", "pre_reveal", "notice_ack", { notice_version: NOTICE_VERSION });
       s.screen = "start";
@@ -35,10 +37,11 @@ export function noticeScreen(): HTMLElement {
     "main",
     { class: "screen" },
     h("h1", { class: "display", style: "margin-top:12px" }, "开始之前"),
+    migration ? h("p", { class: "panel", role: "alert" }, "记录格式已升级，旧记录不能继续用于本版画像。选择下方“清除旧记录并重新开始”后，只会清除本游戏的旧记录，再开始新一局。") : null,
     h("p", { class: "small text-2" }, "这是一个研究练习游戏。先花半分钟看看它会记录什么。"),
     noticeList(),
     h("div", { class: "grow" }),
-    h("button", { class: "btn", onclick: ack }, "我知道了"),
+    h("button", { class: "btn", onclick: ack }, migration ? "清除旧记录并重新开始" : "我知道了"),
     footer(),
   );
 }

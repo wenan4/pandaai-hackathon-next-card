@@ -1,6 +1,6 @@
 // 任务前后的画像对比（YOU-159）。纯函数，不读取筹码与交易结果。
 // 任务前的画像从事件记录截取后重算，不依赖存档里的快照：同一份记录总能得到同一份对比。
-import type { AssistLevel, GameEvent, ObsId, ObsInstance, ObsStatus, Profile } from "./types";
+import type { AssistLevel, GameEvent, ObsId, ObsInstance, ObsStatus, ProfileView } from "./types";
 
 const OBS: ObsId[] = ["O1", "O2", "O3", "O4"];
 
@@ -42,7 +42,7 @@ function taskStatus(list: ObsInstance[]): TaskStatus {
   return list.length ? "recorded" : "none";
 }
 
-export function profileChanges(before: Profile, after: Profile): ProfileChanges {
+export function profileChanges(before: ProfileView, after: ProfileView): ProfileChanges {
   const changed: ObsChange[] = [];
   const unchanged: ObsId[] = [];
   for (const id of OBS) {

@@ -1,10 +1,11 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { AVAILABLE_TOPICS, ENGINE_CONFIG } from "../config/engine";
+import { AVAILABLE_TOPICS } from "../config/engine";
+import { TEST_CONFIG as ENGINE_CONFIG } from "./fixtures/taskRules";
 import { PRESETS } from "../panel/presets";
-import { evaluate, roundJudgement } from "./evaluate";
+import { evaluateView as evaluate, roundJudgement } from "./evaluate";
 import { eventFactory, eventsFromSpecs, type RoundSpec } from "./paths";
-import { recommend } from "./recommend";
+import { recommendView as recommend } from "./recommend";
 import { followupFor } from "./rounds";
 import { flipOutcomes, settle, settleRound, START_TOKENS } from "./settle";
 import type { GameEvent } from "./types";
@@ -38,12 +39,12 @@ describe("路径乙", () => {
     expect(after.profile.observations.O1.instances[0]!.rule).toBe("O1-b");
     expect(after.progress.K).toBe(0);
     expect(recommend(after.profile, after.progress, AVAILABLE_TOPICS)).toMatchObject({ route: "R-A2", task: "A", steps: [1, 2] });
-    expect(followupFor({ final: "supports", flips: ["elephant", "fox"], action: "pass" }, R("R1"))).toBe("basis");
+    expect(followupFor({ final: "supports", flips: ["elephant", "fox"], action: "skip" }, R("R1"))).toBe("basis");
     expect(after.profile.observations.O4.instances.some((i) => i.context === "R2" && i.outcome === "consistent")).toBe(true);
   });
 
   it("R3 追问改成“图没看懂”：O3 理解待确认，建议带我做，仍进 A，O4 不变", () => {
-    const after = run(edit(preset("yi"), "R3", { followupAnswer: "图没看懂" }));
+    const after = run(edit(preset("yi"), "R3", { followupAnswer: "chart_unclear" }));
     expect(after.profile.observations.O3).toMatchObject({ status: "uncertain", understanding_unclear: true });
     expect(after.profile.help_preference.level).toBe("guide");
     expect(recommend(after.profile, after.progress, AVAILABLE_TOPICS).task).toBe("A");
@@ -131,9 +132,9 @@ describe("事件预处理", () => {
   it("机械策略不能同时让 O1、O2 都是“观察到”", () => {
     const strategies: Record<string, (id: string) => RoundSpec> = {
       恒支持: (id) => ({ round_id: id, flips: ["fox", "elephant"], final: "supports", action: "follow" }),
-      恒否定: (id) => ({ round_id: id, flips: ["fox", "elephant"], final: "refutes", action: "pass" }),
+      恒否定: (id) => ({ round_id: id, flips: ["fox", "elephant"], final: "refutes", action: "skip" }),
       恒证据不足: (id) => ({ round_id: id, flips: ["fox", "elephant"], final: "insufficient", action: "wait" }),
-      从不翻关键牌: (id) => ({ round_id: id, flips: ["leopard"], final: id === "R1" ? "refutes" : "supports", action: "pass" }),
+      从不翻关键牌: (id) => ({ round_id: id, flips: ["leopard"], final: id === "R1" ? "refutes" : "supports", action: "skip" }),
     };
     for (const [name, make] of Object.entries(strategies)) {
       const { progress } = run(["R1", "R2", "R3"].map(make));
@@ -142,7 +143,7 @@ describe("事件预处理", () => {
   });
 
   it("物种：说法点名的牌不计入；平局给混合；样本太少给尚未显形", () => {
-    const spec = (id: string, flips: RoundSpec["flips"]): RoundSpec => ({ round_id: id, flips, final: "insufficient", action: "pass" });
+    const spec = (id: string, flips: RoundSpec["flips"]): RoundSpec => ({ round_id: id, flips, final: "insufficient", action: "skip" });
     // 甲的首翻：R1 大象、R2 狐狸、R3 狐狸，都不是点名牌 → 狐狸 2 次
     expect(run(preset("jia")).profile.style.species).toBe("fox");
     // R1 首翻狐狸（R1 点名狐狸，不计）、R2 首翻大象（R2 点名大象，不计）、R3 猎豹 → 只计 1 次
@@ -155,8 +156,8 @@ describe("事件预处理", () => {
 describe("追问触发", () => {
   const cases: [string, Parameters<typeof followupFor>[0], string, string | null][] = [
     ["证据不足优先", { final: "insufficient", flips: ["fox"], action: "wait" }, "R1", "missing"],
-    ["翻过关键牌且结论不一致", { final: "supports", flips: ["fox"], action: "pass" }, "R1", "basis"],
-    ["没翻关键牌、结论不一致：不追问依据", { final: "supports", flips: ["leopard"], action: "pass" }, "R1", null],
+    ["翻过关键牌且结论不一致", { final: "supports", flips: ["fox"], action: "skip" }, "R1", "basis"],
+    ["没翻关键牌、结论不一致：不追问依据", { final: "supports", flips: ["leopard"], action: "skip" }, "R1", null],
     ["先看看", { final: "refutes", flips: ["fox"], action: "wait" }, "R1", "waiting"],
     ["行动与判断不同不追问", { final: "refutes", flips: ["fox"], action: "follow" }, "R1", null],
     ["未来型查看量价后作明确判断也应追问", { final: "supports", flips: ["leopard"], action: "follow" }, "R3", "basis"],
@@ -178,18 +179,18 @@ describe("判断线", () => {
 
 describe("任务 A 与进度", () => {
   const ev = eventFactory("s", "v0.3", 100);
-  const step = (n: number, answer: string, correct: boolean, aligned = true) =>
-    ev("taskA", "in_task", "task_step", { task: "A", step: n, phase: "submit", answer, correct, aligned, window_extended: n === 2 });
+  const step = (n: number, answer: string, aligned = true) =>
+    ev("taskA", "in_task", "task_step", { task: "A", step: n, phase: "submit", answer, content_id: `sample-A${n}`, attempt: 1, actions: n === 2 ? ["window_extended"] : aligned ? ["aligned"] : [] });
 
   it("甲：K=0，提示下完成 A 两步后 K 仍为 0，但 B 开放，不循环回 A", () => {
     const before = run(preset("jia"));
     expect(before.progress.K).toBe(0);
     expect(recommend(before.profile, before.progress, AVAILABLE_TOPICS)).toMatchObject({ route: "R-A2", steps: [1, 2] });
     const extra = [
-      ev("taskA", "in_task", "assist_exposure", { task: "A", step: 1, content_id: "A1-hint", kind: "hint" }),
-      step(1, "outperform", true),
-      ev("taskA", "in_task", "assist_exposure", { task: "A", step: 2, content_id: "A2-hint", kind: "hint" }),
-      step(2, "supports", true),
+      ev("taskA", "in_task", "assist_exposure", { task: "A", step: 1, content_id: "A1-hint", kind: "hint", attempt: 1 }),
+      step(1, "outperform"),
+      ev("taskA", "in_task", "assist_exposure", { task: "A", step: 2, content_id: "A2-hint", kind: "hint", attempt: 1 }),
+      step(2, "supports"),
     ];
     const after = run(preset("jia"), extra);
     expect(after.progress.K).toBe(0);
@@ -201,15 +202,15 @@ describe("任务 A 与进度", () => {
 
   it("看过提示再切到“我自己来”，同题不算独立", () => {
     const extra = [
-      ev("taskA", "in_task", "assist_exposure", { task: "A", step: 1, content_id: "A1-hint", kind: "hint" }),
-      ev("taskA", "in_task", "assist_switch", { task: "A", level: "self" }),
-      step(1, "outperform", true),
+      ev("taskA", "in_task", "assist_exposure", { task: "A", step: 1, content_id: "A1-hint", kind: "hint", attempt: 1 }),
+      ev("taskA", "in_task", "assist_switch", { task: "A", from: "hint", to: "solo", by: "user" }),
+      step(1, "outperform"),
     ];
     expect(run(preset("jia"), extra).profile.task_observations.O1[0]).toMatchObject({ outcome: "consistent", assisted: true });
   });
 
   it("没对齐就提交不算完成；重复提交同一答案不增加证据", () => {
-    const result = run(preset("jia"), [step(1, "outperform", true, false), step(1, "outperform", true, false)]);
+    const result = run(preset("jia"), [step(1, "outperform", false), step(1, "outperform", false)]);
     expect(result.profile.task_observations.O1).toHaveLength(1);
     expect(result.progress.taskA_steps_done).toEqual([]);
     expect(result.profile.observations.O1.status).toBe("not_observed");
@@ -219,14 +220,14 @@ describe("任务 A 与进度", () => {
 describe("筹码结算", () => {
   it("跟 / 不跟 / 先看看 × 涨 / 跌 / 持平", () => {
     for (const ret of [0.1, -0.1, 0]) {
-      expect(settleRound("R1", "follow", ret).delta).toBeCloseTo(30 * ret, 2);
-      expect(settleRound("R1", "pass", ret)).toMatchObject({ delta: 0, hypothetical: Math.round(30 * ret * 100) / 100 });
-      expect(settleRound("R1", "wait", ret).delta).toBe(0);
+      expect(settleRound("R1", "follow", ret).chips_delta).toBeCloseTo(30 * ret, 2);
+      expect(settleRound("R1", "skip", ret)).toMatchObject({ chips_delta: 0, hypothetical_delta: Math.round(30 * ret * 100) / 100 });
+      expect(settleRound("R1", "wait", ret).chips_delta).toBe(0);
     }
   });
   it("缺收益时不结算，余额从 100 起", () => {
-    expect(settle([{ round_id: "R1", action: "follow" }], { R1: null })).toEqual({
-      rounds: [{ round_id: "R1", action: "follow", delta: 0, hypothetical: 0, ret: null }],
+    expect(settle([{ round_id: "R1", action: "follow" }], { R1: null })).toMatchObject({
+      rounds: [{ round_id: "R1", action: "follow", chips_delta: 0, hypothetical_delta: 0 }],
       balance: START_TOKENS,
     });
   });

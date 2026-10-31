@@ -12,9 +12,9 @@ export interface PresetPath {
 }
 
 const YI: RoundSpec[] = [
-  { round_id: "R1", initial: "supports", flips: ["elephant", "fox"], final: "refutes", action: "pass" },
+  { round_id: "R1", initial: "supports", flips: ["elephant", "fox"], final: "refutes", action: "skip" },
   { round_id: "R2", initial: "refutes", flips: ["elephant"], final: "supports", action: "follow" },
-  { round_id: "R3", initial: "supports", flips: ["elephant", "fox"], final: "supports", action: "wait", followupAnswer: "等未来走势" },
+  { round_id: "R3", initial: "supports", flips: ["elephant", "fox"], final: "supports", action: "wait", followupAnswer: "future_trend" },
 ];
 
 export const PRESETS: PresetPath[] = [
@@ -23,9 +23,9 @@ export const PRESETS: PresetPath[] = [
     name: "甲",
     desc: "翻了牌，但没翻关键牌，结论碰巧对",
     specs: [
-      { round_id: "R1", initial: "supports", flips: ["elephant", "leopard"], final: "refutes", action: "pass" },
-      { round_id: "R2", initial: "unsure", flips: ["fox", "leopard"], final: "supports", action: "follow" },
-      { round_id: "R3", initial: "supports", flips: ["fox"], final: "insufficient", action: "wait", followupAnswer: "之后的走势" },
+      { round_id: "R1", initial: "supports", flips: ["elephant", "leopard"], final: "refutes", action: "skip" },
+      { round_id: "R2", initial: "insufficient", flips: ["fox", "leopard"], final: "supports", action: "follow" },
+      { round_id: "R3", initial: "supports", flips: ["fox"], final: "insufficient", action: "wait", followupAnswer: "future_trend" },
     ],
   },
   { id: "yi", name: "乙", desc: "关键牌都看了，第 3 轮对未来下了判断", specs: YI },

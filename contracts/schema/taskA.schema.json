@@ -7,17 +7,8 @@
       "type": "object",
       "properties": {
         "schema": {
-          "anyOf": [
-            {
-              "type": "string",
-              "const": "next-card/data@v0.3"
-            },
-            {
-              "type": "string",
-              "format": "starts_with",
-              "pattern": "^draft.*"
-            }
-          ]
+          "type": "string",
+          "const": "next-card/data@v0.3"
         },
         "script": {
           "type": "string",
@@ -139,6 +130,7 @@
         "script",
         "script_version",
         "rules_version",
+        "generated_at",
         "data_as_of",
         "source",
         "apis",

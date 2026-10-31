@@ -1,11 +1,20 @@
 // PRD v0.3：情境观察、任务证据和推荐进度分别计算；不读取交易收益。
 import { collectRound, type RoundRecord } from "./rounds";
-import type { AssistLevel, Card, GameEvent, ObsId, ObsInstance, Observation, Profile, Progress, RoundConfig, Species } from "./types";
+import { taskCorrect, type TaskRules } from "./taskRules";
+import { EventLogSchema } from "../../contracts/events";
+import { contractEvaluation } from "./outputs";
+import type { AssistLevel, Card, GameEvent, ObsId, ObsInstance, Observation, ProfileView, ProgressView, RoundConfig, Species } from "./types";
 
 export interface EngineConfig {
   rules_version: string;
   rounds: RoundConfig[];
   understanding_answers: string[];
+  tasks?: TaskRules;
+}
+/** Public engine output. UI-only summaries are available through evaluateView. */
+export function evaluate(events: readonly GameEvent[], cfg: EngineConfig) {
+  const valid = EventLogSchema.parse(events);
+  return contractEvaluation(evaluateView(valid, cfg), valid, cfg);
 }
 export type JudgementId = "consistent" | "unchecked" | "mismatch" | "future_reserved" | "assisted" | "understanding";
 
@@ -22,7 +31,7 @@ export function roundJudgement(events: readonly GameEvent[], round: RoundConfig,
   if (!round.key_card || !rec.flips.includes(round.key_card)) return "unchecked";
   if (rec.final !== round.verdict) return "mismatch";
   if (directionalOn(rec, round.key_card)) return "assisted";
-  return round.horizon === "future" ? "future_reserved" : "consistent";
+  return round.verdict === "insufficient" ? "future_reserved" : "consistent";
 }
 function instance(rec: RoundRecord, rule: string, outcome: ObsInstance["outcome"], assisted = false): ObsInstance {
   return { context: rec.round_id, rule, outcome, assisted, event_ids: [...rec.event_ids.flips, rec.event_ids.final!].filter(Boolean) };
@@ -30,13 +39,13 @@ function instance(rec: RoundRecord, rule: string, outcome: ObsInstance["outcome"
 function keyCardInstance(obs: "O1" | "O2", rec: RoundRecord, round: RoundConfig, unclear: boolean): ObsInstance {
   if (unclear) return instance(rec, `${obs}-c`, "uncertain");
   if (!rec.flips.includes(round.key_card!)) {
-    const asksForEvidence = (obs === "O1" ? /对照|和别的比一比/ : /历史/).test(rec.followup?.answer ?? "");
+    const asksForEvidence = rec.followup?.answer === (obs === "O1" ? "comparison" : "longer_history");
     return instance(rec, `${obs}-${asksForEvidence ? "f" : "g"}`, asksForEvidence ? "uncertain" : "unchecked");
   }
   if (rec.final === round.verdict) return instance(rec, `${obs}-a`, "consistent", directionalOn(rec, round.key_card!));
   return instance(rec, `${obs}-${rec.final === "insufficient" ? "e" : "b"}`, "conflict");
 }
-function taskInstances(events: readonly GameEvent[], obs: "O1" | "O2", step: number): ObsInstance[] {
+function taskInstances(events: readonly GameEvent[], obs: "O1" | "O2", step: number, rules: TaskRules): ObsInstance[] {
   let exposed = false;
   const seen = new Set<string>();
   const out: ObsInstance[] = [];
@@ -45,10 +54,10 @@ function taskInstances(events: readonly GameEvent[], obs: "O1" | "O2", step: num
     if (e.type === "assist_exposure" && e.payload.task === "A" && e.payload.step === step) exposed = true;
     if (e.type !== "task_step" || e.payload.task !== "A" || e.payload.step !== step || e.payload.phase !== "submit") continue;
     const p = e.payload;
-    const key = JSON.stringify([p.answer, p.aligned, p.window_extended]);
+    const key = JSON.stringify([p.content_id, p.answer, p.actions]);
     if (seen.has(key)) continue;
     seen.add(key);
-    const ok = p.correct === true && (step === 1 ? p.aligned === true : p.window_extended === true);
+    const ok = taskCorrect(e, rules, events.slice(0, events.indexOf(e)));
     out.push({ context: `taskA-${step}`, rule: `${obs}-${ok ? "t" : "r"}`, outcome: ok ? "consistent" : "recorded", assisted: exposed || out.length > 0, event_ids: [e.event_id] });
     // 首次成功是这个具体情境的唯一完成证据；重开不能新增独立证据。
     if (ok) break;
@@ -56,7 +65,7 @@ function taskInstances(events: readonly GameEvent[], obs: "O1" | "O2", step: num
   return out;
 }
 /** 任务 B 第 3 步的提交：与数据一致记 O5-t，否则只记录。看过提示、示范或答案反馈后，同题不再算独立完成。 */
-function taskBInstances(events: readonly GameEvent[]): ObsInstance[] {
+function taskBInstances(events: readonly GameEvent[], rules: TaskRules): ObsInstance[] {
   let exposed = false;
   const seen = new Set<string>();
   const out: ObsInstance[] = [];
@@ -66,7 +75,7 @@ function taskBInstances(events: readonly GameEvent[]): ObsInstance[] {
     if (e.type !== "task_step" || e.payload.task !== "B" || e.payload.step !== 3 || e.payload.phase !== "submit") continue;
     if (seen.has(e.payload.answer)) continue;
     seen.add(e.payload.answer);
-    const ok = e.payload.correct === true;
+    const ok = taskCorrect(e, rules, events.slice(0, events.indexOf(e)));
     out.push({ context: "taskB", rule: `O5-${ok ? "t" : "r"}`, outcome: ok ? "consistent" : "recorded", assisted: exposed || out.length > 0, event_ids: [e.event_id] });
     if (ok) break;
   }
@@ -101,9 +110,9 @@ function revisionObservation(instances: ObsInstance[]): Observation {
     instances, understanding_unclear: false,
   };
 }
-function species(records: RoundRecord[], rounds: RoundConfig[]): Profile["style"] {
+function species(records: RoundRecord[], rounds: RoundConfig[]): ProfileView["style"] {
   const counts: Record<Card, number> = { fox: 0, elephant: 0, leopard: 0 };
-  const first_flips: Profile["style"]["first_flips"] = [];
+  const first_flips: ProfileView["style"]["first_flips"] = [];
   records.forEach((rec, i) => {
     const card = rec.flips[0];
     if (!card) return;
@@ -117,44 +126,44 @@ function species(records: RoundRecord[], rounds: RoundConfig[]): Profile["style"
   const sp: Species = total < 2 ? "unknown" : max >= 2 && leaders.length === 1 ? leaders[0]! : "mixed";
   return { species: sp, first_flips, counts };
 }
-function helpPreference(events: readonly GameEvent[], records: RoundRecord[], understanding: boolean, repeated: boolean): Profile["help_preference"] {
+function helpPreference(events: readonly GameEvent[], records: RoundRecord[], understanding: boolean, repeated: boolean): ProfileView["help_preference"] {
   const explain_count = records.reduce((n, r) => n + r.explains.filter((x) => x.kind === "neutral").length, 0);
   let userLevel: AssistLevel | null = null;
-  for (const e of events) if (e.stage === "in_task" && e.type === "assist_switch") userLevel = e.payload.level;
+  for (const e of events) if (e.stage === "in_task" && e.type === "assist_switch" && e.payload.by === "user") userLevel = e.payload.to;
   if (userLevel) return { level: userLevel, source: "user", explain_count };
   if (understanding) return { level: "guide", source: "understanding", explain_count };
-  return { level: explain_count >= 3 ? "guide" : explain_count === 0 && repeated ? "self" : "hint", source: "explain_count", explain_count };
+  return { level: explain_count >= 3 ? "guide" : explain_count === 0 && repeated ? "solo" : "hint", source: "explain_count", explain_count };
 }
-export function evaluate(events: readonly GameEvent[], cfg: EngineConfig): { profile: Profile; progress: Progress } {
+export function evaluateView(events: readonly GameEvent[], cfg: EngineConfig): { profile: ProfileView; progress: ProgressView } {
   const records = cfg.rounds.map((r) => collectRound(events, r));
   const complete = records.map((rec, i) => ({ rec, round: cfg.rounds[i]! })).filter(({ rec }) => rec.final !== undefined);
   const o1: ObsInstance[] = [], o2: ObsInstance[] = [], o3: ObsInstance[] = [], o4: ObsInstance[] = [];
   let o3d = false, anyUnderstanding = false;
-  const decisive = complete.some(({ rec, round }) => round.horizon === "past" && rec.final === round.verdict && !understandingUnclear(rec, cfg));
+  const decisive = complete.some(({ rec, round }) => round.horizon === "past" && round.verdict !== "insufficient" && rec.final === round.verdict && !understandingUnclear(rec, cfg));
   for (const { rec, round } of complete) {
     const unclear = understandingUnclear(rec, cfg);
     anyUnderstanding ||= unclear;
     if (round.key_card === "fox") o1.push(keyCardInstance("O1", rec, round, unclear));
     if (round.key_card === "elephant") o2.push(keyCardInstance("O2", rec, round, unclear));
-    if (round.horizon === "future") {
+    if (round.key_card === "leopard") {
       const seen = rec.flips.includes("leopard");
       if (unclear) o3.push(instance(rec, "O3-c", "uncertain"));
       else if (seen && rec.final === "insufficient") o3.push(instance(rec, "O3-a", decisive ? "consistent" : "uncertain", directionalOn(rec, "leopard")));
       else if (rec.final === "insufficient") o3.push(instance(rec, "O3-b", "uncertain"));
       else if (seen) { o3d = true; o3.push(instance(rec, "O3-d", "conflict")); }
       else {
-        const asksForEvidence = /数据|验证/.test(rec.followup?.answer ?? "");
+        const asksForEvidence = rec.followup?.answer === "signal_validation";
         o3.push(instance(rec, asksForEvidence ? "O3-e" : "O3-g", asksForEvidence ? "uncertain" : "unchecked"));
       }
     }
-    if (!unclear && round.key_card && rec.flips.includes(round.key_card) && rec.initial && rec.initial !== "unsure" && rec.initial !== round.verdict) {
+    if (!unclear && round.key_card && rec.flips.includes(round.key_card) && rec.initial && rec.initial !== "insufficient" && rec.initial !== round.verdict) {
       const changed = rec.final === round.verdict;
       const inst = instance(rec, changed ? "O4-a" : "O4-c", changed ? "consistent" : "unchecked", changed && directionalOn(rec, round.key_card));
       inst.event_ids.unshift(rec.event_ids.initial!);
       o4.push(inst);
     }
   }
-  const task_observations = { O1: taskInstances(events, "O1", 1), O2: taskInstances(events, "O2", 2), O5: taskBInstances(events) };
+  const task_observations = { O1: taskInstances(events, "O1", 1, cfg.tasks ?? {}), O2: taskInstances(events, "O2", 2, cfg.tasks ?? {}), O5: taskBInstances(events, cfg.tasks ?? {}) };
   // 任务中的先猜后验也使用同一命题；只有第一次成功的提交可提供一条修正证据。
   for (const [id, step] of [["O1", 1], ["O2", 2]] as const) {
     const completion = task_observations[id].find((i) => i.outcome === "consistent");
@@ -162,7 +171,7 @@ export function evaluate(events: readonly GameEvent[], cfg: EngineConfig): { pro
     const at = events.findIndex((e) => e.event_id === completion.event_ids[0]);
     const guess = events.slice(0, at).find((e) => e.stage === "in_task" && e.type === "task_step" && e.payload.task === "A" && e.payload.step === step && e.payload.phase === "guess");
     const submitted = events[at];
-    if (guess?.type === "task_step" && submitted?.type === "task_step" && !["insufficient", "unsure"].includes(guess.payload.answer) && guess.payload.answer !== submitted.payload.answer) {
+    if (guess?.type === "task_step" && submitted?.type === "task_step" && !["insufficient", "insufficient"].includes(guess.payload.answer) && guess.payload.answer !== submitted.payload.answer) {
       o4.push({ ...completion, rule: "O4-a", event_ids: [guess.event_id, ...completion.event_ids] });
     }
   }
@@ -184,7 +193,7 @@ export function evaluate(events: readonly GameEvent[], cfg: EngineConfig): { pro
   const taskA_steps_done = ([1, 2] as const).filter((step) => task_observations[step === 1 ? "O1" : "O2"].some((i) => i.outcome === "consistent"));
   const S1 = observations.O1.aggregation === "repeated" || taskA_steps_done.includes(1);
   const S2 = observations.O2.aggregation === "repeated" || taskA_steps_done.includes(2);
-  const profile: Profile = {
+  const profile: ProfileView = {
     rules_version: cfg.rules_version, observations, task_observations, style: species(records, cfg.rounds),
     help_preference: helpPreference(events, records, anyUnderstanding, observations.O1.aggregation === "repeated" && observations.O2.aggregation === "repeated"), flags: { o3d },
   };

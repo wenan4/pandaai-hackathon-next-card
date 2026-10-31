@@ -1,15 +1,19 @@
+import { loadTaskA, loadTaskB } from "../data/cases";
+import { taskARules, taskBRules } from "../engine/taskRules";
+import { createHistory, pushHistory, undoHistory, redoHistory, type History } from "./history";
+import { CasesRevealSchema } from "../../contracts/data";
 // 评委面板（?judge=1）：预设路径或当前体验记录 → 字段编辑 → 分叉重算 → 前后差异并列。
 // 所有结果都来自同一套 evaluate / recommend / settle，面板里没有规则的第二份实现。
-import { ACTION_COPY, CARD_COPY, FOLLOWUP_COPY, OBS_COPY, STATUS_COPY, UNKNOWN_YET, VERDICT_COPY } from "../config/copy";
+import { ACTION_COPY, CARD_COPY, FOLLOWUP_COPY, FOLLOWUP_ANSWER_COPY, OBS_COPY, STATUS_COPY, UNKNOWN_YET, VERDICT_COPY } from "../config/copy";
 import { AVAILABLE_TOPICS, ENGINE_CONFIG } from "../config/engine";
 import { ROUNDS } from "../config/rounds";
-import { evaluate } from "../engine/evaluate";
+import { evaluate as evaluateContract, evaluateView as evaluate } from "../engine/evaluate";
 import { eventsFromSpecs, type RoundSpec } from "../engine/paths";
-import { recommend } from "../engine/recommend";
+import { recommendView as recommend } from "../engine/recommend";
 import { structuredResult, type Provenance } from "../engine/result";
 import { collectRound, followupFor } from "../engine/rounds";
-import { flipOutcomes, settle } from "../engine/settle";
-import type { Action, Card, GameEvent, ObsId, Verdict } from "../engine/types";
+import { flipOutcomes, settle, settlementOutcome } from "../engine/settle";
+import type { Action, Card, FollowupAnswer, GameEvent, ObsId, Verdict } from "../engine/types";
 import { getState } from "../state/store";
 import { label } from "../ui/components";
 import { downloadJson, h } from "../ui/dom";
@@ -22,20 +26,19 @@ export function isJudgeMode(search: string = location.search): boolean {
 }
 
 const OBS: ObsId[] = ["O1", "O2", "O3", "O4"];
-type Outcomes = Record<string, number | null>;
+type Outcomes = import("../engine/settle").Outcomes;
 
 interface PanelState {
   baseline: string;
   editRound: string;
   draft: RoundSpec | null;
-  fork: RoundSpec[] | null;
   error: string | null;
   checks: CheckResult[] | null;
   /** 每次“应用改动”前的分叉，用于逐步撤销 */
-  history: (RoundSpec[] | null)[];
+  history: History<RoundSpec[] | null>;
 }
 
-const ps: PanelState = { baseline: "yi", editRound: "R1", draft: null, fork: null, error: null, checks: null, history: [] };
+const ps: PanelState = { baseline: "yi", editRound: "R1", draft: null, error: null, checks: null, history: createHistory<RoundSpec[] | null>(null) };
 let outcomes: Outcomes = {};
 let rerender: () => void = () => {};
 
@@ -69,6 +72,7 @@ function compute(specs: RoundSpec[], flip: string[], fork = false) {
   const chips = settle(
     specs.map((s) => ({ round_id: s.round_id, action: s.action })),
     flipOutcomes(outcomes, flip),
+    flip.length > 0,
   );
   return { events, profile, progress, plan, chips };
 }
@@ -92,7 +96,7 @@ function select(name: string, value: string, opts: [string, string][], onChange:
 const CARD_OPTS: [string, string][] = [["", "不翻"], ...(["fox", "elephant", "leopard"] as Card[]).map((c) => [c, `${CARD_COPY[c].animal} · ${CARD_COPY[c].title}`] as [string, string])];
 
 function editor(specs: RoundSpec[]): HTMLElement {
-  const current = (ps.fork ?? specs).find((s) => s.round_id === ps.editRound);
+  const current = (ps.history.present ?? specs).find((s) => s.round_id === ps.editRound);
   if (!current) return h("p", { class: "small muted" }, "这条记录里还没有完成的轮次。");
   const d = ps.draft && ps.draft.round_id === ps.editRound ? ps.draft : { ...current };
   const setDraft = (patch: Partial<RoundSpec>) => {
@@ -106,8 +110,7 @@ function editor(specs: RoundSpec[]): HTMLElement {
     else if (d.flips[0] && d.flips[0] === d.flips[1]) ps.error = "同一张牌不能翻两次。";
     else {
       ps.error = null;
-      ps.history.push(ps.fork);
-      ps.fork = (ps.fork ?? specs).map((s) => (s.round_id === d.round_id ? { ...d, followupAnswer: q ? (FOLLOWUP_COPY[q].options.includes(d.followupAnswer ?? "") ? d.followupAnswer : null) : undefined } : s));
+      ps.history = pushHistory(ps.history, (ps.history.present ?? specs).map((s) => (s.round_id === d.round_id ? { ...d, followupAnswer: q ? (FOLLOWUP_COPY[q].options.includes(d.followupAnswer ?? "skipped") ? d.followupAnswer : null) : undefined } : s)));
       ps.draft = null;
       // 检查结果属于改动前的分叉，清掉以免张冠李戴
       ps.checks = null;
@@ -128,13 +131,13 @@ function editor(specs: RoundSpec[]): HTMLElement {
         setDraft({ flips: [d.flips[0] as Card, v as Card].filter(Boolean) as Card[] });
       }),
       select("最终判断", d.final, (["supports", "refutes", "insufficient"] as Verdict[]).map((v) => [v, VERDICT_COPY[v].label]), (v) => setDraft({ final: v as Verdict, followupAnswer: null })),
-      select("行动", d.action, (["follow", "pass", "wait"] as Action[]).map((a) => [a, ACTION_COPY[a]]), (v) => setDraft({ action: v as Action, followupAnswer: null })),
+      select("行动", d.action, (["follow", "skip", "wait"] as Action[]).map((a) => [a, ACTION_COPY[a]]), (v) => setDraft({ action: v as Action, followupAnswer: null })),
     ),
     q
-      ? select(`追问：${FOLLOWUP_COPY[q].question}（必须选择或明确跳过）`, d.followupAnswer ?? "", [["", "跳过"], ...FOLLOWUP_COPY[q].options.map((o) => [o, o] as [string, string])], (v) => setDraft({ followupAnswer: v || null }))
+      ? select(`追问：${FOLLOWUP_COPY[q].question}（必须选择或明确跳过）`, d.followupAnswer ?? "", [["", "跳过"], ...FOLLOWUP_COPY[q].options.map((o) => [o, FOLLOWUP_ANSWER_COPY[o]] as [string, string])], (v) => setDraft({ followupAnswer: (v || null) as FollowupAnswer | null }))
       : h("p", { class: "xs muted" }, "这组字段不触发追问。"),
     ps.error ? h("p", { class: "small", style: "color:var(--leo)" }, ps.error) : null,
-    h("div", { class: "row" }, h("button", { class: "btn", style: "min-height:44px;font-size:15px", onclick: apply }, "应用改动（建立分叉）"), h("button", { class: "btn-line", style: "min-height:44px", disabled: !ps.history.length, onclick: () => ((ps.fork = ps.history.pop() ?? null), (ps.draft = null), (ps.error = null), (ps.checks = null), rerender()) }, `撤销${ps.history.length ? `（${ps.history.length}）` : ""}`), h("button", { class: "btn-line", style: "min-height:44px", onclick: () => ((ps.fork = null), (ps.history = []), (ps.draft = null), (ps.error = null), (ps.checks = null), rerender()) }, "恢复基线")),
+    h("div", { class: "row" }, h("button", { class: "btn", style: "min-height:44px;font-size:15px", onclick: apply }, "应用改动（建立分叉）"), h("button", { class: "btn-line", style: "min-height:44px", disabled: !ps.history.past.length, onclick: () => ((ps.history = undoHistory(ps.history)), (ps.draft = null), (ps.error = null), (ps.checks = null), rerender()) }, `撤销${ps.history.past.length ? `（${ps.history.past.length}）` : ""}`), h("button", { class: "btn-line", style: "min-height:44px", disabled: !ps.history.future.length, onclick: () => ((ps.history = redoHistory(ps.history)), (ps.draft = null), (ps.error = null), (ps.checks = null), rerender()) }, "恢复上一步"), h("button", { class: "btn-line", style: "min-height:44px", onclick: () => ((ps.history = createHistory<RoundSpec[] | null>(null)), (ps.draft = null), (ps.error = null), (ps.checks = null), rerender()) }, "恢复基线")),
   );
 }
 
@@ -178,13 +181,13 @@ function whyUnchanged(a: Result, b: Result, base: RoundSpec[], fork: RoundSpec[]
 export function renderPanel(): HTMLElement {
   const { specs, flip, simulated } = baselineSpecs();
   const a = compute(specs, flip);
-  const b = ps.fork ? compute(ps.fork, flip, true) : null;
-  const why = b && ps.fork ? whyUnchanged(a, b, specs, ps.fork) : null;
+  const b = ps.history.present ? compute(ps.history.present, flip, true) : null;
+  const why = b && ps.history.present ? whyUnchanged(a, b, specs, ps.history.present) : null;
   const shown = b ?? a;
   const live = getState().events.some((e) => e.type === "final_assessment");
   // 改过字段的分叉是反事实，导出时标成 judge_fork，不冒充原路径或本机真实体验
   const baseName = simulated ? PRESETS.find((p) => p.id === ps.baseline)?.name : "当前体验记录";
-  const provenance: Omit<Provenance, "event_count"> = b ? { kind: "judge_fork", fork_of: baseName } : simulated ? { kind: "simulated_path", path_id: baseName } : { kind: "user_session" };
+  const provenance: Omit<Provenance, "event_count"> = b ? { kind: "judge_fork", fork_of: baseName } : simulated ? { kind: "simulated_path", path_id: baseName } : { kind: "real_session" };
   return h(
     "main",
     { class: "screen" },
@@ -200,7 +203,7 @@ export function renderPanel(): HTMLElement {
       "section",
       { class: "row wrap" },
       [...PRESETS.map((p) => [p.id, `${p.name} · ${p.desc}`] as [string, string]), ...(live ? [["live", "当前体验记录"] as [string, string]] : [])].map(([id, text]) =>
-        h("button", { class: "opt", style: "min-height:40px;font-size:13px;font-weight:500", "aria-pressed": String(ps.baseline === id), onclick: () => ((ps.baseline = id), (ps.fork = null), (ps.history = []), (ps.draft = null), (ps.checks = null), rerender()) }, text),
+        h("button", { class: "opt", style: "min-height:40px;font-size:13px;font-weight:500", "aria-pressed": String(ps.baseline === id), onclick: () => ((ps.baseline = id), (ps.history = createHistory<RoundSpec[] | null>(null)), (ps.draft = null), (ps.error = null), (ps.checks = null), rerender()) }, text),
       ),
     ),
     h(
@@ -240,14 +243,14 @@ export function renderPanel(): HTMLElement {
         "section",
         { class: "panel stack", style: "flex:1 1 420px;min-width:0" },
         h("div", { class: "row" }, h("h2", { class: "grow" }, "profile / progress JSON"), h("button", { class: "btn-line", style: "width:auto;min-height:36px;font-size:13px", onclick: () => downloadJson("next-card-result", structuredResult(shown.events, ENGINE_CONFIG, AVAILABLE_TOPICS, provenance, UNKNOWN_YET)) }, "导出结构化结果")),
-        h("pre", { class: "xs mono", style: "max-height:420px;overflow:auto;margin:0;color:var(--text-2)" }, JSON.stringify({ profile: shown.profile, progress: shown.progress }, null, 2)),
+        h("pre", { class: "xs mono", style: "max-height:420px;overflow:auto;margin:0;color:var(--text-2)" }, JSON.stringify(evaluateContract(shown.events, ENGINE_CONFIG), null, 2)),
       ),
     ),
     h(
       "section",
       { class: "panel stack" },
-      h("div", { class: "row wrap" }, h("h2", { class: "grow" }, "反例检查（PRD §9 · 9 项）"), label("simulated", "检查场景为模拟"), h("button", { class: "btn", style: "width:auto;min-height:40px;font-size:14px", onclick: () => ((ps.checks = runChecks(compute(ps.fork ?? specs, flip, ps.fork !== null).events, ps.fork ?? specs, outcomes)), rerender()) }, "一键依次运行")),
-      h("p", { class: "xs muted" }, `以当前${ps.fork ? "分叉" : "基线"}为起点，每项只改一个变量，再用同一个 evaluate / recommend 重算。失败会直接显示为未通过。`),
+      h("div", { class: "row wrap" }, h("h2", { class: "grow" }, "反例检查（PRD §9 · 9 项）"), label("simulated", "检查场景为模拟"), h("button", { class: "btn", style: "width:auto;min-height:40px;font-size:14px", onclick: () => ((ps.checks = runChecks(compute(ps.history.present ?? specs, flip, ps.history.present !== null).events, ps.history.present ?? specs, outcomes)), rerender()) }, "一键依次运行")),
+      h("p", { class: "xs muted" }, `以当前${ps.history.present ? "分叉" : "基线"}为起点，每项只改一个变量，再用同一个 evaluate / recommend 重算。失败会直接显示为未通过。`),
       ps.checks
         ? h("ol", { class: "list", style: "padding:0" }, ps.checks.map((c) =>
             h("li", { class: "stack", style: "gap:2px;padding:8px 0;border-top:1px solid var(--line)" },
@@ -263,8 +266,10 @@ export async function mountPanel(root: HTMLElement): Promise<void> {
   root.classList.add("wide");
   try {
     const res = await fetch(`${import.meta.env.BASE_URL}data/cases_reveal.json`);
-    const d = (await res.json()) as { rounds: { round_id: string; after: { return_open_t1_to_close_t20: number } }[] };
-    outcomes = Object.fromEntries(d.rounds.map((r) => [r.round_id, r.after.return_open_t1_to_close_t20]));
+    const d = CasesRevealSchema.parse(await res.json());
+    const [taskA, taskB] = await Promise.all([loadTaskA(), loadTaskB()]);
+    ENGINE_CONFIG.tasks = {...taskARules(taskA), ...taskBRules(taskB)};
+    outcomes = Object.fromEntries(d.rounds.map((r) => [r.round_id, settlementOutcome(r.after)]));
   } catch {
     outcomes = {};
   }

@@ -1,3 +1,5 @@
+import { ENGINE_CONFIG } from "./config/engine";
+import { taskARules, taskBRules } from "./engine/taskRules";
 import "@fontsource/zcool-qingke-huangyou/chinese-simplified-400.css";
 import "@fontsource/ibm-plex-mono/500.css";
 import "./style.css";
@@ -23,7 +25,7 @@ function ensureTaskB(s: State): void {
   if (taskB || taskBLoad !== "idle" || !s.rounds.every((r) => r.locked)) return;
   taskBLoad = "loading";
   loadTaskB().then(
-    (d) => ((taskB = d), (taskBLoad = "idle"), render()),
+    (d) => { taskB = d; ENGINE_CONFIG.tasks = { ...ENGINE_CONFIG.tasks, ...taskBRules(d) }; taskBLoad = "idle"; render(); },
     () => ((taskBLoad = "failed"), render()),
   );
 }
@@ -83,6 +85,7 @@ async function main(): Promise<void> {
     app.replaceChildren(h("main", { class: "screen" }, h("p", { style: "margin-top:40px" }, "数据加载失败，请检查网络后刷新。"), footer()));
     return;
   }
+  ENGINE_CONFIG.tasks = { ...ENGINE_CONFIG.tasks, ...taskARules(taskA) };
   render = () => {
     const s = getState();
     ensureTaskB(s);

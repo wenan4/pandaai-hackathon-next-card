@@ -1,13 +1,13 @@
 // 一轮：听说法 → 第一反应 → 翻牌 → 最终判断 + 你的下一步 → 追问 → 锁定 → 揭晓
-import { ACTION_COPY, FOLLOWUP_COPY, JUDGEMENT_COPY, REACTION_COPY, VERDICT_COPY } from "../../config/copy";
+import { ACTION_COPY, FOLLOWUP_COPY, FOLLOWUP_ANSWER_COPY, SELF_NOTE_COPY, JUDGEMENT_COPY, REACTION_COPY, VERDICT_COPY } from "../../config/copy";
 import { ENGINE_CONFIG } from "../../config/engine";
 import { ROUNDS } from "../../config/rounds";
 import { loadReveal, type DataHeader, type RevealRound, type VisibleRound } from "../../data/cases";
 import { roundJudgement } from "../../engine/evaluate";
 import { followupFor, MAX_FLIPS } from "../../engine/rounds";
-import { settle, settleRound, START_TOKENS } from "../../engine/settle";
-import type { Action, Card, Reaction, RoundConfig, Verdict } from "../../engine/types";
-import { emit, getState, go, update, type RoundUI, type State } from "../../state/store";
+import { settle, settleRound, settlementOutcome, START_TOKENS } from "../../engine/settle";
+import type { Action, Card, Reaction, FollowupAnswer, SelfNote, RoundConfig, Verdict } from "../../engine/types";
+import { emit, go, update, type RoundUI, type State } from "../../state/store";
 import { cardFace, cardTile, footer, mainChart, parrotSays, topbar } from "../components";
 import { fmtDate, fmtNum, fmtPct, h } from "../dom";
 import { icon } from "../icons";
@@ -64,7 +64,7 @@ function reactionSection(ui: RoundUI, rid: string): HTMLElement {
     h(
       "div",
       { class: "grid3" },
-      (["supports", "refutes", "unsure"] as Reaction[]).map((r) =>
+      (["supports", "refutes", "insufficient"] as Reaction[]).map((r) =>
         h("button", { class: "opt", "aria-pressed": String(ui.initial === r), disabled: ui.initial !== undefined, onclick: () => pick(r) }, REACTION_COPY[r]),
       ),
     ),
@@ -126,19 +126,6 @@ function judgeSection(ui: RoundUI, cfg: RoundConfig): HTMLElement {
         h("span", null, h("span", { class: "t" }, VERDICT_COPY[v].label), h("span", { class: "d" }, VERDICT_COPY[v].desc)),
       ),
     ),
-    h("label", { class: "xs muted", for: "note" }, "写一句理由（可选，只作自述，不影响能力观察）"),
-    h("input", {
-      id: "note",
-      type: "text",
-      value: ui.note,
-      maxlength: 60,
-      placeholder: "比如：同期的基准涨得更多",
-      style: "min-height:44px;border-radius:12px;border:1px solid var(--line);background:var(--surface);color:var(--text);padding:0 12px;font-size:15px",
-      onchange: (e: Event) => {
-        const v = (e.target as HTMLInputElement).value;
-        getState().rounds[getState().round]!.note = v;
-      },
-    }),
     h(
       "div",
       { class: "stack", style: "gap:6px;margin-top:6px" },
@@ -146,7 +133,7 @@ function judgeSection(ui: RoundUI, cfg: RoundConfig): HTMLElement {
       h(
         "div",
         { class: "seg", role: "group", "aria-label": "你的下一步" },
-        (["follow", "pass", "wait"] as Action[]).map((a) => h("button", { "aria-pressed": String(ui.action === a), onclick: () => set((u) => (u.action = a)) }, ACTION_COPY[a])),
+        (["follow", "skip", "wait"] as Action[]).map((a) => h("button", { "aria-pressed": String(ui.action === a), onclick: () => set((u) => (u.action = a)) }, ACTION_COPY[a])),
       ),
       h("span", { class: "xs muted" }, "认可一个说法，不代表必须跟。"),
     ),
@@ -155,19 +142,18 @@ function judgeSection(ui: RoundUI, cfg: RoundConfig): HTMLElement {
   );
 }
 
-function commit(s: State, u: RoundUI, cfg: RoundConfig, answer: string | null): void {
+function commit(s: State, u: RoundUI, cfg: RoundConfig, answer: FollowupAnswer | null): void {
   const rid = cfg.round_id;
   emit(s, rid, "pre_reveal", "final_assessment", { verdict: u.final! });
   emit(s, rid, "pre_reveal", "decision", { action: u.action! });
-  if (u.followup) emit(s, rid, "pre_reveal", "followup_answer", { question: u.followup, answer });
-  if (u.note.trim()) emit(s, rid, "pre_reveal", "self_note", { text: u.note.trim() });
+  if (u.followup) emit(s, rid, "pre_reveal", "followup_answer", { question: u.followup, answer: answer ?? "skipped" });
   u.locked = true;
   u.phase = "revealed";
 }
 
 function followupSheet(ui: RoundUI, cfg: RoundConfig): HTMLElement {
   const q = FOLLOWUP_COPY[ui.followup!];
-  const answer = (a: string | null) =>
+  const answer = (a: FollowupAnswer | null) =>
     update((s) => {
       const u = s.rounds[s.round]!;
       if (u.phase === "followup") commit(s, u, cfg, a);
@@ -180,7 +166,7 @@ function followupSheet(ui: RoundUI, cfg: RoundConfig): HTMLElement {
       null,
       h("h2", null, q.question),
       h("p", { class: "xs muted" }, "选一个最接近的，也可以跳过。选哪个都不会影响揭晓。"),
-      h("div", { class: "grid2" }, q.options.map((o) => h("button", { class: "opt", style: "font-weight:500", onclick: () => answer(o) }, o))),
+      h("div", { class: "grid2" }, q.options.map((o) => h("button", { class: "opt", style: "font-weight:500", onclick: () => answer(o) }, FOLLOWUP_ANSWER_COPY[o]))),
       h("button", { class: "btn-text", onclick: () => answer(null) }, "跳过"),
     ),
   );
@@ -196,17 +182,17 @@ function revealSection(s: State, ui: RoundUI, cfg: RoundConfig, d: VisibleRound)
 
   const judgement = roundJudgement(s.events, cfg, ENGINE_CONFIG)!;
   const ret = data.round.after.return_open_t1_to_close_t20;
-  const mine = settleRound(cfg.round_id, ui.action ?? null, ret);
+  const mine = settleRound(cfg.round_id, ui.action!, settlementOutcome(data.round.after));
   const lockedRounds = ROUNDS.map((r, i) => ({ r, u: s.rounds[i]! })).filter(({ u }) => u.locked);
   const balance = settle(
     lockedRounds.map(({ r, u }) => ({ round_id: r.round_id, action: u.action ?? null })),
-    Object.fromEntries(lockedRounds.map(({ r }) => [r.round_id, revealCache.get(r.round_id)?.round.after.return_open_t1_to_close_t20 ?? null])),
+    Object.fromEntries(lockedRounds.map(({ r }) => [r.round_id, revealCache.has(r.round_id) ? settlementOutcome(revealCache.get(r.round_id)!.round.after) : null])),
   ).balance;
   const good = judgement === "consistent" || judgement === "future_reserved";
   const crossNote =
-    mine.delta > 0 && !good
+    mine.chips_delta > 0 && !good
       ? "这笔代币赚了，但这一轮的判断还缺少对应的依据。"
-      : mine.delta < 0 && good
+      : mine.chips_delta < 0 && good
         ? "代币亏了，但这一轮的判断有依据。赚赔看的是后来的走势，不是判断。"
         : null;
   const unflipped = CARDS.filter((c) => !ui.flips.includes(c));
@@ -233,7 +219,7 @@ function revealSection(s: State, ui: RoundUI, cfg: RoundConfig, d: VisibleRound)
         h("div", { class: "panel sunken stack", style: "gap:0;padding:10px 12px" }, h("span", { class: "xs muted" }, "你的判断"), h("span", { class: "bold", style: "font-size:19px" }, VERDICT_COPY[ui.final!].label)),
       ),
       h("p", { class: "small" }, evidenceSentence(cfg, d)),
-      ui.initial && ui.initial !== "unsure" && REACTION_COPY[ui.initial] !== VERDICT_COPY[ui.final!].label
+      ui.initial && ui.initial !== "insufficient" && REACTION_COPY[ui.initial] !== VERDICT_COPY[ui.final!].label
         ? h("p", { class: "xs text-2" }, `你的第一判断是「${REACTION_COPY[ui.initial]}」，看完牌后改成了「${VERDICT_COPY[ui.final!].label}」。`)
         : null,
     ),
@@ -257,14 +243,15 @@ function revealSection(s: State, ui: RoundUI, cfg: RoundConfig, d: VisibleRound)
       h(
         "p",
         { class: "small text-2" },
-        `后来 20 个交易日（次日开盘到第 20 天收盘）：${fmtPct(ret)}。`,
-        ui.action === "follow" ? `你跟了，投入 30，变动 ${fmtNum(mine.delta)}。` : `你选了「${ACTION_COPY[ui.action!]}」，代币不变；假如跟了：${fmtNum(mine.hypothetical)}。`,
+        ret === null ? "执行数据不足，无法计算该段变化。" : `后来 20 个交易日（次日开盘到第 20 天收盘）：${fmtPct(ret)}。`,
+        ui.action === "follow" ? `你跟了，投入 30，变动 ${fmtNum(mine.chips_delta)}。` : `你选了「${ACTION_COPY[ui.action!]}」，代币不变；假如跟了：${fmtNum(mine.hypothetical_delta)}。`,
       ),
+      mine.settlement_note ? h("p", {class: "xs muted"}, mine.settlement_note) : null,
       crossNote ? h("p", { class: "xs muted" }, crossNote) : null,
     ),
     h(
       "div",
-      { class: "paper row", style: "gap:12px" },
+      { class: "paper row method-reward", style: "gap:12px" },
       h("div", { style: "flex:none;width:44px;height:44px;border-radius:12px;background:var(--fox-tint);color:var(--fox-ink);display:flex;align-items:center;justify-content:center" }, icon("bookmark", 22)),
       h("div", { class: "grow stack", style: "gap:2px" }, h("span", { class: "xs bold", style: "color:var(--fox-ink)" }, `获得方法卡 · ${cfg.method_card.name}`), h("span", { class: "small" }, cfg.method_card.line), h("span", { class: "xs muted" }, "方法卡是下一关的工具，局内不能使用。")),
     ),
@@ -281,6 +268,9 @@ function revealSection(s: State, ui: RoundUI, cfg: RoundConfig, d: VisibleRound)
         h("button", { class: "btn-text", style: "align-self:flex-start;padding:0", onclick: () => go("data") }, "完整数据说明"),
       ),
     ),
+    h("section", { class: "panel stack" }, h("h2", { class: "small" }, "补一句（可选）"),
+      h("p", { class: "xs muted" }, "只记录自述，不改变本轮观察。"),
+      h("div", { class: "grid2" }, (Object.keys(SELF_NOTE_COPY) as SelfNote[]).map(note => h("button", { class: "opt", disabled: !!ui.note, "aria-pressed": String(ui.note === note), onclick: () => update(st => { const u = st.rounds[st.round]!; if (!u.locked || u.note) return; u.note = note; emit(st, cfg.round_id, "post_reveal", "self_note", { note }); }) }, SELF_NOTE_COPY[note])))),
     h(
       "button",
       {

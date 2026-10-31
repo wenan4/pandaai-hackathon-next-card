@@ -7,17 +7,8 @@
       "type": "object",
       "properties": {
         "schema": {
-          "anyOf": [
-            {
-              "type": "string",
-              "const": "next-card/data@v0.3"
-            },
-            {
-              "type": "string",
-              "format": "starts_with",
-              "pattern": "^draft.*"
-            }
-          ]
+          "type": "string",
+          "const": "next-card/data@v0.3"
         },
         "script": {
           "type": "string",
@@ -218,20 +209,46 @@
                 }
               },
               "open_t1": {
-                "type": "number",
-                "exclusiveMinimum": 0
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "close_t20": {
-                "type": "number",
-                "exclusiveMinimum": 0
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "return_close_t_to_close_t20": {
                 "type": "number"
               },
               "return_open_t1_to_close_t20": {
-                "type": "number"
+                "type": [
+                  "number",
+                  "null"
+                ]
               },
               "t1_open_at_limit_up": {
+                "type": "boolean"
+              },
+              "t1_suspended": {
+                "type": "boolean"
+              },
+              "t20_suspended": {
+                "type": "boolean"
+              },
+              "t20_at_limit_down": {
                 "type": "boolean"
               }
             },

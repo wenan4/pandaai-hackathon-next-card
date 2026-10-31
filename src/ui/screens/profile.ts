@@ -1,15 +1,16 @@
+import { downloadSharePng } from "../shareImage";
 // 人物卡、依据页、分享卡：全部由引擎输出渲染，组件里不做规则判断。
-import { ACTION_COPY, ASSIST_COPY, BET_FAMILY_COPY, CARD_COPY, OBS_COPY, REACTION_COPY, SPECIES_COPY, STATUS_COPY, TRADING_VIEW, UNKNOWN_YET, VERDICT_COPY } from "../../config/copy";
+import { ACTION_COPY, ASSIST_COPY, FOLLOWUP_ANSWER_COPY, BET_FAMILY_COPY, CARD_COPY, OBS_COPY, REACTION_COPY, SPECIES_COPY, STATUS_COPY, TRADING_VIEW, UNKNOWN_YET, VERDICT_COPY } from "../../config/copy";
 import { AVAILABLE_TOPICS, ENGINE_CONFIG } from "../../config/engine";
 import { ROUNDS } from "../../config/rounds";
-import { evaluate } from "../../engine/evaluate";
+import { evaluateView as evaluate } from "../../engine/evaluate";
 import { actionHabits, betTopic, FREQUENT_BET_THRESHOLD, type DecisionChain } from "../../engine/habits";
-import { recommend } from "../../engine/recommend";
+import { recommendView as recommend } from "../../engine/recommend";
 import { structuredResult } from "../../engine/result";
 import { collectRound } from "../../engine/rounds";
-import type { ObsId, ObsInstance, Plan, Profile } from "../../engine/types";
-import { go, update, type State } from "../../state/store";
-import { footer, label, statusPill, topbar } from "../components";
+import type { ObsId, ObsInstance, PlanView, ProfileView } from "../../engine/types";
+import { emit, go, update, type State } from "../../state/store";
+import { footer, statusPill, topbar } from "../components";
 import { downloadJson, h } from "../dom";
 import { icon } from "../icons";
 
@@ -24,17 +25,17 @@ export function currentProfile(s: State) {
 }
 
 function exportResult(s: State): void {
-  if (!confirm("导出的文件包含你这一局的选择记录（不含姓名等个人信息），请自行保管。继续导出吗？")) return;
-  downloadJson("next-card-result", structuredResult(s.events, ENGINE_CONFIG, AVAILABLE_TOPICS, { kind: "user_session" }, UNKNOWN_YET));
+  if (!confirm("导出的文件包含本局匿名编号和选择记录（不含姓名等个人信息），请自行保管。继续导出吗？")) return;
+  downloadJson("next-card-result", structuredResult(s.events, ENGINE_CONFIG, AVAILABLE_TOPICS, { kind: "real_session" }, UNKNOWN_YET));
 }
 
 /** 换成交易语言来看 + 你的下一步习惯。只描述本局，不评高低，不影响能力观察。 */
-function tradingView(s: State, profile: Profile): HTMLElement {
+function tradingView(s: State, profile: ProfileView): HTMLElement {
   const habits = actionHabits(s.events, ROUNDS);
   const chain = (c: DecisionChain) => {
     const looked = c.flips.length ? c.flips.map((x) => CARD_COPY[x].animal).join("、") : "没翻牌";
     const first = c.initial ? `第一判断${REACTION_COPY[c.initial]} → ` : "";
-    return `${c.round_id}：看了${looked} → ${first}最终${VERDICT_COPY[c.final].label} → ${ACTION_COPY[c.action]}${c.followup ? `（${c.followup}）` : ""}`;
+    return `${c.round_id}：看了${looked} → ${first}最终${VERDICT_COPY[c.final].label} → ${ACTION_COPY[c.action]}${c.followup ? `（${FOLLOWUP_ANSWER_COPY[c.followup as keyof typeof FOLLOWUP_ANSWER_COPY]}）` : ""}`;
   };
   const backed = habits.backed_families.length
     ? habits.backed_families.map((b) => `${BET_FAMILY_COPY[b.family]}（${b.rounds.join("、")}）${b.frequent ? "，算常押" : ""}`).join("；")
@@ -56,11 +57,12 @@ function tradingView(s: State, profile: Profile): HTMLElement {
   );
 }
 
-export function startTask(s: State, plan: Plan, profile: Profile): void {
+export function startTask(s: State, plan: PlanView, profile: ProfileView): void {
   // 回到已开始的任务 B 时保留原来的任务前画像
   if (plan.task === "A" || !s.taskB) s.profileBeforeTask = profile;
   if (plan.task === "A") {
     s.taskA = { reason: plan.reason, guessFirst: plan.guess_first, steps: plan.steps, stepIndex: 0, assist: plan.assist, aligned: false, exposures: [], readings: false, windowExtended: false, done: false };
+    emit(s, "taskA", "in_task", "assist_switch", {task: "A", from: profile.help_preference.level, to: plan.assist, by: "system"});
     s.back = s.screen;
     s.screen = "taskA";
   } else if (s.taskB) {
@@ -68,6 +70,8 @@ export function startTask(s: State, plan: Plan, profile: Profile): void {
     s.back = s.screen;
     s.screen = s.taskB.submitted ? "updated" : "taskB";
   } else {
+    if (plan.topic && plan.topic_source) emit(s, "taskB", "in_task", "topic_select", {topic: plan.topic, source: plan.topic_source});
+    emit(s, "taskB", "in_task", "assist_switch", {task: "B", from: profile.help_preference.level, to: plan.assist, by: "system"});
     s.taskB = { reason: plan.reason, guessFirst: plan.guess_first, locked: false, testOpened: false, submitted: false, assist: plan.assist, exposures: [] };
     s.back = s.screen;
     s.screen = "taskB";
@@ -75,7 +79,7 @@ export function startTask(s: State, plan: Plan, profile: Profile): void {
   window.scrollTo(0, 0);
 }
 
-export function planCard(plan: Plan, profile: Profile, s: State): HTMLElement {
+export function planCard(plan: PlanView, profile: ProfileView, s: State): HTMLElement {
   const resume = plan.task === "B" && s.taskB ? (s.taskB.submitted ? "查看任务 B 结果" : "继续任务 B") : "开始下一关";
   const title = plan.task === "A" ? `任务 A · 同一起点，再比一次（步骤 ${plan.steps.join("、")}）` : `任务 B · ${plan.topic ? TOPIC_NAME[plan.topic] : "选一个主题"}`;
   return h(
@@ -194,7 +198,7 @@ function describe(s: State, inst: ObsInstance): string {
 }
 
 /** 任务 B 完成后才出现的 O5：只在任务这个新情境里记录。 */
-function o5Row(profile: Profile): HTMLElement | null {
+function o5Row(profile: ProfileView): HTMLElement | null {
   const done = profile.task_observations.O5.find((i) => i.outcome === "consistent");
   if (!done) return null;
   return h(
@@ -312,7 +316,13 @@ export function shareScreen(s: State): HTMLElement {
       },
       "复制分享文字",
     ),
-    label("todo", "导出图片（P1）"),
+    h("button", { class: "btn", onclick: async (e: Event) => {
+      if (!window.confirm("将下载一张 PNG，只包含本局物种、查法说明和限定语，不包含观察状态、原始事件或行动记录。继续导出吗？")) return;
+      const button = e.currentTarget as HTMLButtonElement; button.disabled = true;
+      try { await downloadSharePng(profile.style.species); button.textContent = "图片已导出"; }
+      catch { button.textContent = "图片导出失败，请重试"; }
+      finally { button.disabled = false; }
+    } }, "导出分享图片（PNG）"),
     footer(),
   );
 }

@@ -1,6 +1,7 @@
 // 行动习惯（YOU-165）：只计数、不评高低，不进入能力观察。
 // evaluate / recommend 都不导入本模块；押注形态只作为 recommend 的可选输入，影响任务 B 的默认主题。
 import { collectRound } from "./rounds";
+export { contractHabits as habits } from "./outputs";
 import type { Action, Card, GameEvent, Reaction, RoundConfig, TopicId, Verdict } from "./types";
 
 type BetFamily = RoundConfig["bet_family"];
@@ -8,7 +9,7 @@ type BetFamily = RoundConfig["bet_family"];
 /** 某类押注形态被“跟”至少这么多次才称为“常押”（PRD v0.3 §4.4）。 */
 export const FREQUENT_BET_THRESHOLD = 2;
 export const TOPIC_OF_BET_FAMILY: Record<BetFamily, TopicId> = { relative_strength: "fox", steady_trend: "elephant", volume_surge: "cheetah" };
-const SAME_DIRECTION: Record<Verdict, Action> = { supports: "follow", refutes: "pass", insufficient: "wait" };
+const SAME_DIRECTION: Record<Verdict, Action> = { supports: "follow", refutes: "skip", insufficient: "wait" };
 
 export interface DecisionChain {
   round_id: string;
@@ -32,8 +33,8 @@ export interface ActionHabits {
 
 export function actionHabits(events: readonly GameEvent[], rounds: RoundConfig[]): ActionHabits {
   const out: ActionHabits = {
-    aligned: [], diverged: [], under_insufficient: { follow: [], pass: [], wait: [] }, backed_families: [], decision_chains: [],
-    counts: { follow: 0, pass: 0, wait: 0 },
+    aligned: [], diverged: [], under_insufficient: { follow: [], skip: [], wait: [] }, backed_families: [], decision_chains: [],
+    counts: { follow: 0, skip: 0, wait: 0 },
   };
   const backed = new Map<BetFamily, string[]>();
   for (const cfg of rounds) {

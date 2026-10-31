@@ -1,6 +1,6 @@
 // 界面文案模板。组件只按 ID 取文案，不在组件里拼对错判断。
 import type { JudgementId } from "../engine/evaluate";
-import type { Action, AssistLevel, Card, FollowupId, ObsId, ObsStatus, Reaction, Species, Verdict } from "../engine/types";
+import type { Action, AssistLevel, Card, FollowupId, FollowupAnswer, SelfNote, ObsId, ObsStatus, Reaction, Species, Verdict } from "../engine/types";
 
 export const CARD_COPY: Record<Card, { animal: string; title: string }> = {
   fox: { animal: "狐狸", title: "同期对照" },
@@ -11,7 +11,7 @@ export const CARD_COPY: Record<Card, { animal: string; title: string }> = {
 export const REACTION_COPY: Record<Reaction, string> = {
   supports: "支持",
   refutes: "不支持",
-  unsure: "说不准",
+  insufficient: "说不准",
 };
 
 export const VERDICT_COPY: Record<Verdict, { label: string; desc: string }> = {
@@ -22,18 +22,18 @@ export const VERDICT_COPY: Record<Verdict, { label: string; desc: string }> = {
 
 export const ACTION_COPY: Record<Action, string> = {
   follow: "跟",
-  pass: "不跟",
+  skip: "不跟",
   wait: "先看看",
 };
 
-export const FOLLOWUP_COPY: Record<FollowupId, { question: string; options: string[] }> = {
-  missing: { question: "你觉得还缺什么？", options: ["更长的历史", "和别的比一比", "之后的走势", "图没看懂", "说不清"] },
-  basis: { question: "你主要依据什么？", options: ["主图走势", "翻开的牌", "说法本身", "直觉", "图没看懂"] },
-  waiting: { question: "你在等什么？", options: ["等更多信号", "等未来走势", "图没看懂", "说不清"] },
+export const FOLLOWUP_COPY: Record<FollowupId, { question: string; options: FollowupAnswer[] }> = {
+  missing: { question: "你觉得还缺什么？", options: ["longer_history", "comparison", "future_trend", "chart_unclear", "other"] },
+  basis: { question: "你主要依据什么？", options: ["main_chart", "opened_cards", "claim_itself", "intuition", "chart_unclear"] },
+  waiting: { question: "你在等什么？", options: ["signal_validation", "future_trend", "chart_unclear", "other"] },
 };
 
 /** 追问里表示“理解有困难”的答案，引擎据此标记“还需要确认理解” */
-export const UNDERSTANDING_ANSWERS = ["图没看懂"];
+export const UNDERSTANDING_ANSWERS = ["chart_unclear"];
 
 export const JUDGEMENT_COPY: Record<JudgementId, string> = {
   consistent: "依据与结论一致",
@@ -79,7 +79,7 @@ export const SPECIES_COPY: Record<Species,{ name: string; method: string; helps:
 export const ASSIST_COPY: Record<AssistLevel, { label: string; desc: string }> = {
   guide: { label: "带我做", desc: "逐步提示，带着完成" },
   hint: { label: "给我提示", desc: "每步给一句提示" },
-  self: { label: "我自己来", desc: "不主动给提示" },
+  solo: { label: "我自己来", desc: "不主动给提示" },
 };
 
 /** “换成交易语言来看”：把能力观察改写成交易里对应的问题，保持“本局”限定，不做买卖建议。 */
@@ -104,3 +104,8 @@ export const LABELS = {
   todo: "未实现",
 } as const;
 export type LabelKind = keyof typeof LABELS;
+
+export const FOLLOWUP_ANSWER_COPY: Record<FollowupAnswer, string> = {
+ comparison: "和别的比一比", longer_history: "更长的历史", signal_validation: "验证信号的数据", future_trend: "之后的走势", more_opinions: "更多说法", chart_unclear: "图没看懂", own_view: "自己的判断", main_chart: "主图走势", opened_cards: "翻开的牌", claim_itself: "说法本身", intuition: "直觉", other: "说不清", skipped: "跳过",
+};
+export const SELF_NOTE_COPY: Record<SelfNote, string> = { did_not_understand: "这张图还没看懂", was_waiting_for_evidence: "我在等更多证据", just_trying: "我只是试试看", nothing: "没有补充" };

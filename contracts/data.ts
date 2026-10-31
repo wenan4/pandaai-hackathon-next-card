@@ -7,8 +7,8 @@
 import { z } from "zod";
 import { DATA_SCHEMA_ID, DateStringSchema, RoundIdSchema, TopicSchema, VerdictSchema } from "./common";
 
-/** 现有产物带的是冻结前的临时标记；数据脚本下次生成时必须改写成 DATA_SCHEMA_ID。 */
-const SchemaMarker = z.union([z.literal(DATA_SCHEMA_ID), z.string().startsWith("draft")]);
+/** YOU-185：迁移完成，只接受正式数据标记。 */
+const SchemaMarker = z.literal(DATA_SCHEMA_ID);
 const Price = z.number().positive();
 const Series = z.array(Price).min(2);
 const Offsets = z.tuple([z.number().int(), z.number().int()]);
@@ -69,11 +69,8 @@ export const CasesRevealHeaderSchema = z.looseObject({
 
 export const TaskAHeaderSchema = z.looseObject({
   ...FullHeaderShape,
-  /**
-   * 过渡性例外：现有 scripts/build_taskA.py 尚未写生成时间。脚本补上后改回必填
-   * （README 的“已有产物与契约的差异”里登记）。
-   */
-  generated_at: z.iso.datetime().optional(),
+  /** 所有任务 A 产物都必须声明生成时间。 */
+  generated_at: z.iso.datetime(),
   file: z.literal("taskA"),
   windows: Windows,
   /** 标准答案由哪份脚本、哪个口径算出，不手写。 */
@@ -175,12 +172,16 @@ export const RevealAfterSchema = z
     offsets: Offsets.refine(([start, end]) => start === 0 && end > 0, { message: "揭晓窗口必须从 T 日（0）起向后" }),
     /** 以 T 日收盘 = 100 归一化。 */
     close: Series,
-    open_t1: Price,
-    close_t20: Price,
+    /** 缺执行端点明确保留 null；结算器说明不结算原因，不用 0 冒充价格。 */
+    open_t1: Price.nullable(),
+    close_t20: Price.nullable(),
     return_close_t_to_close_t20: z.number(),
     /** 松果结算口径：C[T+20] / O[T+1] - 1。 */
-    return_open_t1_to_close_t20: z.number(),
+    return_open_t1_to_close_t20: z.number().nullable(),
     t1_open_at_limit_up: z.boolean(),
+    t1_suspended: z.boolean().optional(),
+    t20_suspended: z.boolean().optional(),
+    t20_at_limit_down: z.boolean().optional(),
   })
   .superRefine((a, ctx) => {
     if (a.close.length !== expectedLength(a.offsets)) {
@@ -188,8 +189,11 @@ export const RevealAfterSchema = z
     }
     if (a.close[0] !== 100) ctx.addIssue({ code: "custom", path: ["close"], message: "揭晓走势以 T 日收盘 = 100" });
     const last = a.close[a.close.length - 1];
-    if (last !== undefined && Math.abs(last - a.close_t20) > 1e-3) {
+    if (last !== undefined && a.close_t20 !== null && Math.abs(last - a.close_t20) > 1e-3) {
       ctx.addIssue({ code: "custom", path: ["close_t20"], message: "close_t20 必须等于 close 的最后一个值" });
+    }
+    if ((a.open_t1 === null || a.close_t20 === null) && a.return_open_t1_to_close_t20 !== null) {
+      ctx.addIssue({code:"custom",path:["return_open_t1_to_close_t20"],message:"缺执行端点时执行收益必须为 null"});
     }
   });
 
