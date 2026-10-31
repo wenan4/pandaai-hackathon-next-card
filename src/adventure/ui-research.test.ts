@@ -2,11 +2,12 @@ import { readFile } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeCalibrationDemo } from "./calibration-demo";
 import { reduceRun } from "./engine";
-import { loadMarketInitial, loadMarketStage, resetMarketCacheForTest, type MarketManifest } from "./market";
-import { emptyResearchProfile, fundingScenarioFromRun, setHelpPreference, showHistoryEvidence, simulateFundingPlan, startHistory, type ResearchProfile } from "./research";
+import { loadMarketInitial, loadMarketStage, loadResearchCase, resetMarketCacheForTest, type MarketManifest } from "./market";
+import { compareSchedule, emptyResearchProfile, fundingScenarioFromRun, setHelpPreference, showHistoryEvidence, simulateFundingPlan, startHistory, type ResearchProfile } from "./research";
 import type { ResearchMarketCase } from "./market";
 import type { Run } from "./types";
 import { hasSeenRelatedCase } from "./ui-case";
+import { coins } from "./ui-components";
 import { ResearchUI } from "./ui-research";
 
 class FakeNode {
@@ -86,6 +87,105 @@ function harness(run: Run, manifest: MarketManifest, initial: ResearchProfile, s
 }
 
 describe("research UI help and next steps", () => {
+  it.each([true, false])("invalidates a previous D1 result on a changed answer without erasing exposure (observation=%s)", async (enabled) => {
+    const { run, manifest } = await fixture();
+    const state = harness(run, manifest, emptyResearchProfile(enabled));
+    state.render();
+    buttonAt(state.root, "可以支付").fire("click");
+    buttonAt(state.root, "提交判断并保存计划").fire("click");
+    expect(state.root.textContent).toContain("这次核查的结果");
+    expect(state.root.textContent).toContain("你选择：可以支付");
+    const savedProfile = JSON.stringify(state.profile);
+    buttonAt(state.root, "可以支付").fire("click");
+    expect(state.root.textContent).toContain("这次核查的结果");
+    buttonAt(state.root, "不能支付").fire("click");
+    expect(state.root.textContent).not.toContain("这次核查的结果");
+    expect(JSON.stringify(state.profile)).toBe(savedProfile);
+    buttonAt(state.root, "提交判断并保存计划").fire("click");
+    expect(state.root.textContent).toContain("这次核查的结果");
+    expect(state.root.textContent).toContain("你选择：不能支付");
+    if (enabled) {
+      expect(state.profile.funding_attempts).toHaveLength(2);
+      expect(state.profile.funding_attempts[0]?.answer).toBe(true);
+      expect(state.profile.funding_attempts[1]).toMatchObject({ answer: false, answerExposed: true });
+      expect(state.profile.knowledge_evidence.at(-1)?.independent).toBe(false);
+    } else {
+      expect(state.profile.funding_attempts).toHaveLength(0);
+      expect(state.profile.knowledge_evidence).toHaveLength(0);
+    }
+  });
+  it.each([[true, "difference"], [false, "difference"], [true, "boundary"], [false, "boundary"]] as const)("keeps the D2 submitted answers distinct (observation=%s, wrong=%s)", async (enabled, wrong) => {
+    const { run, manifest } = await fixture();
+    const state = harness(run, manifest, emptyResearchProfile(enabled));
+    state.section = "D2"; state.render();
+    expect(state.root.textContent).not.toContain("研究后的观察");
+    buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    await vi.waitFor(() => expect(state.root.textContent).toContain("案例固定日程盈亏"));
+    buttonAt(state.root, "再查看另一段历史（未见）").fire("click");
+    await vi.waitFor(() => expect(state.root.textContent).toContain("另一段历史的结果相对第一段"));
+    const entry = run.history.find((item) => item.action === "submit-entry")!;
+    const cash = entry.snapshot!.cashCents; const invested = Number(entry.data.amountCents);
+    const schedule = { startingCashCents: cash, participationCents: Math.min(cash, invested || 2000), t1: 0 as const, t2: 0 as const };
+    const first = compareSchedule(await loadResearchCase("lantern-a", true), schedule);
+    const second = compareSchedule(await loadResearchCase("lantern-b", true), schedule);
+    const difference = second.asset.gainCents > first.asset.gainCents ? "outperform" : second.asset.gainCents < first.asset.gainCents ? "underperform" : "equal";
+    const wrongDifference = difference === "equal" ? "outperform" : "equal";
+    change(selectAt(state.root, "本案例结果相对同期基准"), first.direction);
+    change(selectAt(state.root, "另一段历史的结果相对第一段"), wrong === "difference" ? wrongDifference : difference);
+    change(selectAt(state.root, "这些结果能说明什么"), wrong === "boundary" ? "predicts_future" : "only_samples");
+    change(selectAt(state.root, "这次主要依据什么"), "查看了不同片段的差异");
+    buttonAt(state.root, "提交这次研究").fire("click");
+    const result = find(state.root, (item) => item.tag === "section" && item.textContent.startsWith("研究后的观察"))!;
+    const comparison = find(result, (item) => item.tag === "p" && item.textContent.startsWith("同期比较："))!;
+    const differenceResult = find(result, (item) => item.tag === "p" && item.textContent.startsWith("两段比较："))!;
+    const boundary = find(result, (item) => item.tag === "p" && item.textContent.startsWith("样本边界："))!;
+    expect(comparison.textContent).toContain("这一步与数据一致");
+    expect(differenceResult.textContent).toContain(wrong === "difference" ? "这一步需要再核查" : "这一步与数据一致");
+    expect(boundary.textContent).toContain(wrong === "boundary" ? "这一步需要再核查" : "这一步与数据一致");
+    expect(boundary.textContent).toContain(wrong === "boundary" ? "你选“说明未来必然得到相同结果”" : "你选“描述这两个样本，不能预测未来”");
+    expect(result.textContent).not.toContain("本次判断与展示数据不一致");
+    if (enabled) {
+      expect(state.profile.knowledge_evidence.find((item) => item.dimension === "K1")?.correct).toBe(true);
+      expect(state.profile.knowledge_evidence.find((item) => item.dimension === "K2")?.correct).toBe(false);
+    } else expect(state.profile.knowledge_evidence).toHaveLength(0);
+  });
+  it.each([true, false])("does not present a second comparison when only the primary case was opened (observation=%s)", async (enabled) => {
+    const { run, manifest } = await fixture();
+    const state = harness(run, manifest, emptyResearchProfile(enabled));
+    state.section = "D2"; state.render();
+    buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    await vi.waitFor(() => expect(state.root.textContent).toContain("本案例结果相对同期基准"));
+    change(selectAt(state.root, "本案例结果相对同期基准"), "equal");
+    change(selectAt(state.root, "这次主要依据什么"), "根据同日期的数字比较");
+    expect(state.root.textContent).not.toContain("研究后的观察");
+    buttonAt(state.root, "提交这次研究").fire("click");
+    const result = find(state.root, (item) => item.tag === "section" && item.textContent.startsWith("研究后的观察"))!;
+    const feedback = find(result, (item) => item.attributes.class === "notice")!;
+    expect(feedback.textContent).toContain("同期比较：");
+    expect(feedback.textContent).not.toContain("两段比较：");
+    expect(feedback.textContent).not.toContain("样本边界：");
+  });
+  it.each([true, false])("reports the first blocked purchase in the revised D1 plan (observation=%s)", async (enabled) => {
+    const fixtureState = await fixture(); let run = fixtureState.run;
+    const upgrade = run.deck.find((card) => card.cardId === "C07")!;
+    const later = run.deck.find((card) => card.cardId === "C01" && !card.upgraded)!;
+    run = reduceRun(run, { type: "upgrade-card", cardInstanceId: upgrade.instanceId });
+    run = reduceRun(run, { type: "purchase-attempted", purchase: "upgrade-card", cardInstanceId: later.instanceId });
+    const derived = fundingScenarioFromRun(run)!;
+    const revised = { ...derived.plan, participationCents: derived.scenario.startingCashCents };
+    const blocked = simulateFundingPlan(derived.scenario, revised).rows.find((row) => row.canPay === false)!;
+    expect(blocked).toBeDefined();
+    const state = harness(run, fixtureState.manifest, emptyResearchProfile(enabled)); state.render();
+    const selected = find(selectAt(state.root, "选择要核查的采购"), (item) => item.tag === "option" && "selected" in item.attributes)!;
+    const field = find(state.root, (item) => item.tag === "label" && item.textContent.startsWith("调整后的参与金额"))!;
+    change(find(field, (item) => item.tag === "input")!, String(derived.scenario.startingCashCents / 100));
+    buttonAt(state.root, "不能支付").fire("click");
+    buttonAt(state.root, "提交判断并保存计划").fire("click");
+    const result = find(state.root, (item) => item.tag === "section" && item.textContent.startsWith("这次核查的结果"))!;
+    expect(result.textContent).toContain(`调整后的计划在“${blocked.label}”暂停`);
+    expect(result.textContent).toContain(`需要 ${coins(blocked.amountCents)} 金币，采购前可用 ${coins(blocked.cashBeforeCents)} 金币，还差 ${coins(blocked.amountCents - blocked.cashBeforeCents)} 金币`);
+    if (blocked.id !== selected.attributes.value) expect(result.textContent).toContain("调整后的计划尚未到达本次核查的采购");
+  });
   it("retries a missing case catalogue without mistaking it for exhausted cases", async () => {
     const { run, manifest } = await fixture();
     const state = harness(run, manifest, emptyResearchProfile());

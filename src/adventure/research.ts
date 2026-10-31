@@ -236,7 +236,7 @@ function recordKnowledge(profile: ResearchProfile, evidence: Omit<KnowledgeEvide
     : evidence.priorExposure || evidence.answerExposed ? "已见案例或答案，本次仅作练习，不增加能力依据。"
     : before === after ? "新依据已加入；现有观察保持不变。"
     : after === "conflicting" ? "不同情境出现相反结果，两条依据均保留。"
-    : !evidence.correct ? "本次判断与展示数据不一致，可以再核对。"
+    : !evidence.correct ? "本次有步骤需要进一步核查，可结合任务中的具体反馈再看一遍。"
     : evidence.help !== "self" ? "本次借助帮助完成，实际帮助暴露已记录。"
     : "本次在未见情境中独立完成，记录一次任务操作。");
   const change: ProfileChange = { id: `${evidence.id}:change`, dimension: evidence.dimension, before, addedEvidence: evidence.id, after,
@@ -513,6 +513,20 @@ export interface FundingRow {
   amountCents: number;
 }
 export interface FundingTimeline { rows: FundingRow[]; stoppedAt: string | null; pendingFinal: FundingScenario["pendingFinal"] | null; note: string }
+export interface FundingFeedback {
+  target: { id: string; label: string; selected: boolean; actualCanPay: boolean; correct: boolean; cashBeforeCents: number; amountCents: number };
+  revised: { status: "completed" } | { status: "pending-final-quote" }
+    | { status: "blocked"; id: string; label: string; cashBeforeCents: number; amountCents: number; shortfallCents: number };
+  revisedTarget: { status: "not-reached" }
+    | { status: "reached"; cashBeforeCents: number; amountCents: number; canPay: boolean };
+}
+export interface FundingPracticeResult {
+  timeline: FundingTimeline;
+  revisedTimeline: FundingTimeline;
+  correct: boolean;
+  actualCanPay: boolean;
+  feedback: FundingFeedback;
+}
 export interface FundingSubmission {
   id: string;
   questionVersion: string;
@@ -637,13 +651,11 @@ export function simulateFundingPlan(scenario: FundingScenario, plan: FundingPlan
   return { rows, stoppedAt, pendingFinal, note: "固定外部收入与采购日程的账本练习；首次买不起或结算缺价时暂停，不推断改变选择后战斗仍会按原样发生。" };
 }
 
-export function submitFunding(profile: ResearchProfile, scenario: FundingScenario, submission: FundingSubmission): { profile: ResearchProfile; change: ProfileChange; recommendation: Recommendation; timeline: FundingTimeline; revisedTimeline: FundingTimeline } {
+export function submitFunding(profile: ResearchProfile, scenario: FundingScenario, submission: FundingSubmission): { profile: ResearchProfile; change: ProfileChange; recommendation: Recommendation; timeline: FundingTimeline; revisedTimeline: FundingTimeline; feedback: FundingFeedback } {
   requireEnabled(profile); requireId(submission.id); requireId(submission.questionVersion);
   if (profile.funding_attempts.some((a) => a.id === submission.id)) throw new Error("此提交编号已使用");
-  const timeline = simulateFundingPlan(scenario, submission.plan);
-  const purchase = timeline.rows.find((row) => row.id === submission.purchaseId && row.kind === "purchase");
-  if (!purchase || purchase.canPay === null) throw new Error("请判断已经到达的采购节点");
-  const revisedTimeline = simulateFundingPlan(scenario, submission.revisedPlan);
+  const { timeline, revisedTimeline, feedback } = evaluateFundingPractice(scenario, submission);
+  const purchase = feedback.target;
   const questionKey = fundingQuestionKey(scenario, submission.purchaseId, submission.questionVersion, submission.plan);
   // Legacy entries only identify a case, so they conservatively apply to that case.
   const oldQuestionKey = `D1:${scenario.id}:${submission.purchaseId}:${submission.questionVersion}`;
@@ -654,15 +666,15 @@ export function submitFunding(profile: ResearchProfile, scenario: FundingScenari
   const relatedTaskShown = hasShownRelatedHistory(profile, scenario.caseId);
   const relatedFunding = profile.funding_attempts.some((a) => a.caseId !== scenario.caseId && related.includes(a.caseId));
   const priorExposure = submission.priorExposure || exposures.some((e) => e.priorExposure) || hasDeclaredPriorExposure(profile, scenario.caseId) || relatedTaskShown || relatedFunding || hasRelatedCalibration(profile, scenario.caseId);
-  const record: FundingAttempt = { id: submission.id, caseId: scenario.caseId, scenarioId: scenario.id, questionVersion: submission.questionVersion, plan: { ...submission.plan, recovery: { ...submission.plan.recovery } }, purchaseId: submission.purchaseId, answer: submission.canPay, actualCanPay: purchase.canPay, revisedPlan: { ...submission.revisedPlan, recovery: { ...submission.revisedPlan.recovery } }, help, answerExposed, priorExposure, reason: submission.reason ?? null, timeline, revisedTimeline };
+  const record: FundingAttempt = { id: submission.id, caseId: scenario.caseId, scenarioId: scenario.id, questionVersion: submission.questionVersion, plan: { ...submission.plan, recovery: { ...submission.plan.recovery } }, purchaseId: submission.purchaseId, answer: submission.canPay, actualCanPay: purchase.actualCanPay, revisedPlan: { ...submission.revisedPlan, recovery: { ...submission.revisedPlan.recovery } }, help, answerExposed, priorExposure, reason: submission.reason ?? null, timeline, revisedTimeline };
   const withAttempt = { ...profile, funding_attempts: [...profile.funding_attempts, record] };
   const manual = scenario.caseId === "manual-example";
-  const updated = recordKnowledge(withAttempt, { id: `${submission.id}:K3`, questionKey, caseId: scenario.caseId, dimension: "K3", correct: submission.canPay === purchase.canPay, independent: !manual && help === "self" && !answerExposed && !priorExposure, help, answerExposed, priorExposure, evidence_ids: [submission.id, submission.purchaseId], detail: `采购前可用 ${purchase.cashBeforeCents / 100} 金币，采购${purchase.canPay ? "可支付" : "不可支付"}；修订后的计划${revisedTimeline.stoppedAt ? `在 ${revisedTimeline.stoppedAt} 暂停` : "完成固定日程核查"}。` }, manual ? "人工示例仅用于练习，不增加能力依据。" : undefined);
+  const updated = recordKnowledge(withAttempt, { id: `${submission.id}:K3`, questionKey, caseId: scenario.caseId, dimension: "K3", correct: purchase.correct, independent: !manual && help === "self" && !answerExposed && !priorExposure, help, answerExposed, priorExposure, evidence_ids: [submission.id, submission.purchaseId], detail: `采购前可用 ${purchase.cashBeforeCents / 100} 金币，采购${purchase.actualCanPay ? "可支付" : "不可支付"}；修订后的计划${revisedTimeline.stoppedAt ? `在 ${revisedTimeline.stoppedAt} 暂停` : "完成固定日程核查"}。` }, manual ? "人工示例仅用于练习，不增加能力依据。" : undefined);
   // This function returns the correct answer, so any later attempt at this
   // question must remember that exposure. Artificial practice needs no ledger.
   const saved = manual ? updated.profile : markFundingAnswerExposed(updated.profile, questionKey);
   const explained = explainTaskGuidance(profile, saved, [updated.change], "D1");
-  return { profile: explained.profile, change: explained.changes[0]!, recommendation: recommendResearch(explained.profile), timeline, revisedTimeline };
+  return { profile: explained.profile, change: explained.changes[0]!, recommendation: recommendResearch(explained.profile), timeline, revisedTimeline, feedback };
 }
 
 /** An expressly artificial fallback when the journey has no executed entry quote. */
@@ -741,11 +753,28 @@ export function attachFundingFinalQuote(scenario: FundingScenario, quote: Market
 }
 
 /** Instant practice without creating or persisting a profile. */
-export function evaluateFundingPractice(scenario: FundingScenario, submission: Pick<FundingSubmission, "plan" | "purchaseId" | "canPay" | "revisedPlan">): { timeline: FundingTimeline; revisedTimeline: FundingTimeline; correct: boolean; actualCanPay: boolean } {
+export function evaluateFundingPractice(scenario: FundingScenario, submission: Pick<FundingSubmission, "plan" | "purchaseId" | "canPay" | "revisedPlan">): FundingPracticeResult {
   const timeline = simulateFundingPlan(scenario, submission.plan);
   const purchase = timeline.rows.find((row) => row.id === submission.purchaseId && row.kind === "purchase");
   if (!purchase || purchase.canPay === null) throw new Error("请判断已经到达的采购节点");
-  return { timeline, revisedTimeline: simulateFundingPlan(scenario, submission.revisedPlan), correct: purchase.canPay === submission.canPay, actualCanPay: purchase.canPay };
+  const revisedTimeline = simulateFundingPlan(scenario, submission.revisedPlan);
+  const revisedPurchase = revisedTimeline.rows.find((row) => row.id === submission.purchaseId && row.kind === "purchase");
+  const revisedTarget: FundingFeedback["revisedTarget"] = revisedPurchase && revisedPurchase.canPay !== null
+    ? { status: "reached", cashBeforeCents: revisedPurchase.cashBeforeCents, amountCents: revisedPurchase.amountCents, canPay: revisedPurchase.canPay }
+    : { status: "not-reached" };
+  let revised: FundingFeedback["revised"];
+  if (revisedTimeline.pendingFinal) revised = { status: "pending-final-quote" };
+  else if (revisedTimeline.stoppedAt !== null) {
+    const blocked = revisedTimeline.rows.find((row) => row.id === revisedTimeline.stoppedAt && row.kind === "purchase" && row.canPay === false);
+    if (!blocked) throw new Error("无法确定暂停的采购节点");
+    revised = { status: "blocked", id: blocked.id, label: blocked.label, cashBeforeCents: blocked.cashBeforeCents, amountCents: blocked.amountCents, shortfallCents: blocked.amountCents - blocked.cashBeforeCents };
+  } else revised = { status: "completed" };
+  const correct = purchase.canPay === submission.canPay;
+  const feedback: FundingFeedback = {
+    target: { id: purchase.id, label: purchase.label, selected: submission.canPay, actualCanPay: purchase.canPay, correct, cashBeforeCents: purchase.cashBeforeCents, amountCents: purchase.amountCents },
+    revised, revisedTarget,
+  };
+  return { timeline, revisedTimeline, correct, actualCanPay: purchase.canPay, feedback };
 }
 
 export interface FixedSchedule { startingCashCents: number; participationCents: number; t1: Percent; t2: Percent }
@@ -832,6 +861,31 @@ export interface HistoryAttempt extends StartHistory {
   final: { comparison?: Direction; historyDifference?: Direction; boundary?: BoundaryAnswer; reason: string; process: "kept" | "revised" | "undetermined" } | null;
 }
 export interface HistoryAnswers { comparison?: Direction; historyDifference?: Direction; boundary?: BoundaryAnswer; reason: string }
+export interface HistoryFeedback {
+  comparison: { selected: Direction; expected: Direction; correct: boolean; assetGainCents: number; benchmarkGainCents: number } | null;
+  historyDifference: { selected: Direction; expected: Direction; correct: boolean; primaryGainCents: number; otherGainCents: number } | null;
+  boundary: { selected: BoundaryAnswer; expected: "only_samples"; correct: boolean } | null;
+  /** K2 retains its original all-or-nothing scoring. */
+  k2Correct: boolean | null;
+}
+
+/** Feedback uses the already displayed snapshots, never an additional data load. */
+export function evaluateHistoryFeedback(primary: HistoryComparison, other: HistoryComparison | null, answers: HistoryAnswers): HistoryFeedback {
+  const comparison: HistoryFeedback["comparison"] = answers.comparison ? {
+    selected: answers.comparison, expected: primary.direction, correct: answers.comparison === primary.direction,
+    assetGainCents: primary.asset.gainCents, benchmarkGainCents: primary.benchmark.gainCents,
+  } : null;
+  const expectedDifference = other ? direction(other.asset.gainCents, primary.asset.gainCents) : null;
+  const historyDifference: HistoryFeedback["historyDifference"] = other && answers.historyDifference && expectedDifference ? {
+    selected: answers.historyDifference, expected: expectedDifference, correct: answers.historyDifference === expectedDifference,
+    primaryGainCents: primary.asset.gainCents, otherGainCents: other.asset.gainCents,
+  } : null;
+  const boundary: HistoryFeedback["boundary"] = other && answers.boundary ? {
+    selected: answers.boundary, expected: "only_samples", correct: answers.boundary === "only_samples",
+  } : null;
+  return { comparison, historyDifference, boundary, k2Correct: historyDifference && boundary ? historyDifference.correct && boundary.correct : null };
+}
+
 function updateAttempt(profile: ResearchProfile, id: string, apply: (a: HistoryAttempt) => HistoryAttempt): ResearchProfile {
   requireEnabled(profile);
   let found = false;
@@ -882,43 +936,43 @@ export function markHistoryHelp(profile: ResearchProfile, id: string, help: Help
 export function markHistoryAnswerExposed(profile: ResearchProfile, id: string): ResearchProfile {
   return updateAttempt(profile, id, (a) => { if (a.submitted) throw new Error("这次研究已提交"); return { ...a, answerExposed: true }; });
 }
-export function submitHistory(profile: ResearchProfile, id: string, answers: HistoryAnswers): { profile: ResearchProfile; changes: ProfileChange[]; recommendation: Recommendation } {
+export function submitHistory(profile: ResearchProfile, id: string, answers: HistoryAnswers): { profile: ResearchProfile; changes: ProfileChange[]; recommendation: Recommendation; feedback: HistoryFeedback } {
   requireEnabled(profile);
   const attempt = profile.research_process.find((a) => a.id === id);
   if (!attempt || attempt.submitted || !attempt.shown) throw new Error("请先锁定判断并实际展示数据");
   if (!answers.reason.trim()) throw new Error("请选择或填写本次理由");
   if (!answers.comparison && !answers.boundary) throw new Error("请至少完成一个已展示的判断");
   if (answers.boundary && (!attempt.shown.other || !answers.historyDifference)) throw new Error("先展示另一历史片段，并比较两段固定日程的结果");
+  const feedback = evaluateHistoryFeedback(attempt.shown.primary, attempt.shown.other ?? null, answers);
   const process = !answers.comparison || attempt.initialClaim === "unknown" ? "undetermined" : answers.comparison === attempt.initialClaim ? "kept" : "revised";
   let next = updateAttempt(profile, id, (a) => ({ ...a, submitted: true, final: { ...answers, process } }));
   const changes: ProfileChange[] = [];
   const primaryPrior = attempt.priorExposure || hasDeclaredPriorExposure(profile, attempt.caseId);
   const shared = { caseId: attempt.caseId, independent: attempt.helpUsed === "self" && !attempt.answerExposed && !primaryPrior, help: attempt.helpUsed, answerExposed: attempt.answerExposed, priorExposure: primaryPrior, evidence_ids: [id], };
-  if (answers.comparison) {
-    const expected = attempt.shown.primary.direction;
-    const result = recordKnowledge(next, { ...shared, id: `${id}:K1`, questionKey: `D2:${attempt.caseId}:benchmark:${attempt.questionVersion}`, dimension: "K1", correct: answers.comparison === expected, detail: `同一日程中资产盈亏 ${(attempt.shown.primary.asset.gainCents / 100).toFixed(2)}，同期基准 ${(attempt.shown.primary.benchmark.gainCents / 100).toFixed(2)} 金币。` });
+  if (feedback.comparison) {
+    const result = recordKnowledge(next, { ...shared, id: `${id}:K1`, questionKey: `D2:${attempt.caseId}:benchmark:${attempt.questionVersion}`, dimension: "K1", correct: feedback.comparison.correct, detail: `同一日程中资产盈亏 ${(attempt.shown.primary.asset.gainCents / 100).toFixed(2)}，同期基准 ${(attempt.shown.primary.benchmark.gainCents / 100).toFixed(2)} 金币。` });
     next = result.profile; changes.push(result.change);
   }
-  if (answers.boundary && attempt.shown.other && answers.historyDifference) {
-    const expected = direction(attempt.shown.other.asset.gainCents, attempt.shown.primary.asset.gainCents);
+  if (feedback.k2Correct !== null && attempt.shown.other && feedback.historyDifference) {
+    const expected = feedback.historyDifference.expected;
     const pair = [attempt.caseId, attempt.shown.other.caseId].sort().join(":");
     const k2PriorExposure = primaryPrior || !!attempt.shown.otherPriorExposure || hasDeclaredPriorExposure(profile, attempt.shown.other.caseId);
     const overlap = relatedCaseIds(attempt.caseId).includes(attempt.shown.other.caseId);
-    const result = recordKnowledge(next, { ...shared, priorExposure: k2PriorExposure, independent: !overlap && attempt.helpUsed === "self" && !attempt.answerExposed && !k2PriorExposure, id: `${id}:K2`, questionKey: `D2:${pair}:boundary:${attempt.questionVersion}`, dimension: "K2", correct: answers.boundary === "only_samples" && answers.historyDifference === expected, detail: `固定日程下新片段相对原片段为 ${expected}；这只描述样本，不预测未来。` }, overlap ? "这两段历史互相重叠，只作相关情境练习，不增加独立依据。" : undefined);
+    const result = recordKnowledge(next, { ...shared, priorExposure: k2PriorExposure, independent: !overlap && attempt.helpUsed === "self" && !attempt.answerExposed && !k2PriorExposure, id: `${id}:K2`, questionKey: `D2:${pair}:boundary:${attempt.questionVersion}`, dimension: "K2", correct: feedback.k2Correct, detail: `固定日程下新片段相对原片段为 ${expected}；这只描述样本，不预测未来。` }, overlap ? "这两段历史互相重叠，只作相关情境练习，不增加独立依据。" : undefined);
     next = result.profile; changes.push(result.change);
   }
   const explained = explainTaskGuidance(profile, next, changes, "D2");
-  return { profile: explained.profile, changes: explained.changes, recommendation: recommendResearch(explained.profile) };
+  return { profile: explained.profile, changes: explained.changes, recommendation: recommendResearch(explained.profile), feedback };
 }
 
 /** Compute immediate feedback for users who disabled observation; never stores an answer. */
-export function evaluateHistoryPractice(primary: ResearchMarketCase, other: ResearchMarketCase | null, schedule: FixedSchedule, answers: HistoryAnswers): { primary: HistoryComparison; other: HistoryComparison | null; comparisonCorrect: boolean | null; boundaryCorrect: boolean | null } {
+export function evaluateHistoryPractice(primary: ResearchMarketCase, other: ResearchMarketCase | null, schedule: FixedSchedule, answers: HistoryAnswers): { primary: HistoryComparison; other: HistoryComparison | null; comparisonCorrect: boolean | null; boundaryCorrect: boolean | null; feedback: HistoryFeedback } {
   const a = compareSchedule(primary, schedule);
   const b = other ? compareSchedule(other, schedule) : null;
   if (other && other.caseId === primary.caseId) throw new Error("新历史片段必须不同于原案例");
   if (answers.boundary && (!b || !answers.historyDifference)) throw new Error("先展示并比较另一历史片段");
-  return { primary: a, other: b, comparisonCorrect: answers.comparison ? answers.comparison === a.direction : null,
-    boundaryCorrect: answers.boundary && b && answers.historyDifference ? answers.boundary === "only_samples" && answers.historyDifference === direction(b.asset.gainCents, a.asset.gainCents) : null };
+  const feedback = evaluateHistoryFeedback(a, b, answers);
+  return { primary: a, other: b, comparisonCorrect: feedback.comparison?.correct ?? null, boundaryCorrect: feedback.k2Correct, feedback };
 }
 
 const FEELING_ORDER: Record<Exclude<Feeling, "unknown">, number> = { low: 0, mild: 1, noticeable: 2, strong: 3 };

@@ -400,7 +400,14 @@ async function compareJudgeStudy(): Promise<void> {
   } catch (error) { if (version === judgeStudyVersion && screen === "judge") flash(`研究对照加载失败：${errorMessage(error)}`); }
   finally { if (version === judgeStudyVersion) { judgeStudyLoading = false; if (screen === "judge") render(); } }
 }
-const researchUI = new ResearchUI({ getRun: () => run!, getProfile: () => profile, setProfile, getManifest: () => manifest, retryManifest: loadInitial, manifestLoading: () => initialLoading, manifestError: () => initialError, back: () => changeScreen(run?.phase === "ended" ? "report" : "game"), openTask: (task) => changeScreen(task === "D1" ? "d1" : "d2"), refresh: () => render(), notify: flash, uid, isCaseKnown: (caseId) => !!run && casesAreRelated(caseId, run.caseId) && priorExposure, wasCaseSeen: (caseId) => hasSeenRelatedCase(seenCases, caseId), markCaseSeen: markExternalExposure });
+function revealResearchResult(task: "D1" | "D2"): void {
+  if (screen !== task.toLowerCase() || modal) return;
+  const result = app.querySelector<HTMLElement>(`#research-${task.toLowerCase()}-result`);
+  if (!result || result.closest("[inert]")) return;
+  result.focus({ preventScroll: true });
+  result.scrollIntoView({ behavior: "auto", block: "start" });
+}
+const researchUI = new ResearchUI({ getRun: () => run!, getProfile: () => profile, setProfile, getManifest: () => manifest, retryManifest: loadInitial, manifestLoading: () => initialLoading, manifestError: () => initialError, back: () => changeScreen(run?.phase === "ended" ? "report" : "game"), openTask: (task) => changeScreen(task === "D1" ? "d1" : "d2"), refresh: () => render(), revealResult: revealResearchResult, notify: flash, uid, isCaseKnown: (caseId) => !!run && casesAreRelated(caseId, run.caseId) && priorExposure, wasCaseSeen: (caseId) => hasSeenRelatedCase(seenCases, caseId), markCaseSeen: markExternalExposure });
 const calibrationDemoUI = new CalibrationDemoUI({ refresh: () => render(), isVisible: () => screen === "judge", onExposed: markExternalExposure });
 function render(preserve = true): void {
   const active = preserve ? (document.activeElement as HTMLElement | null)?.dataset.focusKey : undefined;
