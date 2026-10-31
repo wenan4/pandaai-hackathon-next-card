@@ -1,0 +1,25 @@
+{
+  "name": "pandaai-hackathon-next-card",
+  "version": "0.1.0",
+  "private": true,
+  "description": "下一张牌：三轮翻牌短决策，从找证据的方式形成有依据的画像，并当场给出一关研究任务。PandaAI 苏客松赛道。",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "tsc --noEmit && vite build && node scripts/check-secrets.mjs dist",
+    "preview": "vite preview --host",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit",
+    "check:secrets": "node scripts/check-secrets.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wenan4/pandaai-hackathon-next-card.git"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  }
+}

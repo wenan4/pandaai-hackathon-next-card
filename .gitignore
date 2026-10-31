@@ -1,0 +1,35 @@
+# 密钥与凭据：任何账号、密码、token 都不进仓库
+.env
+.env.*
+!.env.example
+user.json
+**/user.json
+*token*.json
+*.pem
+*.key
+
+# 本地大文件
+**/model-cache/
+*.wav
+audit-*/model-cache/
+
+# Node
+node_modules/
+dist/
+*.log
+.vite/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+scripts/out/
+scripts/cache/
+logs/
+
+# 系统与编辑器
+.DS_Store
+.idea/
+.vscode/

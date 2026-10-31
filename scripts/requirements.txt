@@ -1,0 +1,4 @@
+# 离线取数脚本依赖。Python 3.11 / 3.12（panda_data 固定 numpy 1.26，3.13 无预编译包）。
+panda_data==1.0.5
+pandas>=2.0
+python-dotenv>=1.0
