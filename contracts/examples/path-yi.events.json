@@ -1,0 +1,323 @@
+[
+  {
+    "event_id": "session:notice",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "session",
+    "type": "notice_ack",
+    "payload": {
+      "notice_version": "notice-v1"
+    }
+  },
+  {
+    "event_id": "R1:initial",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R1",
+    "type": "initial_reaction",
+    "payload": {
+      "reaction": "refutes"
+    }
+  },
+  {
+    "event_id": "R1:flip:fox",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R1",
+    "type": "card_flip",
+    "payload": {
+      "card": "fox"
+    }
+  },
+  {
+    "event_id": "R1:final",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R1",
+    "type": "final_assessment",
+    "payload": {
+      "verdict": "refutes"
+    }
+  },
+  {
+    "event_id": "R1:decision",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R1",
+    "type": "decision",
+    "payload": {
+      "action": "follow"
+    }
+  },
+  {
+    "event_id": "R2:initial",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R2",
+    "type": "initial_reaction",
+    "payload": {
+      "reaction": "refutes"
+    }
+  },
+  {
+    "event_id": "R2:flip:elephant",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R2",
+    "type": "card_flip",
+    "payload": {
+      "card": "elephant"
+    }
+  },
+  {
+    "event_id": "R2:final",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R2",
+    "type": "final_assessment",
+    "payload": {
+      "verdict": "supports"
+    }
+  },
+  {
+    "event_id": "R2:decision",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R2",
+    "type": "decision",
+    "payload": {
+      "action": "follow"
+    }
+  },
+  {
+    "event_id": "R3:initial",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R3",
+    "type": "initial_reaction",
+    "payload": {
+      "reaction": "insufficient"
+    }
+  },
+  {
+    "event_id": "R3:flip:elephant",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R3",
+    "type": "card_flip",
+    "payload": {
+      "card": "elephant"
+    }
+  },
+  {
+    "event_id": "R3:flip:leopard",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R3",
+    "type": "card_flip",
+    "payload": {
+      "card": "leopard"
+    }
+  },
+  {
+    "event_id": "R3:final",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R3",
+    "type": "final_assessment",
+    "payload": {
+      "verdict": "insufficient"
+    }
+  },
+  {
+    "event_id": "R3:decision",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R3",
+    "type": "decision",
+    "payload": {
+      "action": "wait"
+    }
+  },
+  {
+    "event_id": "R3:followup",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R3",
+    "type": "followup_answer",
+    "payload": {
+      "question": "missing",
+      "answer": "future_trend"
+    }
+  },
+  {
+    "event_id": "R4:initial",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R4",
+    "type": "initial_reaction",
+    "payload": {
+      "reaction": "supports"
+    }
+  },
+  {
+    "event_id": "R4:flip:fox",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R4",
+    "type": "card_flip",
+    "payload": {
+      "card": "fox"
+    }
+  },
+  {
+    "event_id": "R4:final",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R4",
+    "type": "final_assessment",
+    "payload": {
+      "verdict": "supports"
+    }
+  },
+  {
+    "event_id": "R4:decision",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R4",
+    "type": "decision",
+    "payload": {
+      "action": "skip"
+    }
+  },
+  {
+    "event_id": "R5:initial",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R5",
+    "type": "initial_reaction",
+    "payload": {
+      "reaction": "supports"
+    }
+  },
+  {
+    "event_id": "R5:flip:elephant",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R5",
+    "type": "card_flip",
+    "payload": {
+      "card": "elephant"
+    }
+  },
+  {
+    "event_id": "R5:final",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R5",
+    "type": "final_assessment",
+    "payload": {
+      "verdict": "refutes"
+    }
+  },
+  {
+    "event_id": "R5:decision",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R5",
+    "type": "decision",
+    "payload": {
+      "action": "follow"
+    }
+  },
+  {
+    "event_id": "R6:initial",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R6",
+    "type": "initial_reaction",
+    "payload": {
+      "reaction": "insufficient"
+    }
+  },
+  {
+    "event_id": "R6:flip:elephant",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R6",
+    "type": "card_flip",
+    "payload": {
+      "card": "elephant"
+    }
+  },
+  {
+    "event_id": "R6:flip:leopard",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R6",
+    "type": "card_flip",
+    "payload": {
+      "card": "leopard"
+    }
+  },
+  {
+    "event_id": "R6:final",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R6",
+    "type": "final_assessment",
+    "payload": {
+      "verdict": "insufficient"
+    }
+  },
+  {
+    "event_id": "R6:decision",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R6",
+    "type": "decision",
+    "payload": {
+      "action": "wait"
+    }
+  },
+  {
+    "event_id": "R6:followup",
+    "session_id": "path-yi",
+    "content_version": "v0.3",
+    "stage": "pre_reveal",
+    "round_id": "R6",
+    "type": "followup_answer",
+    "payload": {
+      "question": "missing",
+      "answer": "skipped"
+    }
+  }
+]
