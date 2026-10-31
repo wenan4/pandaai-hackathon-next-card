@@ -75,4 +75,13 @@ npm run check:secrets   # 扫描所有 git 跟踪的文件，看有没有 .env �
 
 ## 部署
 
-待定（Cloudflare Pages / GitHub Pages）。上线后把链接写在这里。
+GitHub Pages，用 GitHub Actions 部署（`.github/workflows/deploy.yml`）：推送 `main` 后跑测试和构建（含 `dist/` 密钥扫描），通过后发布 `dist/`。PR 上由 `.github/workflows/ci.yml` 跑同样的检查，但不部署。
+
+- 线上地址：<https://wenan4.github.io/pandaai-hackathon-next-card/>
+- 评委面板：<https://wenan4.github.io/pandaai-hackathon-next-card/?judge=1>
+
+> 以上地址是 GitHub Pages 的默认地址。要等首次部署成功后，才能确认在手机上实际可以打开。
+
+仓库是私有的，但 Pages 站点公开，评委不需要访问仓库。启用 Pages 只需做一次：仓库 Settings → Pages → Source 选 **GitHub Actions**。私有仓库的 Pages 需要账号是 GitHub Pro 或团队套餐。
+
+`vite.config.ts` 里 `base: "./"`，资源和数据都按相对路径加载，换成 Cloudflare Pages 等根路径托管也不用改代码。

@@ -11,6 +11,7 @@ user.json
 # 本地大文件
 **/model-cache/
 *.wav
+*.mp4
 audit-*/model-cache/
 
 # Node
