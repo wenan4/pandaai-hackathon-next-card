@@ -1,5 +1,7 @@
 import { h, type Child } from "../ui/dom";
+import "./battle-preview.css";
 import { availableActions, canPlayCard } from "./engine";
+import { describeCardPlayPreview, describeCompactCardPlayPreview, previewCardPlay } from "./card-preview";
 import { CARDS, ENEMIES, PRICES, ROUTES } from "./content";
 import type { MarketInitialCase } from "./market";
 import type { CardInstance, Run, RunAction } from "./types";
@@ -51,16 +53,14 @@ function sidebar(run: Run): HTMLElement {
     h("hr", { class: "divider" }), moneyPanel(run), details("查看金币往来", moneyHistory(run))),
     h("section", { class: "panel stack" }, h("div", { class: "panel-head" }, h("div", null, h("h3", null, "随行牌组"), h("p", { class: "hint" }, `${run.deck.length} 张牌 · 奖励会直接加入牌组`))), deckSummary(run), details("卡牌小词典", h("p", { class: "hint" }, "过载：下一回合少恢复对应能量，仅持续一回合。成长：增加本场容量，从下一回合起生效。消耗：本场暂时移出，下一场回来。保留：牌会留在手中。"))));
 }
-function cardReason(card: CardInstance, run: Run): string | null {
-  return canPlayCard(run, card.instanceId).reason ?? null;
-}
 function battleView(ctx: GameViewContext): HTMLElement {
   const { run } = ctx; const b = run.battle!; const enemy = b.enemy; const def = ENEMIES[enemy.id];
   const selected = run.deck.find((card) => card.instanceId === ctx.selectedCard && b.hand.includes(card.instanceId));
   const otherCards = b.hand.map((id) => run.deck.find((card) => card.instanceId === id)).filter((card): card is CardInstance => !!card && card.instanceId !== selected?.instanceId);
-  const reason = selected ? cardReason(selected, run) : null;
   const isRetain = selected?.cardId === "C14";
   const retained = otherCards.find((card) => card.instanceId === ctx.selectedRetain) ?? otherCards[0];
+  const preview = selected ? previewCardPlay(run, selected.instanceId, isRetain ? retained?.instanceId : undefined) : null;
+  const reason = preview && !preview.enabled ? preview.reason : null;
   const hand = b.hand.map((id) => run.deck.find((card) => card.instanceId === id)).filter((card): card is CardInstance => !!card);
   const intent = enemy.intent.kind === "attack" ? `攻击 ${enemy.intent.amount}` : `获得 ${enemy.intent.amount} 护盾`;
   const art = enemy.id === "moss" ? "moss" : enemy.id === "clock" ? "clock" : "guardian";
@@ -79,6 +79,7 @@ function battleView(ctx: GameViewContext): HTMLElement {
   const lesson = run.source === "real" && run.node === "N1" ? lessons[ctx.tutorialStep] : undefined;
   const play = (): void => { if (selected) ctx.action({ type: "play-card", cardInstanceId: selected.instanceId, ...(isRetain && retained ? { retainCardId: retained.instanceId } : {}) }); };
   const retainSelect = (mobile = false): HTMLElement | null => isRetain && otherCards.length ? h("label", { class: "field retain-field" }, "保留另一张牌一回合", h("select", { value: retained?.instanceId, "data-focus-key": mobile ? "retain-select-mobile" : "retain-select-desktop", onchange: (event: Event) => ctx.selectRetain((event.currentTarget as HTMLSelectElement).value) }, otherCards.map((card) => h("option", { value: card.instanceId, selected: card.instanceId === retained?.instanceId }, `${CARDS[card.cardId].name}${card.upgraded ? "+" : ""}`)))) : null;
+  const previewBlock = (mobile = false): HTMLElement | null => preview ? h("div", { class: `card-play-preview${mobile ? " compact" : ""}`, role: "note", "aria-label": "出牌效果预览", ...(mobile ? { tabindex: "0" } : {}) }, h("strong", null, "打出后预览"), h("ul", null, (mobile ? describeCompactCardPlayPreview(preview) : describeCardPlayPreview(preview)).map((line) => h("li", null, line)))) : null;
   const box = h("div", { class: "stack" },
     h("section", { class: "battle-board", "aria-label": `第 ${b.turn} 回合，${def.name}准备${intent}` },
       h("div", { class: "battle-player" }, h("div", { class: "avatar player", "aria-hidden": "true" }, h("picture", null, h("source", { srcset: `${import.meta.env.BASE_URL}art/adventure/traveler.webp`, type: "image/webp" }), h("img", { src: `${import.meta.env.BASE_URL}art/adventure/traveler.png`, alt: "", width: "1024", height: "1536" }))), h("div", { class: "combat-label" }, h("strong", null, "旅行者"), `生命 ${run.hp} / ${run.maxHp} · 护盾 ${b.shield}`), h("div", { class: "health-bar" }, h("i", { style: `width:${Math.max(0, run.hp / run.maxHp * 100)}%` }))),
@@ -92,14 +93,12 @@ function battleView(ctx: GameViewContext): HTMLElement {
       h("p", { class: "hand-swipe-hint" }, "左右滑动查看全部手牌"),
       h("div", { class: "hand", "data-scroll-key": "battle-hand", tabindex: "0", "aria-label": "手牌，可左右滚动" }, hand.map((card) => cardFace(card, { selected: selected?.instanceId === card.instanceId, onClick: () => ctx.selectCard(card.instanceId), key: `card-${card.instanceId}` }))),
       selected ? h("div", { class: "notice battle-selection" }, h("strong", null, `${CARDS[selected.cardId].name}${selected.upgraded ? "+" : ""} · ${selected.upgraded ? CARDS[selected.cardId].upgradedCost : CARDS[selected.cardId].cost} 能量`), h("p", null, selected.upgraded ? CARDS[selected.cardId].upgradedDescription : CARDS[selected.cardId].description),
-        CARDS[selected.cardId].overload ? h("p", null, `打出后下回合锁定 ${b.overloadNext + CARDS[selected.cardId].overload} 点；预计可用 ${Math.max(0, b.capacity - b.overloadNext - CARDS[selected.cardId].overload)} 点。`) : null,
-        selected.cardId === "C05" || selected.cardId === "C11" ? h("p", null, b.capacity >= 6 && selected.cardId === "C11" ? "容量已满；护盾仍会生效，但本次不能再增加容量。" : `新增的是空容量；下一回合容量最多变为 ${Math.min(6, b.capacity + 1)}。`) : null,
         retainSelect(),
-        reason ? h("p", { class: "hint" }, reason) : null,
+        previewBlock(),
         h("div", { class: "button-row", style: "margin-top:10px" }, button("打出这张牌", play, "small", !!reason, "play-card"), button("收起", () => ctx.selectCard(null), "small ghost"))) : null,
       h("div", { class: "combat-actions" }, h("span", { class: "hint" }, `第 ${b.turn} 回合 · ${def.blurb}`), button("结束回合", () => ctx.action({ type: "end-turn" }), "gold", false, "end-turn")),
       details("战斗规则与最近动作", h("p", { class: "hint" }, "护盾在下一玩家回合开始时清除。敌人在第 10 次行动起每次攻击加成再增加 2，城门教学战除外。完成击败后，未结算过载会清除。"), h("div", { class: "timeline" }, b.log.slice(-6).reverse().map((line) => h("div", { class: "timeline-item" }, h("p", null, line)))))),
-    h("div", { class: "battle-dock", "aria-label": "战斗操作" }, h("div", { class: "dock-info" }, h("strong", null, selected ? `已选 ${CARDS[selected.cardId].name}${selected.upgraded ? "+" : ""}` : "选择一张手牌"), h("span", null, selected ? reason ?? (selected.upgraded ? CARDS[selected.cardId].upgradedDescription : CARDS[selected.cardId].description) : "查看效果后打出，也可结束回合")), retainSelect(true), h("div", { class: "dock-buttons" }, button("打出", play, "small", !selected || !!reason, "play-card-mobile"), button("结束回合", () => ctx.action({ type: "end-turn" }), "small gold", false, "end-turn-mobile"))));
+    h("div", { class: "battle-dock", "aria-label": "战斗操作" }, h("div", { class: "dock-info" }, h("strong", null, selected ? `已选 ${CARDS[selected.cardId].name}${selected.upgraded ? "+" : ""}` : "选择一张手牌"), selected ? previewBlock(true) : h("span", null, "查看效果后打出，也可结束回合")), retainSelect(true), h("div", { class: "dock-buttons" }, button("打出", play, "small", !selected || !!reason, "play-card-mobile"), button("结束回合", () => ctx.action({ type: "end-turn" }), "small gold", false, "end-turn-mobile"))));
   return box;
 }
 function rewardView(ctx: GameViewContext): HTMLElement {

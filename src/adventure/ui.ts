@@ -48,6 +48,7 @@ let tutorialStep = 4;
 let entryCents = 0;
 let reserveCents = 0;
 let modal: HTMLElement | null = null;
+let modalOpener: { key?: string; label?: string } | null = null;
 let toastMessage = "";
 let toastTimer = 0;
 let demoLoading = false;
@@ -105,11 +106,32 @@ function changeScreen(next: Screen): void {
   screen = next; selectedCard = null; modal = null; render(false); window.scrollTo({ top: 0, behavior: "auto" });
 }
 function showDialog(title: string, body: Child, actions: Child[]): void {
-  const dialog = h("section", { class: "modal stack", role: "dialog", "aria-modal": "true", "aria-label": title }, h("h2", null, title), body, h("div", { class: "button-row" }, actions));
-  modal = h("div", { class: "modal-backdrop", onclick: (e: Event) => { if (e.target === e.currentTarget) { modal = null; render(); } } }, dialog);
-  render(); window.setTimeout(() => dialog.querySelector<HTMLButtonElement>("button")?.focus(), 0);
+  const active = document.activeElement as HTMLElement | null;
+  if (!modal) modalOpener = { key: active?.dataset.focusKey, label: active?.closest("button")?.textContent ?? undefined };
+  const previousKey = modal?.contains(active) ? active?.dataset.focusKey : undefined;
+  const dialog = h("section", { class: "modal stack", role: "dialog", "aria-modal": "true", "aria-label": title, tabindex: "-1" }, h("h2", null, title), body, h("div", { class: "button-row" }, actions));
+  const focusable = (): HTMLElement[] => [...dialog.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], summary, [tabindex="0"]')].filter((element) => element.getClientRects().length > 0);
+  dialog.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeDialog(); return; }
+    if (event.key !== "Tab") return;
+    const elements = focusable(); const first = elements[0]; const last = elements.at(-1);
+    if (!first) { event.preventDefault(); dialog.focus(); }
+    else if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog)) { event.preventDefault(); last!.focus(); }
+    else if (!event.shiftKey && (document.activeElement === last || document.activeElement === dialog)) { event.preventDefault(); first.focus(); }
+  });
+  modal = h("div", { class: "modal-backdrop", onclick: (e: Event) => { if (e.target === e.currentTarget) closeDialog(); } }, dialog);
+  render(); window.setTimeout(() => {
+    if (!dialog.isConnected) return;
+    const previous = previousKey ? dialog.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(previousKey)}"]`) : null;
+    (previous ?? focusable()[0] ?? dialog).focus({ preventScroll: true });
+  }, 0);
 }
-function closeDialog(): void { modal = null; render(); }
+function closeDialog(): void {
+  const opener = modalOpener; modal = null; modalOpener = null; render();
+  const keyed = opener?.key ? app.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(opener.key)}"]`) : null;
+  const named = [...app.querySelectorAll<HTMLButtonElement>("button")].find((element) => element.textContent === opener?.label && !element.disabled && element.getClientRects().length > 0);
+  (keyed ?? named)?.focus({ preventScroll: true });
+}
 function restoredTutorial(current: Run, saved?: number): number {
   if (current.source !== "real" || current.node !== "N1" || current.phase !== "battle" || !current.battle) return 4;
   if (typeof saved === "number" && Number.isInteger(saved) && saved >= 0 && saved <= 4) return saved;
@@ -284,10 +306,10 @@ function intro(): HTMLElement {
     h("div", { class: "intro-bottom" }, h("div", { class: "intro-feature" }, h("strong", null, "出牌，找到你的组合"), h("span", null, "读懂对手意图，拿新牌，走出自己的打法。")), h("div", { class: "intro-feature" }, h("strong", null, "经营，一路保有选择"), h("span", null, "补给、卡牌与契约共享同一段旅程。")), h("div", { class: "intro-feature" }, h("strong", null, "回望，再试一种可能"), h("span", null, "观察只描述本局，下一步由你选择。"))), h("footer", { class: "footer" }, "虚拟金币不兑换现金 · 历史案例不代表未来 · 现实财务承受能力未评估"));
 }
 function preferencePanel(): HTMLElement {
-  const goal = profile.stated_interest.at(-1)?.goal ?? null; const help = profile.help_preference.at(-1)?.help ?? "hint";
+  const goal = profile.stated_interest.at(-1)?.goal ?? null; const help = profile.help_preference.at(-1)?.help;
   return h("section", { class: "panel stack" }, h("h2", null, "下一步，你想探索什么？"), h("p", { class: "hint" }, "这是此刻的目标，可以跳过或随时修改，不是固定标签。"),
-    h("div", { class: "selection-row" }, ([ ["funding", "资金安排"], ["history", "历史比较"], ["idea", "验证一个想法"], ["none", "暂不选择"] ] as const).map(([id, label]) => h("button", { type: "button", class: `choice${(id === "none" ? goal === null : goal === id) ? " selected" : ""}`, "aria-pressed": String(id === "none" ? goal === null : goal === id), onclick: () => { setProfile(setResearchGoal(profile, uid("goal"), id === "none" ? null : id as Goal)); if (modal) showDialog("目标与帮助（可跳过）", preferencePanel(), [button("完成", closeDialog, "secondary")]); } }, label))),
-    h("p", { class: "hint strong" }, "希望怎样获得帮助？"), h("div", { class: "selection-row" }, ([ ["self", "自主尝试"], ["hint", "给我提示"], ["step", "分步说明"] ] as const).map(([id, label]) => h("button", { type: "button", class: `choice${help === id ? " selected" : ""}`, "aria-pressed": String(help === id), onclick: () => { setProfile(setHelpPreference(profile, uid("help"), id as HelpPreference)); if (modal) showDialog("目标与帮助（可跳过）", preferencePanel(), [button("完成", closeDialog, "secondary")]); } }, label))));
+    h("div", { class: "selection-row" }, ([ ["funding", "资金安排"], ["history", "历史比较"], ["idea", "验证一个想法"], ["none", "暂不选择"] ] as const).map(([id, label]) => h("button", { type: "button", class: `choice${(id === "none" ? goal === null : goal === id) ? " selected" : ""}`, "aria-pressed": String(id === "none" ? goal === null : goal === id), "data-focus-key": `preference-goal-${id}`, onclick: () => { setProfile(setResearchGoal(profile, uid("goal"), id === "none" ? null : id as Goal)); if (modal) showDialog("目标与帮助（可跳过）", preferencePanel(), [button("完成", closeDialog, "secondary")]); } }, label))),
+    h("p", { class: "hint strong" }, "希望怎样获得帮助？"), h("p", { class: "fineprint" }, help ? "任务会使用你选择的帮助方式；随时可以调整。" : "尚未选择。进入任务后可查看建议，再决定是否使用帮助。"), h("div", { class: "selection-row" }, ([ ["self", "自主尝试"], ["hint", "给我提示"], ["step", "分步说明"] ] as const).map(([id, label]) => h("button", { type: "button", class: `choice${help === id ? " selected" : ""}`, "aria-pressed": String(help === id), "data-focus-key": `preference-help-${id}`, onclick: () => { setProfile(setHelpPreference(profile, uid("help"), id as HelpPreference)); if (modal) showDialog("目标与帮助（可跳过）", preferencePanel(), [button("完成", closeDialog, "secondary")]); } }, label))));
 }
 function report(): HTMLElement {
   const current = run!; const rec = recommendResearch(profile); const active = current.status === "active"; const ending = active ? "营地里的小发现" : current.status === "cleared" ? "灯火已点亮" : current.status === "returned" ? "带着收获返程" : "旅程暂时停在这里";
@@ -377,7 +399,7 @@ async function compareJudgeStudy(): Promise<void> {
   } catch (error) { if (version === judgeStudyVersion && screen === "judge") flash(`研究对照加载失败：${errorMessage(error)}`); }
   finally { if (version === judgeStudyVersion) { judgeStudyLoading = false; if (screen === "judge") render(); } }
 }
-const researchUI = new ResearchUI({ getRun: () => run!, getProfile: () => profile, setProfile, getManifest: () => manifest, back: () => changeScreen(run?.phase === "ended" ? "report" : "game"), refresh: () => render(), notify: flash, uid, isCaseKnown: (caseId) => !!run && casesAreRelated(caseId, run.caseId) && priorExposure, wasCaseSeen: (caseId) => hasSeenRelatedCase(seenCases, caseId), markCaseSeen: markExternalExposure });
+const researchUI = new ResearchUI({ getRun: () => run!, getProfile: () => profile, setProfile, getManifest: () => manifest, back: () => changeScreen(run?.phase === "ended" ? "report" : "game"), openTask: (task) => changeScreen(task === "D1" ? "d1" : "d2"), refresh: () => render(), notify: flash, uid, isCaseKnown: (caseId) => !!run && casesAreRelated(caseId, run.caseId) && priorExposure, wasCaseSeen: (caseId) => hasSeenRelatedCase(seenCases, caseId), markCaseSeen: markExternalExposure });
 const calibrationDemoUI = new CalibrationDemoUI({ refresh: () => render(), isVisible: () => screen === "judge", onExposed: markExternalExposure });
 function render(preserve = true): void {
   const active = preserve ? (document.activeElement as HTMLElement | null)?.dataset.focusKey : undefined;
@@ -390,11 +412,12 @@ function render(preserve = true): void {
   else if (screen === "judge") content = judge();
   else if (screen === "d1" || screen === "d2") content = h("div", { class: "app-shell" }, topbar(), screen === "d1" ? researchUI.renderFunding() : researchUI.renderHistory());
   else content = h("div", null, h("div", { class: "app-shell" }, topbar()), gameView({ run, initialCase, initialCaseError, initialCaseLoading, retryInitialCase, selectedCard, selectedRetain, selectedUpgrade, entryCents, reserveCents, marketLoading, marketError, battleFeedback, tutorialStep, action, selectCard: (id) => { selectedCard = id; if (id && run?.node === "N1" && tutorialStep < 2) { tutorialStep = 2; save(); } render(); }, selectRetain: (id) => { selectedRetain = id; render(); }, selectUpgrade: (id) => { selectedUpgrade = id; render(); }, setEntry: (amount, redraw) => { entryCents = amount; if (redraw) render(); }, setReserve: (amount) => { reserveCents = amount; }, retryMarket, extraCamp: () => researchUI.campExtras(), openReport: () => changeScreen("report"), openTask: (task) => changeScreen(task), archiveShown: (caseId) => { if (run?.source === "real") markNaturalArchiveSeen(caseId); else markExternalExposure(caseId); }, nextTutorial: () => setTutorialStep(tutorialStep + 1), skipTutorial: () => setTutorialStep(4) }));
+  content.inert = !!modal;
   const wrapper = h("div", { class: `adventure${screen === "game" && run?.phase === "battle" ? " battle-active" : ""}` }, content, storageError ? h("div", { class: "toast", role: "status" }, "浏览器无法保存进度，请检查本地存储设置。") : null, toastMessage ? h("div", { class: "toast", role: "status" }, toastMessage) : null, modal);
   app.replaceChildren(wrapper);
   for (const summary of app.querySelectorAll<HTMLElement>("details > summary")) if (open.includes(summary.textContent ?? "")) (summary.parentElement as HTMLDetailsElement).open = true;
   for (const [key, left] of scrollPositions) { const element = app.querySelector<HTMLElement>(`[data-scroll-key="${CSS.escape(key)}"]`); if (element) element.scrollLeft = left; }
-  if (preserve) { if (active) { const target = app.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(active)}"]`); if (target && !(target instanceof HTMLButtonElement && target.disabled)) target.focus({ preventScroll: true }); else if (active.startsWith("play-card") || active.startsWith("tutorial-")) { const hand = app.querySelector<HTMLElement>('.battle-hand-panel [data-scroll-key="battle-hand"]'); const box = hand?.getBoundingClientRect(); const visible = [...(hand?.querySelectorAll<HTMLElement>(".game-card") ?? [])].find((card) => { const rect = card.getBoundingClientRect(); return !!box && rect.right > box.left && rect.left < box.right; }); (visible ?? hand)?.focus({ preventScroll: true }); } } window.scrollTo(0, scroll); }
+  if (preserve) { if (active) { const target = (modal ?? app).querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(active)}"]`); if (target && !(target instanceof HTMLButtonElement && target.disabled)) target.focus({ preventScroll: true }); else if (active.startsWith("play-card") || active.startsWith("tutorial-")) { const hand = app.querySelector<HTMLElement>('.battle-hand-panel [data-scroll-key="battle-hand"]'); const box = hand?.getBoundingClientRect(); const visible = [...(hand?.querySelectorAll<HTMLElement>(".game-card") ?? [])].find((card) => { const rect = card.getBoundingClientRect(); return !!box && rect.right > box.left && rect.left < box.right; }); (visible ?? hand)?.focus({ preventScroll: true }); } } window.scrollTo(0, scroll); }
 }
 try { const value: unknown = JSON.parse(localStorage.getItem(SEEN_KEY) ?? "[]"); if (Array.isArray(value)) seenCases = new Set(value.filter((item): item is string => typeof item === "string")); } catch { storageError = true; }
 try {

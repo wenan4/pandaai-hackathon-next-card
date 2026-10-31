@@ -277,24 +277,39 @@ function playCard(run: Run, action: Extract<RunAction, { type: 'play-card' }>): 
   battle.hand.splice(battle.hand.indexOf(action.cardInstanceId), 1);
   battle.log.push(`打出${def.name}，消耗 ${cost} 能量${def.overload ? `，下回合锁定 ${def.overload}` : ''}。`);
   let damage = 0;
+  let hitCount = 0;
+  let damagePerHit = 0;
+  const hit = (base: number): void => {
+    hitCount++;
+    damagePerHit = base + battle.attackBonus;
+    damage += dealHit(run, base);
+  };
   switch (card.cardId) {
-    case 'C01': damage += dealHit(run, card.upgraded ? 9 : 6); break;
+    case 'C01': hit(card.upgraded ? 9 : 6); break;
     case 'C02': battle.shield += card.upgraded ? 9 : 6; break;
     case 'C03': draw(run, card.upgraded ? 3 : 2); break;
     case 'C04': battle.energy += card.upgraded ? 3 : 2; break;
     case 'C05': battle.capacity++; break;
     case 'C06': battle.shield += card.upgraded ? 6 : 4; draw(run, 1); break;
-    case 'C07': for (let i = 0; i < 3 && battle.enemy.hp > 0; i++) damage += dealHit(run, card.upgraded ? 4 : 3); break;
+    case 'C07': for (let i = 0; i < 3 && battle.enemy.hp > 0; i++) hit(card.upgraded ? 4 : 3); break;
     case 'C08': battle.attackBonus += card.upgraded ? 3 : 2; break;
-    case 'C09': damage += dealHit(run, card.upgraded ? 16 : 12); break;
+    case 'C09': hit(card.upgraded ? 16 : 12); break;
     case 'C10': battle.shield += card.upgraded ? 18 : 14; break;
     case 'C11': battle.shield += card.upgraded ? 8 : 5; battle.capacity = Math.min(6, battle.capacity + 1); break;
-    case 'C12': damage += dealHit(run, card.upgraded ? 34 : 26); break;
-    case 'C13': battle.shield += card.upgraded ? 18 : 14; damage += dealHit(run, card.upgraded ? 18 : 14); break;
+    case 'C12': hit(card.upgraded ? 34 : 26); break;
+    case 'C13': battle.shield += card.upgraded ? 18 : 14; hit(card.upgraded ? 18 : 14); break;
     case 'C14': if (action.retainCardId) battle.retainedOnce.push(action.retainCardId); draw(run, card.upgraded ? 2 : 1); break;
   }
   (def.exhaust ? battle.exhaustPile : battle.discardPile).push(action.cardInstanceId);
-  event(run, 'battle', 'play-card', `打出${def.name}。`, { cardId: card.cardId, cardInstanceId: card.instanceId, turn: battle.turn, damage, energy: battle.energy, capacity: battle.capacity, overloadNext: battle.overloadNext });
+  // Public post-action facts are captured before a victory clears the battle.
+  // They describe this action only; no drawn card, pile order or RNG is recorded.
+  event(run, 'battle', 'play-card', `打出${def.name}。`, {
+    cardId: card.cardId, cardInstanceId: card.instanceId, turn: battle.turn, damage,
+    energy: battle.energy, capacity: battle.capacity, overloadNext: battle.overloadNext,
+    playerShieldAfter: battle.shield, enemyHpAfter: battle.enemy.hp, enemyShieldAfter: battle.enemy.shield,
+    attackBonusAfter: battle.attackBonus, hitCount, damagePerHit,
+    maxHitCount: def.attack ? card.cardId === 'C07' ? 3 : 1 : 0,
+  });
   if (battle.enemy.hp <= 0) victory(run);
 }
 

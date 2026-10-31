@@ -6,6 +6,7 @@ import { centsForShares, requireCents, sharesForCents, sharesForPercent } from "
 
 export type Goal = "funding" | "history" | "idea";
 export type HelpPreference = "self" | "hint" | "step";
+export type ResearchTask = "D1" | "D2";
 export type Reason = "upgrade" | "not_understood" | "not_interested" | "autonomous" | "other";
 export type Knowledge = "K1" | "K2" | "K3";
 export type KnowledgeStatus = "unobserved" | "independent" | "assisted" | "needs_confirmation" | "conflicting";
@@ -57,13 +58,23 @@ export interface ProfileChange {
   explanation: string;
 }
 export interface Recommendation {
-  task_id: "D1" | "D2" | null;
+  task_id: ResearchTask | null;
   reason: string;
   reason_type: string;
   help: HelpPreference;
   help_reason: string;
+  help_explicit: boolean;
+  help_evidence_ids: string[];
   user_can_switch: true;
   available_tasks: ["D1", "D2"];
+  evidence_ids: string[];
+}
+export interface TaskGuidance {
+  task_id: ResearchTask | null;
+  help: HelpPreference;
+  reason: string;
+  /** True only when the person explicitly chose or stated the help they want. */
+  explicit: boolean;
   evidence_ids: string[];
 }
 export interface Forecast {
@@ -208,8 +219,15 @@ function recordKnowledge(profile: ResearchProfile, evidence: Omit<KnowledgeEvide
   const complete: KnowledgeEvidence = { ...evidence, source: profile.source, counted: !duplicate && !evidence.priorExposure && !evidence.answerExposed && !exclusionReason, ...(exclusionReason ? { exclusion_reason: exclusionReason } : {}) };
   const next = refresh({ ...profile, knowledge_evidence: [...profile.knowledge_evidence, complete] });
   const after = knowledgeFor(next, evidence.dimension).status;
+  const evidenceExplanation = exclusionReason ?? (duplicate ? "同题重试保留记录，但不增加独立依据。"
+    : evidence.priorExposure || evidence.answerExposed ? "已见案例或答案，本次仅作练习，不增加能力依据。"
+    : before === after ? "新依据已加入；现有观察保持不变。"
+    : after === "conflicting" ? "不同情境出现相反结果，两条依据均保留。"
+    : !evidence.correct ? "本次判断与展示数据不一致，可以再核对。"
+    : evidence.help !== "self" ? "本次借助帮助完成，实际帮助暴露已记录。"
+    : "本次在未见情境中独立完成，记录一次任务操作。");
   const change: ProfileChange = { id: `${evidence.id}:change`, dimension: evidence.dimension, before, addedEvidence: evidence.id, after,
-    explanation: exclusionReason ?? (duplicate ? "同题重试保留记录，但不增加独立依据。" : evidence.priorExposure || evidence.answerExposed ? "已见案例或答案，本次仅作练习，不增加能力依据。" : before === after ? "新依据已加入；现有观察保持不变。" : "新情境的操作改变了这一步的本局观察。") };
+    explanation: evidenceExplanation };
   return { profile: { ...next, profile_changes: [...next.profile_changes, change] }, change };
 }
 
@@ -268,7 +286,10 @@ export function declarePriorExposure(profile: ResearchProfile, input: { id: stri
   }));
   const calibrationChanges = oldCalibration.filter((c) => forecastIds.includes(c.forecastId)).map((c): CalibrationChange => ({ forecastId: c.forecastId, before: c.comparison, after: "unavailable", evidenceId: input.id, explanation: "你补充说在预期之前已见相关案例；原预期、感受和行动保留，但不能再直接比较。" }));
   next = { ...next, profile_changes: [...next.profile_changes, ...changes] };
-  return { profile: next, changes, calibrationChanges, recommendation: recommendResearch(next) };
+  const funding = explainTaskGuidance(profile, next, changes.filter((c) => c.dimension === "K3"), "D1");
+  const history = explainTaskGuidance(profile, funding.profile, changes.filter((c) => c.dimension !== "K3"), "D2");
+  const explained = new Map([...funding.changes, ...history.changes].map((change) => [change.id, change]));
+  return { profile: history.profile, changes: changes.map((change) => explained.get(change.id) ?? change), calibrationChanges, recommendation: recommendResearch(history.profile) };
 }
 
 /** Whitelisted economic actions only; combat results, card tags and timing cannot feed these rules. */
@@ -308,14 +329,53 @@ export function updateJourney(profile: ResearchProfile, run: Pick<Run, "history"
   return { ...profile, source: run.source, journey_observations: observeJourney(run) };
 }
 
+/** Suggest help for the task actually opened. This is a read-only recommendation:
+ * a preference or suggested help is not evidence that any help was displayed.
+ */
+export function guidanceForTask(profile: ResearchProfile, taskId: ResearchTask | null): TaskGuidance {
+  if (!profile.enabled) return { task_id: taskId, help: "hint", reason: "当前不生成观察，可自行选择自主、提示或分步。", explicit: false, evidence_ids: [] };
+  const chosen = profile.help_preference.at(-1);
+  if (chosen) {
+    const labels: Record<HelpPreference, string> = { self: "自主尝试", hint: "提示", step: "分步说明" };
+    return { task_id: taskId, help: chosen.help, reason: `你主动选择了${labels[chosen.help]}，随时可以更改。`, explicit: true, evidence_ids: [chosen.id] };
+  }
+  const reason = profile.user_reasons.at(-1);
+  if (reason?.reason === "autonomous") return { task_id: taskId, help: "self", reason: "你表示希望自主尝试，随时可以切换提示。", explicit: true, evidence_ids: [reason.id] };
+  if (!taskId) return { task_id: null, help: "hint", reason: "尚未选择具体任务，可自行选择自主、提示或分步。", explicit: false, evidence_ids: [] };
+  const relevant = profile.knowledge_observations.filter((o) => taskId === "D1" ? o.dimension === "K3" : o.dimension !== "K3");
+  const need = (["conflicting", "needs_confirmation", "assisted"] as const).map((status) => relevant.find((o) => o.status === status)).find((o) => o !== undefined);
+  if (need) {
+    const why = need.status === "conflicting" ? "不同情境表现不同，可以先对照依据" : need.status === "assisted" ? "已有借助提示完成的记录，可以在新情境再练习" : "已有任务的结论仍待确认，可以先核对这一步";
+    return { task_id: taskId, help: "hint", reason: `${dimensionNames[need.dimension]}：${why}；提示随时可关闭。`, explicit: false, evidence_ids: [...need.evidence_ids] };
+  }
+  const independent = relevant.find((o) => o.status === "independent");
+  if (independent) return { task_id: taskId, help: "self", reason: `${dimensionNames[independent.dimension]}已有一次未见情境的独立操作，可以先自主尝试。`, explicit: false, evidence_ids: [...independent.evidence_ids] };
+  return { task_id: taskId, help: "hint", reason: "暂无这项任务的相关观察，可自行选择自主、提示或分步。", explicit: false, evidence_ids: [] };
+}
+
+/** Attach the real before/after help decision for this task, after every
+ * dimension in a submission has been recorded (no transient recommendation).
+ */
+function explainTaskGuidance(beforeProfile: ResearchProfile, afterProfile: ResearchProfile, changes: ProfileChange[], taskId: ResearchTask): { profile: ResearchProfile; changes: ProfileChange[] } {
+  if (!changes.length) return { profile: afterProfile, changes };
+  const before = guidanceForTask(beforeProfile, taskId);
+  const after = guidanceForTask(afterProfile, taskId);
+  const labels: Record<HelpPreference, string> = { self: "自主尝试", hint: "提示", step: "分步说明" };
+  const why = after.explicit ? `帮助仍以你选择的${labels[after.help]}为准。`
+    : before.help === after.help ? `本任务的帮助建议保持为${labels[after.help]}。`
+    : `本任务的帮助建议从${labels[before.help]}调整为${labels[after.help]}：${after.reason}`;
+  const explained = changes.map((change) => ({ ...change, explanation: `${change.explanation} ${why}` }));
+  const byId = new Map(explained.map((change) => [change.id, change]));
+  return { profile: { ...afterProfile, profile_changes: afterProfile.profile_changes.map((change) => byId.get(change.id) ?? change) }, changes: explained };
+}
+
 export function recommendResearch(profile: ResearchProfile): Recommendation {
   const goal = profile.stated_interest.at(-1);
   const reason = profile.user_reasons.at(-1);
-  const chosenHelp = profile.help_preference.at(-1);
   const invalid = new Set((profile.prior_exposure_disclosures ?? []).flatMap((d) => d.evidenceIds));
   const lastEvidence = profile.knowledge_evidence.filter((e) => e.counted && !invalid.has(e.id)).at(-1);
   const unresolved = profile.knowledge_observations.find((o) => o.status === "needs_confirmation" || o.status === "conflicting" || o.status === "assisted");
-  let task: "D1" | "D2" | null = null;
+  let task: ResearchTask | null = null;
   let why = "可任选资金安排台或历史对照台作为起点。";
   let kind = "optional_exploration";
   let ids: string[] = [];
@@ -332,15 +392,12 @@ export function recommendResearch(profile: ResearchProfile): Recommendation {
     if (limited) { task = "D1"; why = "你曾遇到一次无法支付的采购，可以试算另一种安排。"; kind = "purchase_constraint"; ids = limited.evidence_ids; }
     else if (calibration) { task = "D1"; why = "这次自报感受比事前预想更强，可以比较不同参与金额。"; kind = "calibration"; ids = [calibration.forecastId]; }
     else if (unresolved) { task = unresolved.dimension === "K3" ? "D1" : "D2"; why = `${dimensionNames[unresolved.dimension]}这一步可在新情境再核查。`; kind = "task_evidence"; ids = unresolved.evidence_ids; }
-    else if (lastEvidence) { task = lastEvidence.dimension === "K3" ? "D1" : "D2"; why = "可在新的情境自主尝试，核对这次结果。"; kind = "task_evidence"; ids = [lastEvidence.id]; }
+    else if (lastEvidence) { task = lastEvidence.dimension === "K3" ? "D1" : "D2"; why = `${dimensionNames[lastEvidence.dimension]}已有一次任务记录，可以在新情境继续核对。`; kind = "task_evidence"; ids = [lastEvidence.id]; }
     else if (archive) { task = "D2"; why = "你打开过历史资料，可以继续比较同期数据。"; kind = "archive_exploration"; ids = archive.evidence_ids; }
   }
-  const relevant = profile.knowledge_observations.filter((o) => task === "D1" ? o.dimension === "K3" : task === "D2" ? o.dimension !== "K3" : true);
-  const relevantNeed = relevant.find((o) => o.status === "needs_confirmation" || o.status === "conflicting" || o.status === "assisted");
-  const relevantIndependent = relevant.find((o) => o.status === "independent");
-  const help = chosenHelp?.help ?? (reason?.reason === "autonomous" ? "self" : relevantNeed ? "hint" : relevantIndependent ? "self" : "hint");
-  const helpReason = chosenHelp ? "使用你主动选择的帮助方式，随时可更改。" : reason?.reason === "autonomous" ? "你表示希望自主尝试，随时可切换提示。" : relevantNeed ? `${dimensionNames[relevantNeed.dimension]}的已有依据提示这一步可以再核对。` : relevantIndependent ? `${dimensionNames[relevantIndependent.dimension]}已有一次未见情境的独立操作，可尝试较少帮助。` : "尚无相关观察，提供可切换的中性提示。";
-  return { task_id: task, reason: why, reason_type: kind, help, help_reason: helpReason, user_can_switch: true, available_tasks: ["D1", "D2"], evidence_ids: ids };
+  const guidance = guidanceForTask(profile, task);
+  return { task_id: task, reason: why, reason_type: kind, help: guidance.help, help_reason: guidance.reason,
+    help_explicit: guidance.explicit, help_evidence_ids: guidance.evidence_ids, user_can_switch: true, available_tasks: ["D1", "D2"], evidence_ids: ids };
 }
 
 export type FundingEvent =
@@ -521,7 +578,8 @@ export function submitFunding(profile: ResearchProfile, scenario: FundingScenari
   // This function returns the correct answer, so any later attempt at this
   // question must remember that exposure. Artificial practice needs no ledger.
   const saved = manual ? updated.profile : markFundingAnswerExposed(updated.profile, questionKey);
-  return { profile: saved, change: updated.change, recommendation: recommendResearch(saved), timeline, revisedTimeline };
+  const explained = explainTaskGuidance(profile, saved, [updated.change], "D1");
+  return { profile: explained.profile, change: explained.changes[0]!, recommendation: recommendResearch(explained.profile), timeline, revisedTimeline };
 }
 
 /** An expressly artificial fallback when the journey has no executed entry quote. */
@@ -766,7 +824,8 @@ export function submitHistory(profile: ResearchProfile, id: string, answers: His
     const result = recordKnowledge(next, { ...shared, priorExposure: k2PriorExposure, independent: !overlap && attempt.helpUsed === "self" && !attempt.answerExposed && !k2PriorExposure, id: `${id}:K2`, questionKey: `D2:${pair}:boundary:${attempt.questionVersion}`, dimension: "K2", correct: answers.boundary === "only_samples" && answers.historyDifference === expected, detail: `固定日程下新片段相对原片段为 ${expected}；这只描述样本，不预测未来。` }, overlap ? "这两段历史互相重叠，只作相关情境练习，不增加独立依据。" : undefined);
     next = result.profile; changes.push(result.change);
   }
-  return { profile: next, changes, recommendation: recommendResearch(next) };
+  const explained = explainTaskGuidance(profile, next, changes, "D2");
+  return { profile: explained.profile, changes: explained.changes, recommendation: recommendResearch(explained.profile) };
 }
 
 /** Compute immediate feedback for users who disabled observation; never stores an answer. */

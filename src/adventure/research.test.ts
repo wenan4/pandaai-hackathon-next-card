@@ -7,8 +7,8 @@ import { resetMarketCacheForTest } from "./market";
 import type { ResearchMarketCase } from "./market";
 import {
   addUserReason, attachFundingFinalQuote, calibrationForDisplay, compareSchedule, compareSelfForecast, declarePriorExposure, emptyResearchProfile, evaluateFundingPractice,
-  evaluateHistoryPractice, fundingQuestionKey, fundingScenarioFromRun, markFundingAnswerExposed, markFundingHelp, markHistoryAnswerExposed, markHistoryHelp,
-  mechanicalFundingExample, observeJourney, recommendResearch, recordCalibrationAction, recordCalibrationFeeling, revokeResearch, saveForecast, setResearchGoal,
+  evaluateHistoryPractice, fundingQuestionKey, fundingScenarioFromRun, guidanceForTask, markFundingAnswerExposed, markFundingHelp, markHistoryAnswerExposed, markHistoryHelp,
+  mechanicalFundingExample, observeJourney, recommendResearch, recordCalibrationAction, recordCalibrationFeeling, revokeResearch, saveForecast, setHelpPreference, setResearchGoal,
   showHistoryEvidence, simulateFundingPlan, startHistory, submitFunding, submitHistory, updateJourney,
 } from "./research";
 import type { CalibrationContext, FixedSchedule, Forecast, ResearchProfile } from "./research";
@@ -42,6 +42,93 @@ describe("data-driven research observations", () => {
     expect(recommendResearch(p).task_id).toBeNull();
     expect(recommendResearch(p).available_tasks).toEqual(["D1", "D2"]);
     expect(p.real_world_financial_capacity).toBe("not_assessed");
+  });
+
+  it("task-specific guidance is neutral for unobserved and never creates help exposure", () => {
+    const p = emptyResearchProfile();
+    const before = JSON.stringify(p);
+    for (const task of ["D1", "D2"] as const) {
+      const guidance = guidanceForTask(p, task);
+      expect(guidance).toMatchObject({ task_id: task, help: "hint", explicit: false, evidence_ids: [] });
+      expect(guidance.reason).toContain("暂无");
+    }
+    expect(guidanceForTask(p, null).reason).toContain("尚未选择");
+    expect(JSON.stringify(p)).toBe(before);
+    const off = emptyResearchProfile(false);
+    expect(guidanceForTask(off, "D1")).toMatchObject({ help: "hint", explicit: false, evidence_ids: [] });
+    expect(off.funding_exposure).toEqual([]);
+  });
+
+  it("guidance follows the task actually opened rather than the default topic", () => {
+    let p = showHistoryEvidence(initial(emptyResearchProfile(), "independent-a", a), "independent-a", a);
+    p = submitHistory(p, "independent-a", { comparison: "underperform", reason: "核对同期数字" }).profile;
+    expect(guidanceForTask(p, "D2")).toMatchObject({ help: "self", explicit: false, evidence_ids: ["independent-a:K1"] });
+    expect(guidanceForTask(p, "D1")).toMatchObject({ help: "hint", explicit: false, evidence_ids: [] });
+    const chosen = setResearchGoal(p, "goal-funding", "funding");
+    const recommendation = recommendResearch(chosen);
+    expect(recommendation).toMatchObject({ task_id: "D1", help: guidanceForTask(chosen, "D1").help, help_reason: guidanceForTask(chosen, "D1").reason });
+    expect(guidanceForTask(chosen, "D2").help).toBe("self");
+  });
+
+  it("explicit help preference wins but is not itself recorded as actual help exposure", () => {
+    const p = setHelpPreference(emptyResearchProfile(), "prefer-steps", "step");
+    expect(guidanceForTask(p, "D2")).toMatchObject({ help: "step", explicit: true, evidence_ids: ["prefer-steps"] });
+    expect(p.funding_exposure).toEqual([]);
+    let unexposed = showHistoryEvidence(initial(p, "not-shown", a), "not-shown", a);
+    const result = submitHistory(unexposed, "not-shown", { comparison: "underperform", reason: "独立核对" });
+    expect(result.profile.knowledge_evidence.at(-1)).toMatchObject({ help: "self", independent: true, counted: true });
+    expect(result.recommendation).toMatchObject({ task_id: "D2", help: "step", help_explicit: true, help_evidence_ids: ["prefer-steps"] });
+    expect(result.recommendation.reason).not.toContain("自主");
+    expect(result.changes[0]!.explanation).toContain("帮助仍以你选择的分步说明为准");
+    unexposed = showHistoryEvidence(initial(p, "actually-shown", a), "actually-shown", a);
+    unexposed = markHistoryHelp(unexposed, "actually-shown", "hint");
+    const aided = submitHistory(unexposed, "actually-shown", { comparison: "underperform", reason: "查看后核对" });
+    expect(aided.profile.knowledge_evidence.at(-1)).toMatchObject({ help: "hint", independent: false, counted: true });
+    expect(aided.recommendation.help).toBe("step");
+  });
+
+  it("a self-reported desire to try independently is explicit, but a later help choice takes precedence", () => {
+    const autonomous = addUserReason(emptyResearchProfile(), "reason-self", "decision-1", "autonomous");
+    expect(guidanceForTask(autonomous, "D1")).toMatchObject({ help: "self", explicit: true, evidence_ids: ["reason-self"] });
+    const changed = setHelpPreference(autonomous, "later-help", "hint");
+    expect(guidanceForTask(changed, "D1")).toMatchObject({ help: "hint", explicit: true, evidence_ids: ["later-help"] });
+    expect(changed.funding_exposure).toEqual([]);
+  });
+
+  it("D1 preference is separate from actual help and a different task's result", () => {
+    const example = mechanicalFundingExample();
+    const scenario = { ...example.scenario, caseId: "test-historical" };
+    const p = setHelpPreference(emptyResearchProfile(), "prefer-hint", "hint");
+    const submission = { id: "independent-funding", questionVersion: "v1", plan: example.plan, purchaseId: "buy-upgrade", canPay: true, revisedPlan: example.plan, help: "self" as const, answerExposed: false, priorExposure: false };
+    const result = submitFunding(p, scenario, submission);
+    expect(result.profile.knowledge_evidence.at(-1)).toMatchObject({ help: "self", independent: true, counted: true });
+    expect(result.recommendation).toMatchObject({ task_id: "D1", help: "hint", help_explicit: true });
+    expect(result.change.explanation).toContain("帮助仍以你选择的提示为准");
+    const key = fundingQuestionKey(scenario, submission.purchaseId, submission.questionVersion, submission.plan);
+    const shown = markFundingHelp(p, key, "step");
+    const aided = submitFunding(shown, scenario, { ...submission, id: "funding-help-shown" });
+    expect(aided.profile.knowledge_evidence.at(-1)).toMatchObject({ help: "step", independent: false });
+  });
+
+  it("change explanations use the final whole-task guidance, not an intermediate K1 result", () => {
+    let p = showHistoryEvidence(initial(emptyResearchProfile(), "mixed", a), "mixed", a, c);
+    const result = submitHistory(p, "mixed", { comparison: "underperform", historyDifference: "outperform", boundary: "predicts_future", reason: "核查描述" });
+    expect([status(result.profile, "K1"), status(result.profile, "K2")]).toEqual(["independent", "needs_confirmation"]);
+    expect(result.recommendation).toMatchObject({ task_id: "D2", help: "hint" });
+    expect(result.recommendation.help_reason).toContain("样本边界");
+    for (const change of result.changes) {
+      expect(change.explanation).toContain("本任务的帮助建议保持为提示");
+      expect(change.explanation).not.toContain("调整为自主尝试");
+      expect(result.profile.profile_changes.find((record) => record.id === change.id)).toEqual(change);
+    }
+    p = showHistoryEvidence(initial(emptyResearchProfile(), "correct-first", a), "correct-first", a);
+    const first = submitHistory(p, "correct-first", { comparison: "underperform", reason: "独立核对" });
+    expect(first.changes[0]!.explanation).toContain("帮助建议从提示调整为自主尝试");
+    p = showHistoryEvidence(initial(first.profile, "conflict-next", c), "conflict-next", c);
+    const conflicting = submitHistory(p, "conflict-next", { comparison: "underperform", reason: "不同情境" });
+    expect(status(conflicting.profile, "K1")).toBe("conflicting");
+    expect(conflicting.changes[0]!.explanation).toContain("相反结果");
+    expect(conflicting.changes[0]!.explanation).toContain("帮助建议从自主尝试调整为提示");
   });
 
   it("actual fixed schedule uses same dates and next openings for benchmark and asset", () => {
@@ -308,7 +395,8 @@ describe("data-driven research observations", () => {
     const { scenario, plan } = mechanicalFundingExample();
     const result = submitFunding(emptyResearchProfile(), scenario, { id: "manual", questionVersion: "v1", plan, purchaseId: "buy-upgrade", canPay: true, revisedPlan: plan, help: "self", answerExposed: false, priorExposure: false });
     expect(result.profile.knowledge_evidence.at(-1)).toMatchObject({ correct: true, independent: false, counted: false, priorExposure: false, exclusion_reason: "人工示例仅用于练习，不增加能力依据。" });
-    expect(result.change).toMatchObject({ before: "unobserved", after: "unobserved", explanation: "人工示例仅用于练习，不增加能力依据。" });
+    expect(result.change).toMatchObject({ before: "unobserved", after: "unobserved" });
+    expect(result.change.explanation).toContain("人工示例仅用于练习，不增加能力依据。");
     expect(result.profile.funding_exposure).toEqual([]);
   });
 
