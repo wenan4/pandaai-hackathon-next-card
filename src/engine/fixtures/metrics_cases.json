@@ -1,0 +1,25 @@
+{
+  "_comment": "TS（src/engine/metrics.test.ts）与 Python（scripts/tests/test_metrics.py）共用的口径用例。两边对同一输入必须给出同一结果，容差 1e-9。",
+  "cases": [
+    { "name": "区间收益：上涨 10%", "fn": "periodReturn", "series": [100, 105, 110], "expected": 0.1 },
+    { "name": "区间收益：下跌", "fn": "periodReturn", "series": [20, 18, 15], "expected": -0.25 },
+    { "name": "区间收益：只有一个点", "fn": "periodReturn", "series": [100], "expected": null },
+    { "name": "区间收益：首值为 0", "fn": "periodReturn", "series": [0, 1], "expected": null },
+    { "name": "区间收益：真实价位", "fn": "periodReturn", "series": [1772.94, 1650.2, 1801.33, 1392.05], "expected": -0.21483524541157629 },
+
+    { "name": "最大回撤：取历史高点后的最大跌幅", "fn": "maxDrawdown", "series": [100, 120, 90, 130, 117], "expected": 0.25 },
+    { "name": "最大回撤：单调上涨", "fn": "maxDrawdown", "series": [1, 2, 3], "expected": 0 },
+    { "name": "最大回撤：先跌后涨", "fn": "maxDrawdown", "series": [100, 80, 60, 150], "expected": 0.4 },
+    { "name": "最大回撤：含非正值", "fn": "maxDrawdown", "series": [100, 0, 50], "expected": null },
+    { "name": "最大回撤：只有一个点", "fn": "maxDrawdown", "series": [100], "expected": null },
+
+    { "name": "跑赢：标的涨 12%，基准涨 16%", "fn": "compareToBenchmark", "asset": [100, 112], "benchmark": [50, 58], "expected": "underperform" },
+    { "name": "跑赢：标的涨 20%，基准涨 16%", "fn": "compareToBenchmark", "asset": [100, 120], "benchmark": [50, 58], "expected": "outperform" },
+    { "name": "跑赢：收益相同不算跑赢", "fn": "compareToBenchmark", "asset": [100, 110], "benchmark": [10, 11], "expected": "underperform" },
+    { "name": "跑赢：长度不一致", "fn": "compareToBenchmark", "asset": [1, 2, 3], "benchmark": [1, 2], "expected": "insufficient" },
+    { "name": "跑赢：数据缺失", "fn": "compareToBenchmark", "asset": [100], "benchmark": [100], "expected": "insufficient" },
+
+    { "name": "归一化：起点 100", "fn": "normalize", "series": [50, 55, 45], "expected": [100, 110, 90] },
+    { "name": "归一化：空序列", "fn": "normalize", "series": [], "expected": [] }
+  ]
+}
