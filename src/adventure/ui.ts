@@ -9,7 +9,9 @@ import { button, coins, dateText, pill } from "./ui-components";
 import { gameView, nodeNames } from "./ui-game";
 import { ResearchUI } from "./ui-research";
 import { makeDemoPath } from "./ui-demo";
-import { mergeFundingExposures, parseFundingExposureArchive, type FundingExposureArchive } from "./ui-exposure";
+import { mergeFundingExposures, type FundingExposureArchive } from "./ui-exposure";
+import { adventureBackup, clearAdventureStorage, expireAdventureStorage, FUNDING_EXPOSURE_KEY, inspectAdventureStorage, replaceAdventureStorage, RETENTION_MS, SAVE_KEY, SEEN_KEY, type RecoveryIssue, type StorageRead, type StorageSnapshot } from "./ui-storage";
+import type { AdventureSave } from "./save-state";
 import { reportView } from "./ui-report";
 import { casesAreRelated, chooseAdventureCase, hasSeenRelatedCase, independentBattleSeed } from "./ui-case";
 import { CalibrationDemoUI } from "./ui-calibration-demo";
@@ -18,20 +20,17 @@ import { pileView, type PileKind } from "./ui-piles";
 import { enemyPlanView } from "./ui-enemy";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
-const SAVE_KEY = "nextcard:adventure:v0.4";
-const SEEN_KEY = `${SAVE_KEY}:seen-cases`;
-const FUNDING_EXPOSURE_KEY = `${SAVE_KEY}:funding-exposure`;
-const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 type Screen = "intro" | "game" | "report" | "d1" | "d2" | "judge";
-interface Save { schema: "nextcard-adventure-save-v1"; savedAt: number; observationStartedAt: number; priorExposure?: boolean; tutorialStep?: number; run: Run; profile: ResearchProfile }
+type Save = AdventureSave;
+interface RecoveryState { current: StorageSnapshot | null; backup: StorageSnapshot | null; issues: RecoveryIssue[]; summary: Save | null; unavailable: boolean; uncertain: boolean; message: string | null }
 let run: Run | null = null;
 let profile: ResearchProfile = emptyResearchProfile();
 let realSave: Save | null = null;
+let recovery: RecoveryState | null = null;
 let observationStartedAt = Date.now();
 let priorExposure = false;
 let seenCases = new Set<string>();
 let fundingExposureArchive: FundingExposureArchive = { version: 1, createdAt: Date.now(), entries: [] };
-let fundingArchiveExpired = false;
 let screen: Screen = "intro";
 let manifest: MarketManifest | null = null;
 let initialCase: MarketInitialCase | null = null;
@@ -64,42 +63,31 @@ let idCounter = 0;
 const uid = (prefix: string): string => `${prefix}-${Date.now().toString(36)}-${++idCounter}`;
 const errorMessage = (error: unknown): string => error instanceof TypeError && /fetch|network/i.test(error.message) ? "网络连接暂时不可用，请重试。" : error instanceof Error ? error.message : "加载未完成，请重试。";
 
-function readSave(): Save | null {
-  try {
-    const raw = localStorage.getItem(SAVE_KEY); if (!raw) return null;
-    const data: unknown = JSON.parse(raw);
-    if (!data || typeof data !== "object") return null;
-    const saved = data as Partial<Save>;
-    if (saved.schema !== "nextcard-adventure-save-v1" || saved.run?.version !== "0.4.1" || saved.profile?.version !== "research-v1" || typeof saved.observationStartedAt !== "number" || typeof saved.savedAt !== "number") return null;
-    if (!Array.isArray(saved.profile.funding_exposure)) saved.profile.funding_exposure = [];
-    if (!saved.profile.source) saved.profile.source = saved.run.source;
-    if (Date.now() - saved.observationStartedAt > RETENTION_MS && saved.profile.enabled) {
-      saved.profile = revokeResearch(saved.profile);
-      saved.run.observationEnabled = false;
-      clearFundingExposures();
-    }
-    return saved as Save;
-  } catch { storageError = true; return null; }
+function writeLocal(key: string, value: string): boolean {
+  if (recovery) return false;
+  try { localStorage.setItem(key, value); return true; } catch { storageError = true; return false; }
 }
 function save(): boolean {
   if (!run || run.source !== "real") return true;
   const data: Save = { schema: "nextcard-adventure-save-v1", savedAt: Date.now(), observationStartedAt, priorExposure, tutorialStep, run, profile };
+  if (!writeLocal(SAVE_KEY, JSON.stringify(data))) return false;
   realSave = data;
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify(data)); return true; } catch { storageError = true; return false; }
+  return true;
 }
 function rememberFundingExposures(next: ResearchProfile): void {
-  if (run?.source !== "real" || !next.enabled || !next.funding_exposure.length) return;
+  if (recovery || run?.source !== "real" || !next.enabled || !next.funding_exposure.length) return;
   if (Date.now() - fundingExposureArchive.createdAt >= RETENTION_MS) fundingExposureArchive = { version: 1, createdAt: Date.now(), entries: [] };
   if (!fundingExposureArchive.entries.length) fundingExposureArchive.createdAt = Date.now();
   fundingExposureArchive.entries = mergeFundingExposures(fundingExposureArchive.entries, next.funding_exposure);
-  try { localStorage.setItem(FUNDING_EXPOSURE_KEY, JSON.stringify(fundingExposureArchive)); } catch { storageError = true; }
+  writeLocal(FUNDING_EXPOSURE_KEY, JSON.stringify(fundingExposureArchive));
 }
 function clearFundingExposures(): boolean {
+  if (recovery) return false;
   try { localStorage.removeItem(FUNDING_EXPOSURE_KEY); } catch { storageError = true; return false; }
   fundingExposureArchive = { version: 1, createdAt: Date.now(), entries: [] };
   return true;
 }
-function setProfile(next: ResearchProfile): void { profile = next; rememberFundingExposures(profile); save(); render(); }
+function setProfile(next: ResearchProfile): void { if (recovery) return; profile = next; rememberFundingExposures(profile); save(); render(); }
 function flash(message: string): void {
   toastMessage = message; window.clearTimeout(toastTimer); render();
   toastTimer = window.setTimeout(() => { toastMessage = ""; render(); }, 4500);
@@ -143,6 +131,7 @@ function restoredTutorial(current: Run, saved?: number): number {
 }
 function setTutorialStep(step: number): void { tutorialStep = Math.max(0, Math.min(4, step)); save(); render(); }
 function askNewRun(enabled: boolean): void {
+  if (recovery) return;
   if (realSave) {
     showDialog("开启新的旅程？", h("p", { class: "hint" }, "已保存的真实冒险进度会被新旅程替换。"), [button("开始新旅程", () => { modal = null; startRun(enabled); }, "gold"), button("保留已有旅程", closeDialog, "secondary")]);
   } else startRun(enabled);
@@ -151,10 +140,10 @@ function cancelMarketRequest(): void { requestVersion++; marketLoading = false; 
 function resetInitialCase(): void { initialCaseVersion++; initialCase = null; initialCaseLoading = false; initialCaseError = null; }
 /** Called only after a run has fixed its case; it never fetches other cases' histories. */
 function ensureInitialCase(): void {
-  if (!run || initialCaseLoading || initialCaseError || initialCase?.caseId === run.caseId) return;
+  if (recovery || !run || initialCaseLoading || initialCaseError || initialCase?.caseId === run.caseId) return;
   const caseId = run.caseId; const runId = run.id; const version = ++initialCaseVersion;
   initialCaseLoading = true; render();
-  void loadMarketInitialCase(caseId, true).then((data) => {
+  void Promise.resolve().then(() => loadMarketInitialCase(caseId, true)).then((data) => {
     if (version !== initialCaseVersion || !run || run.id !== runId || run.caseId !== caseId) return;
     initialCase = data; initialCaseLoading = false; render();
   }).catch((error: unknown) => {
@@ -174,32 +163,38 @@ function invalidatePendingComparison(existing: ResearchProfile, exposedCase: str
 }
 /** External displays reveal a case independently of this real run's natural timeline. */
 function markExternalExposure(caseId: string, invalidatePending = true): void {
+  if (recovery) return;
   seenCases.add(caseId);
   if (realSave && casesAreRelated(realSave.run.caseId, caseId)) {
     realSave = { ...realSave, priorExposure: true, profile: invalidatePending ? invalidatePendingComparison(realSave.profile, caseId) : realSave.profile };
     if (run?.source === "real" && run.id === realSave.run.id) { priorExposure = true; profile = realSave.profile; }
-    try { localStorage.setItem(SAVE_KEY, JSON.stringify(realSave)); } catch { storageError = true; }
+    writeLocal(SAVE_KEY, JSON.stringify(realSave));
   }
-  try { localStorage.setItem(SEEN_KEY, JSON.stringify([...seenCases])); } catch { storageError = true; }
+  writeLocal(SEEN_KEY, JSON.stringify([...seenCases]));
 }
 /** Showing this run's own T0 history affects later replays, not its current forecast. */
 function markNaturalArchiveSeen(caseId: string): void {
+  if (recovery) return;
   if (seenCases.has(caseId)) return;
   seenCases.add(caseId);
-  try { localStorage.setItem(SEEN_KEY, JSON.stringify([...seenCases])); } catch { storageError = true; }
+  writeLocal(SEEN_KEY, JSON.stringify([...seenCases]));
 }
 function startRun(enabled: boolean): void {
+  if (recovery) return;
   if (!manifest?.cases.length) { flash("案例目录尚未准备好，请重试加载。"); if (!initialLoading) loadInitial(); return; }
-  cancelMarketRequest(); resetInitialCase();
   const chosen = chooseAdventureCase(manifest.cases.map((item) => item.caseId), seenCases);
-  priorExposure = chosen.priorExposure;
-  run = createRun({ caseId: chosen.caseId, observationEnabled: enabled, source: "real", seed: independentBattleSeed() });
-  if (Date.now() - fundingExposureArchive.createdAt >= RETENTION_MS && !clearFundingExposures()) fundingExposureArchive = { version: 1, createdAt: Date.now(), entries: [] };
-  profile = { ...emptyResearchProfile(enabled), funding_exposure: enabled ? structuredClone(fundingExposureArchive.entries) : [] }; observationStartedAt = Date.now(); selectedCard = null; selectedUpgrade = null; battleFeedback = ""; tutorialStep = 0; entryCents = 0; reserveCents = 0;
-  save(); changeScreen("game"); ensureInitialCase();
+  const now = Date.now(); const expiredArchive = now - fundingExposureArchive.createdAt >= RETENTION_MS;
+  const nextRun = createRun({ caseId: chosen.caseId, observationEnabled: enabled, source: "real", seed: independentBattleSeed() });
+  const nextProfile = { ...emptyResearchProfile(enabled), funding_exposure: enabled && !expiredArchive ? structuredClone(fundingExposureArchive.entries) : [] };
+  const nextSave: Save = { schema: "nextcard-adventure-save-v1", savedAt: now, observationStartedAt: now, priorExposure: chosen.priorExposure, tutorialStep: 0, run: nextRun, profile: nextProfile };
+  if (!writeLocal(SAVE_KEY, JSON.stringify(nextSave))) { flash("未能保存新旅程；原来的本地记录未替换，请检查存储设置后重试。"); return; }
+  cancelMarketRequest(); resetInitialCase();
+  if (expiredArchive && !clearFundingExposures()) fundingExposureArchive = { version: 1, createdAt: now, entries: [] };
+  run = nextRun; profile = nextProfile; realSave = nextSave; priorExposure = chosen.priorExposure; observationStartedAt = now; selectedCard = null; selectedUpgrade = null; battleFeedback = ""; tutorialStep = 0; entryCents = 0; reserveCents = 0;
+  changeScreen("game"); ensureInitialCase();
 }
 function action(next: RunAction): void {
-  if (!run) return;
+  if (recovery || !run) return;
   const previousPhase = run.phase; const previousNode = run.node;
   const before = run;
   try {
@@ -226,7 +221,7 @@ function action(next: RunAction): void {
     } else if (run.phase === "battle" && previousPhase !== "battle") battleFeedback = "";
     researchUI.afterAction(next);
     if (run.source === "real" && next.type === "apply-quote" && ["t1", "t2", "t3"].includes(next.quote.step)) {
-      seenCases.add(run.caseId); try { localStorage.setItem(SEEN_KEY, JSON.stringify([...seenCases])); } catch { storageError = true; }
+      seenCases.add(run.caseId); writeLocal(SEEN_KEY, JSON.stringify([...seenCases]));
     }
     if (profile.enabled) profile = updateJourney(profile, run);
     if (next.type === "play-card" || next.type === "end-turn") { selectedCard = null; selectedRetain = null; }
@@ -244,11 +239,11 @@ function action(next: RunAction): void {
   } catch (error) { flash(errorMessage(error)); }
 }
 function queueMarket(): void {
-  if (!run || run.phase !== "market" || marketLoading || marketError) return;
+  if (recovery || !run || run.phase !== "market" || marketLoading || marketError) return;
   const pending = pendingMarketStep(run); if (!pending) return;
   const capturedRun = run; const version = ++requestVersion; marketLoading = true; render();
-  void loadMarketStage(pending.caseId, pending.stage, pending.unlocked).then((quote) => {
-    if (version !== requestVersion || run !== capturedRun) return;
+  void Promise.resolve().then(() => version === requestVersion && run === capturedRun ? loadMarketStage(pending.caseId, pending.stage, pending.unlocked) : null).then((quote) => {
+    if (!quote || version !== requestVersion || run !== capturedRun) return;
     marketLoading = false; action({ type: "apply-quote", quote });
   }).catch((error: unknown) => {
     if (version !== requestVersion || run !== capturedRun) return;
@@ -267,8 +262,20 @@ function restoreReal(): void {
   run = structuredClone(realSave.run); profile = structuredClone(realSave.profile); if (profile.enabled) profile.funding_exposure = mergeFundingExposures(profile.funding_exposure, fundingExposureArchive.entries); observationStartedAt = realSave.observationStartedAt; priorExposure = realSave.priorExposure ?? false; tutorialStep = restoredTutorial(run, realSave.tutorialStep);
   changeScreen(run.phase === "ended" ? "report" : "game"); ensureInitialCase(); queueMarket();
 }
+function clearAllLocalRecords(): void {
+  const before = inspectLocalStorage(); const backup = recovery?.backup ?? (before.kind === "unavailable" ? null : before.snapshot);
+  const wasUncertain = !!recovery?.uncertain;
+  if (before.kind === "unavailable") { enterRecovery(before, backup, "无法读取本地记录，未开始清除；请检查存储设置后重试。", wasUncertain); render(); return; }
+  let outcome: ReturnType<typeof clearAdventureStorage>;
+  try { outcome = clearAdventureStorage(window.localStorage, before.snapshot); } catch { outcome = "failed-restored"; }
+  if (outcome !== "saved") {
+    const message = outcome === "changed" ? "本机记录已变化，未开始清除；请重新读取后再确认。" : outcome === "failed-uncertain" ? "清除未完成，原记录也未能完全恢复；部分本机内容可能已变化。请先下载此前读取的备份。" : "未能完成清除，原记录已保留；请检查存储设置后重试。";
+    enterRecovery(inspectLocalStorage(), backup, message, wasUncertain || outcome === "failed-uncertain"); render(); return;
+  }
+  recovery = null; storageError = false; fundingExposureArchive = { version: 1, createdAt: Date.now(), entries: [] }; seenCases.clear(); cancelMarketRequest(); resetInitialCase(); resetJudgeDemos(); run = null; realSave = null; profile = emptyResearchProfile(); modal = null; changeScreen("intro"); flash("本地冒险记录已清除。");
+}
 function settings(): void {
-  const state = run?.observationEnabled && profile.enabled;
+  const state = !recovery && run?.observationEnabled && profile.enabled;
   const touchedCases = new Set<string>();
   if (run) touchedCases.add(run.caseId);
   for (const attempt of profile.research_process) { if (attempt.shown) { touchedCases.add(attempt.caseId); if (attempt.shown.other) touchedCases.add(attempt.shown.other.caseId); } }
@@ -276,7 +283,7 @@ function settings(): void {
   const caseLabel = (caseId: string): string => { const item = manifest?.cases.find((entry) => entry.caseId === caseId); return `${caseId === run?.caseId ? "本局" : "历史片段"} · ${item ? `${item.name} · ${dateText(item.decisionDate)}` : caseId}`; };
   const selectedCase = h("select", { "aria-label": "选择要补充的案例" }, [...touchedCases].map((caseId) => h("option", { value: caseId, selected: caseId === run?.caseId }, caseLabel(caseId))));
   const body = h("div", { class: "stack" }, h("p", { class: "hint" }, "进度保存在这台设备的浏览器中，不会默认上传。观察从开启起最多保存 30 天，过期后移除观察并保留游戏进度。"),
-    h("p", { class: "hint" }, state ? "当前：生成本局观察。" : "当前：只玩游戏，不保存观察。"),
+    h("p", { class: "hint" }, recovery ? "本地记录尚未恢复，当前不生成观察。" : !run ? "尚未开始旅程，不生成观察。" : state ? "当前：生成本局观察。" : "当前：只玩游戏，不保存观察。"),
     run?.source === "real" ? h("div", { class: "stack" }, h("p", { class: "hint" }, "如果在相关任务和预期之前已看过某个案例，可主动说明。相关观察会按已见处理；玩法和奖励不变。"), h("label", { class: "field" }, "选择要补充的案例", selectedCase), button("我之前看过这个案例", () => {
       const chosenCaseId = selectedCase.value;
       if (!touchedCases.has(chosenCaseId)) { flash("请选择已经接触过的案例。"); return; }
@@ -293,7 +300,7 @@ function settings(): void {
       }, "secondary"), button("取消", closeDialog, "ghost")]);
     }, "secondary"), priorExposure ? pill("此案例按已见处理", "blue") : null) : null,
     state ? button("撤销观察并删除观察记录", () => showDialog("撤销本局观察？", h("p", { class: "hint" }, run?.source === "real" ? "目标、预期、感受、原因、研究观察与跨局提示暴露记录将删除；冒险进度会保留。" : "当前模拟的观察会删除；真实旅程与其观察保留。"), [button("确认撤销", () => { if (run?.source === "real" && !clearFundingExposures()) { flash("未能删除本地观察记录，请检查存储设置后重试。"); return; } profile = revokeResearch(profile); if (run) run.observationEnabled = false; modal = null; const saved = save(); flash(saved ? "观察已撤销，游戏进度保留。" : "已停止观察，但未能更新本地存档，请检查存储设置。"); }, "danger"), button("返回", closeDialog, "secondary")]), "secondary") : null,
-    button("清除全部本地记录", () => showDialog("清除这台设备的冒险记录？", h("p", { class: "hint" }, "当前冒险与本局观察会删除，此操作无法撤销。旧版 v0.3 存档不受影响。"), [button("确认清除", () => { try { localStorage.removeItem(SAVE_KEY); localStorage.removeItem(SEEN_KEY); localStorage.removeItem(FUNDING_EXPOSURE_KEY); } catch { storageError = true; flash("未能清除浏览器本地记录，请检查存储设置后重试。"); return; } fundingExposureArchive = { version: 1, createdAt: Date.now(), entries: [] }; seenCases.clear(); cancelMarketRequest(); resetInitialCase(); resetJudgeDemos(); run = null; realSave = null; profile = emptyResearchProfile(); modal = null; changeScreen("intro"); flash("本地冒险记录已清除。"); }, "danger"), button("返回", closeDialog, "secondary")]), "danger"));
+    button("清除全部本地记录", () => showDialog("清除这台设备的冒险记录？", h("p", { class: "hint" }, "当前冒险与本局观察会删除，此操作无法撤销。旧版 v0.3 存档不受影响。"), [button("确认清除", clearAllLocalRecords, "danger"), button("返回", closeDialog, "secondary")]), "danger"));
   showDialog("旅程与隐私设置", body, [button("完成", closeDialog, "secondary")]);
 }
 function dataInfo(): void {
@@ -407,6 +414,121 @@ function revealResearchResult(task: "D1" | "D2"): void {
   result.focus({ preventScroll: true });
   result.scrollIntoView({ behavior: "auto", block: "start" });
 }
+function inspectLocalStorage(): StorageRead {
+  try { return inspectAdventureStorage(window.localStorage); } catch { return { kind: "unavailable" }; }
+}
+function snapshotsEqual(first: StorageSnapshot, second: StorageSnapshot): boolean {
+  return first.save === second.save && first.seen === second.seen && first.exposure === second.exposure;
+}
+function enterRecovery(read: StorageRead, backup?: StorageSnapshot | null, message: string | null = null, uncertain = false): void {
+  cancelMarketRequest(); resetInitialCase();
+  const current = read.kind === "unavailable" ? null : read.snapshot;
+  recovery = { current, backup: backup ?? current, issues: read.kind === "recovery" ? read.issues : [], summary: uncertain ? null : read.kind === "ready" ? read.save : read.kind === "recovery" ? read.summary : null, unavailable: read.kind === "unavailable", uncertain, message };
+  run = null; realSave = null; profile = emptyResearchProfile(false); screen = "intro"; modal = null;
+}
+/** Validate all three records before any migration, expiration or save. */
+function restoreStoredState(read: StorageRead): void {
+  if (read.kind === "unavailable") { enterRecovery(read); return; }
+  if (read.kind === "recovery") {
+    const saved = read.summary;
+    const expiredObservation = !!saved?.profile.enabled && !read.issues.includes("save-time") && Date.now() - saved.observationStartedAt > RETENTION_MS;
+    const clearExposure = read.archiveExpired || (expiredObservation && !!read.archive);
+    if (!expiredObservation && !clearExposure) { enterRecovery(read); return; }
+    const cleaned = expiredObservation && saved ? { ...saved, run: { ...saved.run, observationEnabled: false }, profile: revokeResearch(saved.profile) } : null;
+    let outcome: ReturnType<typeof expireAdventureStorage>;
+    try { outcome = expireAdventureStorage(window.localStorage, read.snapshot, cleaned ? JSON.stringify(cleaned) : null, clearExposure); } catch { outcome = { status: "failed-restored", snapshot: read.snapshot }; }
+    if (outcome.status === "saved") {
+      const updated = inspectLocalStorage();
+      if (updated.kind === "unavailable") enterRecovery(updated, null, "已处理可确认过期的观察，但暂时无法读取剩余记录，请重试。");
+      else restoreStoredState(updated);
+    } else {
+      const message = outcome.status === "changed" ? "本机记录已变化，请重新读取后再继续。" : outcome.status === "failed-uncertain" ? "过期记录清理未完成，部分本机内容可能已变化；请下载当前可用的备份。" : "部分过期观察仍未清理；请检查存储设置后重试。";
+      enterRecovery(inspectLocalStorage(), outcome.status === "changed" ? null : outcome.snapshot, message, outcome.status === "failed-uncertain");
+    }
+    return;
+  }
+  const now = Date.now(); const saved = read.save;
+  const expiredObservation = !!saved?.profile.enabled && now - saved.observationStartedAt > RETENTION_MS;
+  const expiredArchive = read.archiveExpired;
+  let restored = saved ? { ...saved, run: structuredClone(saved.run), profile: structuredClone(saved.profile) } : null;
+  if (restored && expiredObservation) {
+    restored.profile = revokeResearch(restored.profile);
+    restored.run.observationEnabled = false;
+  } else if (restored?.profile.enabled) {
+    restored.profile.funding_exposure = expiredArchive ? [] : mergeFundingExposures(restored.profile.funding_exposure, read.archive?.entries ?? []);
+    restored.priorExposure = !!restored.priorExposure || expiredArchive;
+  }
+  if (expiredObservation || expiredArchive) {
+    const cleanSave = restored && (expiredObservation || restored.profile.enabled) ? JSON.stringify(restored) : null;
+    let outcome: ReturnType<typeof expireAdventureStorage>;
+    try { outcome = expireAdventureStorage(window.localStorage, read.snapshot, cleanSave, true); } catch { outcome = { status: "failed-restored", snapshot: read.snapshot }; }
+    if (outcome.status !== "saved") {
+      const message = outcome.status === "changed" ? "本机记录已变化，请重新读取后再继续。" : outcome.status === "failed-uncertain" ? "过期记录清理未完成，部分本机内容可能已变化；请下载当前可用的备份。" : "部分过期观察仍未清理；请检查存储设置后重试。";
+      enterRecovery(inspectLocalStorage(), outcome.status === "changed" ? null : outcome.snapshot, message, outcome.status === "failed-uncertain");
+      return;
+    }
+  }
+  recovery = null; storageError = false; seenCases = read.seen;
+  fundingExposureArchive = expiredObservation || expiredArchive ? { version: 1, createdAt: now, entries: [] } : read.archive ?? { version: 1, createdAt: now, entries: [] };
+  realSave = restored; run = restored?.run ?? null; profile = restored?.profile ?? emptyResearchProfile();
+  observationStartedAt = restored?.observationStartedAt ?? now; priorExposure = !!restored?.priorExposure;
+  tutorialStep = restored ? restoredTutorial(restored.run, restored.tutorialStep) : 4;
+  if (restored?.profile.enabled) rememberFundingExposures(restored.profile);
+}
+function retryStoredState(): void {
+  const previous = recovery; const read = inspectLocalStorage();
+  if (previous?.uncertain && (read.kind === "unavailable" || !previous.backup || !snapshotsEqual(read.snapshot, previous.backup))) {
+    enterRecovery(read, previous.backup, "上次替换未能完全恢复原记录。你仍可下载此前读取的备份；若要开始新旅程，请再次确认清除。", true);
+  } else restoreStoredState(read);
+  render(false);
+  if (!recovery && run) ensureInitialCase();
+}
+function downloadRecoveryBackup(snapshot: StorageSnapshot): void {
+  try {
+    const url = URL.createObjectURL(new Blob([adventureBackup(snapshot)], { type: "application/json;charset=utf-8" }));
+    const link = document.createElement("a"); link.href = url; link.download = "nextcard-adventure-local-backup.json"; link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    modal = null; flash("已发起本地备份下载，请检查浏览器下载列表。");
+  } catch { flash("无法发起下载，请检查浏览器设置后重试。"); }
+}
+function askRecoveryReplacement(enabled: boolean): void {
+  if (!recovery?.current || !manifest?.cases.length) return;
+  showDialog("清除现有冒险与观察？", h("p", { class: "hint" }, "确认后会清除这台设备的 v0.4 冒险、观察与辅助记录，并开始新旅程。原记录将不能在这里恢复；建议先下载备份。旧版 v0.3 不受影响。"),
+    [button("确认清除并开始", () => replaceRecoveredRun(enabled), "danger"), button("保留现有记录", closeDialog, "secondary")]);
+}
+function replaceRecoveredRun(enabled: boolean): void {
+  const state = recovery; if (!state?.current || !manifest?.cases.length) return;
+  const now = Date.now(); const chosen = chooseAdventureCase(manifest.cases.map((item) => item.caseId), new Set());
+  const nextRun = createRun({ caseId: chosen.caseId, observationEnabled: enabled, source: "real", seed: independentBattleSeed() });
+  const nextProfile = emptyResearchProfile(enabled);
+  const nextSave: Save = { schema: "nextcard-adventure-save-v1", savedAt: now, observationStartedAt: now, priorExposure: false, tutorialStep: 0, run: nextRun, profile: nextProfile };
+  let outcome: ReturnType<typeof replaceAdventureStorage>;
+  try { outcome = replaceAdventureStorage(window.localStorage, state.current, JSON.stringify(nextSave)); } catch { outcome = "failed-restored"; }
+  if (outcome !== "saved") {
+    const message = outcome === "changed" ? "本机记录已变化，请重新读取后再确认。" : outcome === "failed-uncertain" ? "替换未完成，原记录也未能完全恢复；部分本机内容可能已变化。请先下载此前读取的备份。" : "未能保存新旅程，原记录已保留；请检查存储设置后重试。";
+    enterRecovery(inspectLocalStorage(), state.backup, message, state.uncertain || outcome === "failed-uncertain");
+    render(); return;
+  }
+  recovery = null; storageError = false; cancelMarketRequest(); resetInitialCase(); resetJudgeDemos();
+  run = nextRun; realSave = nextSave; profile = nextProfile; seenCases = new Set(); fundingExposureArchive = { version: 1, createdAt: now, entries: [] };
+  observationStartedAt = now; priorExposure = false; tutorialStep = 0; selectedCard = null; selectedRetain = null; selectedUpgrade = null; battleFeedback = ""; entryCents = 0; reserveCents = 0; modal = null;
+  changeScreen("game"); ensureInitialCase();
+}
+function recoveryView(): HTMLElement {
+  const state = recovery!;
+  const descriptions: Record<RecoveryIssue, string> = { "save-invalid": "冒险记录内容不完整，暂时无法安全继续。", "save-unsupported": "这份冒险记录使用了当前版本不支持的格式。", "save-time": "记录时间无法核验，暂时不能安全处理观察期限。", "seen-invalid": "已接触案例的记录无法核验。", "exposure-invalid": "研究提示或答案的记录无法核验。", "exposure-unsupported": "研究提示或答案的记录版本暂不受支持。" };
+  const saved = state.summary; const savedDate = saved ? new Date(saved.savedAt) : null;
+  const time = savedDate && Number.isFinite(savedDate.getTime()) ? savedDate.toLocaleString("zh-CN") : "时间无法确认";
+  return h("div", { class: "app-shell" }, topbar(), h("main", { class: "panel stack", id: "main-content", style: "max-width:760px;margin:30px auto" },
+    h("div", { class: "panel-head" }, h("div", null, h("h1", null, "本地记录需要处理"), h("p", { class: "hint" }, "当前没有继续旧旅程，也不会自动替换原记录。"))),
+    state.unavailable ? h("p", { class: "hint" }, "浏览器暂时无法读取本地记录；请检查存储设置后重试。") : state.issues.map((issue) => h("p", { class: "hint" }, descriptions[issue])),
+    state.message ? h("div", { class: "notice error", role: "status" }, state.message) : null,
+    saved ? h("div", { class: "notice" }, h("strong", null, "可辨认的旧旅程"), h("p", null, `${nodeNames[saved.run.node]} · 生命 ${saved.run.hp}/${saved.run.maxHp} · 可用 ${coins(saved.run.wallet.cashCents)} 金币`), h("p", null, `保存时间：${time}。这里只供回顾，不会继续或生成观察。`)) : null,
+    h("p", { class: "fineprint" }, "无法解析的记录期限可能无法核验，不会作为有效观察。备份可能包含你的预期、感受和研究记录；下载后的文件由你保管。"),
+    h("div", { class: "button-row" }, button("重试读取本地记录", retryStoredState, "secondary", false, "retry-storage"), button("下载本地备份", () => { const backup = recovery?.backup; if (backup) downloadRecoveryBackup(backup); }, "secondary", !state.backup, "backup-storage")),
+    h("div", { class: "button-row" }, button("清除现有冒险与观察，开始新旅程", () => askRecoveryReplacement(true), "gold", !state.current || !manifest?.cases.length, "replace-storage"), button("清除后只玩游戏", () => askRecoveryReplacement(false), "secondary", !state.current || !manifest?.cases.length, "replace-storage-game")),
+    initialError ? h("p", { class: "hint" }, "案例目录暂时未加载。", button("重试数据", loadInitial, "small secondary", initialLoading)) : null));
+}
 const researchUI = new ResearchUI({ getRun: () => run!, getProfile: () => profile, setProfile, getManifest: () => manifest, retryManifest: loadInitial, manifestLoading: () => initialLoading, manifestError: () => initialError, back: () => changeScreen(run?.phase === "ended" ? "report" : "game"), openTask: (task) => changeScreen(task === "D1" ? "d1" : "d2"), refresh: () => render(), revealResult: revealResearchResult, notify: flash, uid, isCaseKnown: (caseId) => !!run && casesAreRelated(caseId, run.caseId) && priorExposure, wasCaseSeen: (caseId) => hasSeenRelatedCase(seenCases, caseId), markCaseSeen: markExternalExposure });
 const calibrationDemoUI = new CalibrationDemoUI({ refresh: () => render(), isVisible: () => screen === "judge", onExposed: markExternalExposure });
 function render(preserve = true): void {
@@ -415,7 +537,8 @@ function render(preserve = true): void {
   const scrollPositions = preserve ? [...app.querySelectorAll<HTMLElement>("[data-scroll-key]")].map((element) => [element.dataset.scrollKey!, element.scrollLeft] as const) : [];
   const scroll = window.scrollY;
   let content: HTMLElement;
-  if (screen === "intro" || !run) content = intro();
+  if (recovery) content = recoveryView();
+  else if (screen === "intro" || !run) content = intro();
   else if (screen === "report") content = report();
   else if (screen === "judge") content = judge();
   else if (screen === "d1" || screen === "d2") content = h("div", { class: "app-shell" }, topbar(), screen === "d1" ? researchUI.renderFunding() : researchUI.renderHistory());
@@ -427,15 +550,7 @@ function render(preserve = true): void {
   for (const [key, left] of scrollPositions) { const element = app.querySelector<HTMLElement>(`[data-scroll-key="${CSS.escape(key)}"]`); if (element) element.scrollLeft = left; }
   if (preserve) { if (active) { const target = (modal ?? app).querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(active)}"]`); if (target && !(target instanceof HTMLButtonElement && target.disabled)) target.focus({ preventScroll: true }); else if (active.startsWith("play-card") || active.startsWith("tutorial-")) { const hand = app.querySelector<HTMLElement>('.battle-hand-panel [data-scroll-key="battle-hand"]'); const box = hand?.getBoundingClientRect(); const visible = [...(hand?.querySelectorAll<HTMLElement>(".game-card") ?? [])].find((card) => { const rect = card.getBoundingClientRect(); return !!box && rect.right > box.left && rect.left < box.right; }); (visible ?? hand)?.focus({ preventScroll: true }); } } window.scrollTo(0, scroll); }
 }
-try { const value: unknown = JSON.parse(localStorage.getItem(SEEN_KEY) ?? "[]"); if (Array.isArray(value)) seenCases = new Set(value.filter((item): item is string => typeof item === "string")); } catch { storageError = true; }
-try {
-  const raw = localStorage.getItem(FUNDING_EXPOSURE_KEY);
-  const archive = parseFundingExposureArchive(raw, Date.now(), RETENTION_MS);
-  if (raw && !archive) { localStorage.removeItem(FUNDING_EXPOSURE_KEY); fundingArchiveExpired = true; }
-  fundingExposureArchive = archive ?? { version: 1, createdAt: Date.now(), entries: [] };
-} catch { storageError = true; }
-realSave = readSave();
-if (realSave) { run = realSave.run; profile = realSave.profile; if (profile.enabled) { profile.funding_exposure = fundingArchiveExpired ? [] : mergeFundingExposures(profile.funding_exposure, fundingExposureArchive.entries); rememberFundingExposures(profile); } observationStartedAt = realSave.observationStartedAt; priorExposure = !!realSave.priorExposure || (fundingArchiveExpired && profile.enabled); tutorialStep = restoredTutorial(run, realSave.tutorialStep); save(); }
+restoreStoredState(inspectLocalStorage());
 render(false);
 loadInitial();
 if (run) ensureInitialCase();

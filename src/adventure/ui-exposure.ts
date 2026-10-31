@@ -1,6 +1,13 @@
 import type { FundingExposure, HelpPreference } from "./research";
+import { isFundingExposure } from "./profile-validation";
 
 export interface FundingExposureArchive { version: 1; createdAt: number; entries: FundingExposure[] }
+export type FundingExposureArchiveRead =
+  | { status: "empty" }
+  | { status: "valid"; archive: FundingExposureArchive }
+  | { status: "expired" }
+  | { status: "unsupported" }
+  | { status: "invalid" };
 const ranks: Record<HelpPreference, number> = { self: 0, hint: 1, step: 2 };
 
 /** Only exposure metadata is retained: no answer, amount, feeling, or profile result. */
@@ -14,14 +21,24 @@ export function mergeFundingExposures(...groups: FundingExposure[][]): FundingEx
   }
   return [...merged.values()];
 }
-export function parseFundingExposureArchive(raw: string | null, now: number, retentionMs: number): FundingExposureArchive | null {
-  if (!raw) return null;
+/** A damaged or unknown archive is not an empty or expired archive. */
+export function readFundingExposureArchive(raw: string | null, now: number, retentionMs: number): FundingExposureArchiveRead {
+  if (raw === null) return { status: "empty" };
+  if (!Number.isFinite(now) || !Number.isFinite(retentionMs) || retentionMs <= 0) return { status: "invalid" };
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return null;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { status: "invalid" };
     const archive = parsed as Partial<FundingExposureArchive>;
-    if (archive.version !== 1 || typeof archive.createdAt !== "number" || !Number.isFinite(archive.createdAt) || now - archive.createdAt >= retentionMs || !Array.isArray(archive.entries)) return null;
-    const entries = archive.entries.filter((entry): entry is FundingExposure => !!entry && typeof entry === "object" && ((typeof entry.questionKey === "string" && !!entry.questionKey) || (typeof entry.caseId === "string" && !!entry.caseId)) && ["self", "hint", "step"].includes(entry.help) && typeof entry.answerExposed === "boolean" && typeof entry.priorExposure === "boolean");
-    return { version: 1, createdAt: archive.createdAt, entries: mergeFundingExposures(entries) };
-  } catch { return null; }
+    if (archive.version !== 1) return typeof archive.version === "number" && Number.isInteger(archive.version) ? { status: "unsupported" } : { status: "invalid" };
+    if (typeof archive.createdAt !== "number" || !Number.isFinite(archive.createdAt) || archive.createdAt < 0 || archive.createdAt > now
+      || !Array.isArray(archive.entries) || !archive.entries.every(isFundingExposure)) return { status: "invalid" };
+    if (now - archive.createdAt >= retentionMs) return { status: "expired" };
+    return { status: "valid", archive: { version: 1, createdAt: archive.createdAt, entries: mergeFundingExposures(archive.entries) } };
+  } catch { return { status: "invalid" }; }
+}
+
+/** Compatibility adapter; recovery screens should use the discriminated result. */
+export function parseFundingExposureArchive(raw: string | null, now: number, retentionMs: number): FundingExposureArchive | null {
+  const result = readFundingExposureArchive(raw, now, retentionMs);
+  return result.status === "valid" ? result.archive : null;
 }
