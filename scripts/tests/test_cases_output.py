@@ -18,9 +18,9 @@ REVEAL_PATH = ROOT / "public/data/cases_reveal.json"
 class CasesOutput(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.visible_text = VISIBLE_PATH.read_text()
+        cls.visible_text = VISIBLE_PATH.read_text(encoding="utf-8")
         cls.visible = json.loads(cls.visible_text)
-        cls.reveal = json.loads(REVEAL_PATH.read_text())
+        cls.reveal = json.loads(REVEAL_PATH.read_text(encoding="utf-8"))
         cls.vis = {r["round_id"]: r for r in cls.visible["rounds"]}
         cls.rev = {r["round_id"]: r for r in cls.reveal["rounds"]}
 

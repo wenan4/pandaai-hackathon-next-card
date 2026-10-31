@@ -287,7 +287,7 @@ def write_report(cands, stats, chosen, t_days):
             lines.append(f"| {c.symbol} | {c.name} | {c.t} | {c.liquidity / 1e8:.2f} | {fmt(keys)} |")
         ch = chosen.get(rid)
         lines += ["", f"**选中**：{ch.symbol} {ch.name} T={ch.t}" if ch else "**无候选**", ""]
-    (OUT_DIR / "candidates_report.md").write_text("\n".join(lines))
+    (OUT_DIR / "candidates_report.md").write_text("\n".join(lines), encoding="utf-8")
 
 
 def fmt(d: dict) -> str:
@@ -453,14 +453,14 @@ def export(chosen, groups, bench_close, stats, t_days, as_of):
         "rounds": vis_rounds,
     }
     reveal = {"header": {**full_header(stats, t_days, as_of), "file": "cases_reveal"}, "rounds": rev_rounds}
-    (DATA_DIR / "cases_visible.json").write_text(json.dumps(visible, ensure_ascii=False, separators=(",", ":"), default=_np))
-    (DATA_DIR / "cases_reveal.json").write_text(json.dumps(reveal, ensure_ascii=False, indent=1, default=_np))
+    (DATA_DIR / "cases_visible.json").write_text(json.dumps(visible, ensure_ascii=False, separators=(",", ":"), default=_np), encoding="utf-8")
+    (DATA_DIR / "cases_reveal.json").write_text(json.dumps(reveal, ensure_ascii=False, indent=1, default=_np), encoding="utf-8")
     (REPO_ROOT / "src" / "config" / "rounds_act1.json").write_text(json.dumps({
         "_comment": "第一幕命题定稿，由 scripts/build_cases.py 生成，与 public/data/cases_*.json 对齐",
         "rules_version": RULES_VERSION,
         "rounds": [{"round_id": r, "act": 1, "label": LABELS[r], "claim": CLAIMS[r], "evidence_verdict": VERDICTS[r],
                     "benchmark_name": BENCHMARK[1]} for r in ("R1", "R2", "R3")],
-    }, ensure_ascii=False, indent=2) + "\n")
+    }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     write_docs(reveal)
 
 
@@ -486,7 +486,7 @@ def write_docs(reveal):
         lines += ["", f"揭晓（T+1 开盘 → T+20 收盘）：{a['return_open_t1_to_close_t20']:.2%}；"
                       f"T 收盘 → T+20 收盘：{a['return_close_t_to_close_t20']:.2%}；T+1 开盘涨停：{a['t1_open_at_limit_up']}"]
     lines += ["", "选取规则：" + h["selection"] + "。", "", "公开展示：" + h["public_scope"] + "。", ""]
-    (REPO_ROOT / "docs" / "cases-report.md").write_text("\n".join(lines))
+    (REPO_ROOT / "docs" / "cases-report.md").write_text("\n".join(lines), encoding="utf-8")
 
 
 if __name__ == "__main__":
