@@ -73,23 +73,28 @@ function screenFor(s: State, visible: VisibleRound[], taskA: TaskAData): HTMLEle
   }
 }
 
-async function main(): Promise<void> {
-  if (isJudgeMode()) return mountPanel(app);
+type LegacyStartup = { ok: true } | { ok: false; stage: "legacy-data" | "render" };
+async function main(): Promise<LegacyStartup> {
+  if (isJudgeMode()) {
+    try { await mountPanel(app); return { ok: true }; }
+    catch { return { ok: false, stage: "render" }; }
+  }
   let visible: VisibleRound[];
   let taskA: TaskAData;
   try {
     [visible, taskA] = await Promise.all([loadVisible(), loadTaskA()]);
   } catch {
-    app.replaceChildren(h("main", { class: "screen" }, h("p", { style: "margin-top:40px" }, "数据加载失败，请检查网络后刷新。"), footer()));
-    return;
+    return { ok: false, stage: "legacy-data" };
   }
   render = () => {
     const s = getState();
     ensureTaskB(s);
     app.replaceChildren(screenFor(s, visible, taskA));
   };
-  subscribe(render);
-  render();
+  try { subscribe(render); render(); }
+  catch { return { ok: false, stage: "render" }; }
+  return { ok: true };
 }
 
-void main();
+/** Resolves only after the legacy UI (including judge mode) is mounted. */
+export const startup: Promise<LegacyStartup> = main().catch(() => ({ ok: false, stage: "render" }));
