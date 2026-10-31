@@ -6,7 +6,7 @@ import { ROUNDS } from "../config/rounds";
 import { evaluate } from "../engine/evaluate";
 import { eventsFromSpecs, type RoundSpec } from "../engine/paths";
 import { recommend } from "../engine/recommend";
-import { structuredResult } from "../engine/result";
+import { structuredResult, type Provenance } from "../engine/result";
 import { collectRound, followupFor } from "../engine/rounds";
 import { flipOutcomes, settle } from "../engine/settle";
 import type { Action, Card, GameEvent, ObsId, Verdict } from "../engine/types";
@@ -109,6 +109,8 @@ function editor(specs: RoundSpec[]): HTMLElement {
       ps.history.push(ps.fork);
       ps.fork = (ps.fork ?? specs).map((s) => (s.round_id === d.round_id ? { ...d, followupAnswer: q ? (FOLLOWUP_COPY[q].options.includes(d.followupAnswer ?? "") ? d.followupAnswer : null) : undefined } : s));
       ps.draft = null;
+      // 检查结果属于改动前的分叉，清掉以免张冠李戴
+      ps.checks = null;
     }
     rerender();
   };
@@ -132,7 +134,7 @@ function editor(specs: RoundSpec[]): HTMLElement {
       ? select(`追问：${FOLLOWUP_COPY[q].question}（必须选择或明确跳过）`, d.followupAnswer ?? "", [["", "跳过"], ...FOLLOWUP_COPY[q].options.map((o) => [o, o] as [string, string])], (v) => setDraft({ followupAnswer: v || null }))
       : h("p", { class: "xs muted" }, "这组字段不触发追问。"),
     ps.error ? h("p", { class: "small", style: "color:var(--leo)" }, ps.error) : null,
-    h("div", { class: "row" }, h("button", { class: "btn", style: "min-height:44px;font-size:15px", onclick: apply }, "应用改动（建立分叉）"), h("button", { class: "btn-line", style: "min-height:44px", disabled: !ps.history.length, onclick: () => ((ps.fork = ps.history.pop() ?? null), (ps.draft = null), (ps.error = null), rerender()) }, `撤销${ps.history.length ? `（${ps.history.length}）` : ""}`), h("button", { class: "btn-line", style: "min-height:44px", onclick: () => ((ps.fork = null), (ps.history = []), (ps.draft = null), (ps.error = null), rerender()) }, "恢复基线")),
+    h("div", { class: "row" }, h("button", { class: "btn", style: "min-height:44px;font-size:15px", onclick: apply }, "应用改动（建立分叉）"), h("button", { class: "btn-line", style: "min-height:44px", disabled: !ps.history.length, onclick: () => ((ps.fork = ps.history.pop() ?? null), (ps.draft = null), (ps.error = null), (ps.checks = null), rerender()) }, `撤销${ps.history.length ? `（${ps.history.length}）` : ""}`), h("button", { class: "btn-line", style: "min-height:44px", onclick: () => ((ps.fork = null), (ps.history = []), (ps.draft = null), (ps.error = null), (ps.checks = null), rerender()) }, "恢复基线")),
   );
 }
 
@@ -180,6 +182,9 @@ export function renderPanel(): HTMLElement {
   const why = b && ps.fork ? whyUnchanged(a, b, specs, ps.fork) : null;
   const shown = b ?? a;
   const live = getState().events.some((e) => e.type === "final_assessment");
+  // 改过字段的分叉是反事实，导出时标成 judge_fork，不冒充原路径或本机真实体验
+  const baseName = simulated ? PRESETS.find((p) => p.id === ps.baseline)?.name : "当前体验记录";
+  const provenance: Omit<Provenance, "event_count"> = b ? { kind: "judge_fork", fork_of: baseName } : simulated ? { kind: "simulated_path", path_id: baseName } : { kind: "user_session" };
   return h(
     "main",
     { class: "screen" },
@@ -234,7 +239,7 @@ export function renderPanel(): HTMLElement {
       h(
         "section",
         { class: "panel stack", style: "flex:1 1 420px;min-width:0" },
-        h("div", { class: "row" }, h("h2", { class: "grow" }, "profile / progress JSON"), h("button", { class: "btn-line", style: "width:auto;min-height:36px;font-size:13px", onclick: () => downloadJson("next-card-result", structuredResult(shown.events, ENGINE_CONFIG, AVAILABLE_TOPICS, simulated ? { kind: "simulated_path", path_id: PRESETS.find((p) => p.id === ps.baseline)?.name } : { kind: "user_session" }, UNKNOWN_YET)) }, "导出结构化结果")),
+        h("div", { class: "row" }, h("h2", { class: "grow" }, "profile / progress JSON"), h("button", { class: "btn-line", style: "width:auto;min-height:36px;font-size:13px", onclick: () => downloadJson("next-card-result", structuredResult(shown.events, ENGINE_CONFIG, AVAILABLE_TOPICS, provenance, UNKNOWN_YET)) }, "导出结构化结果")),
         h("pre", { class: "xs mono", style: "max-height:420px;overflow:auto;margin:0;color:var(--text-2)" }, JSON.stringify({ profile: shown.profile, progress: shown.progress }, null, 2)),
       ),
     ),

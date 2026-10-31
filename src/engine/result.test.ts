@@ -23,7 +23,8 @@ describe("结构化结果导出（YOU-169）", () => {
         writeFileSync(file, text);
       }
       expect(existsSync(file)).toBe(true);
-      expect(readFileSync(file, "utf8")).toBe(text);
+      // Windows 上 core.autocrlf 会把样例检出成 CRLF，只比较内容
+      expect(readFileSync(file, "utf8").replace(/\r\n/g, "\n")).toBe(text);
     });
   }
 

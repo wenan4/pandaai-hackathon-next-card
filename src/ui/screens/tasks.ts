@@ -222,9 +222,10 @@ function lastTask(s: State): "A" | "B" {
   return s.taskB?.submitted ? "B" : "A";
 }
 
-export function updatedScreen(s: State, taskB: TaskBData): HTMLElement {
+/** taskB 为空时只会走任务 A 分支：任务 B 提交后，调用方保证数据已加载。 */
+export function updatedScreen(s: State, taskB: TaskBData | null): HTMLElement {
   const { profile, progress, plan } = currentProfile(s);
-  if (lastTask(s) === "B" && s.taskB?.submitted) return taskBDoneScreen(s, taskB);
+  if (lastTask(s) === "B" && s.taskB?.submitted && taskB) return taskBDoneScreen(s, taskB);
   return h("main", { class: "screen" },
     h("h1", { class: "display" }, "任务 A 完成"),
     h("p", { class: "small text-2" }, "任务中的新情境单独记录，不改写第一幕的观察。"),
@@ -236,7 +237,7 @@ export function updatedScreen(s: State, taskB: TaskBData): HTMLElement {
         h("p", { class: "small text-2" }, progress.taskA_steps_done.includes(index + 1) ? "已完成这个基础步骤，可以继续体验。" : "还需在新情境里完成这个步骤。"));
     }),
     h("p", { class: "panel small" }, `根据新证据修正判断：${profile.observations.O4.summary}`),
-    planCard(plan, profile),
+    planCard(plan, profile, s),
     h("button", { class: "btn-line", onclick: () => go("basis") }, "查看全部依据"), footer());
 }
 
@@ -277,7 +278,8 @@ function segmentCard(d: TaskBData, seg: "display" | "test"): HTMLElement {
   const row = (name: string, g: TaskBData["display"]["signal_group"]) =>
     h("tr", null, h("th", { scope: "row" }, name), h("td", { class: "mono" }, `${g.n_records}`), h("td", { class: "mono" }, pct1(g.primary_metric)), h("td", { class: "mono" }, g.mean_return === null ? "—" : fmtPct(g.mean_return)));
   const meanDiff = x.signal_group.mean_return !== null && x.baseline_group.mean_return !== null ? x.signal_group.mean_return - x.baseline_group.mean_return : null;
-  const disagree = x.delta !== null && meanDiff !== null && (x.delta < 0) !== (meanDiff < 0);
+  // 只有两者方向严格相反才提示；任一为 0 不算相反
+  const disagree = x.delta !== null && meanDiff !== null && Math.sign(x.delta) * Math.sign(meanDiff) < 0;
   return h(
     "section",
     { class: "paper stack", style: "gap:6px" },
@@ -404,7 +406,7 @@ export function taskBScreen(s: State, d: TaskBData): HTMLElement {
     assistBar("B", assist),
     ruleCard(d, t.locked),
     needGuess
-      ? h("section", { class: "stack" }, h("h2", null, "先猜一下（之后可以改）"), h("p", { class: "small text-2" }, "放量上涨之后的 20 个交易日，收益为正的比例会比一般情况高出 5 个百分点以上吗？"),
+      ? h("section", { class: "stack" }, h("h2", null, "先猜一下（之后可以改）"), h("p", { class: "small text-2" }, `放量上涨之后的 ${d.header.execution.horizon_days} 个交易日，收益为正的比例会比一般情况高出至少 ${(d.header.thresholds.advantage_margin * 100).toFixed(0)} 个百分点吗？`),
           options([["higher", "会"], ["not_higher", "不会"], ["unsure", "说不准"]], undefined, false, guess))
       : null,
     !needGuess && !t.locked

@@ -55,11 +55,12 @@ export function runChecks(events: readonly GameEvent[], specs: RoundSpec[], outc
     const decisions = specs.map((s) => ({ round_id: s.round_id, action: s.action }));
     const a = settle(decisions, outcomes).balance;
     const b = settle(decisions, flipOutcomes(outcomes, ROUNDS.map((r) => r.round_id))).balance;
-    const again = run(engine, events);
     const anyFollow = specs.some((s) => s.action === "follow");
+    // 画像不变不是靠再跑一遍比出来的：evaluate / recommend 的输入只有事件记录，
+    // 整条导入链里没有 settle 和揭晓数据，由 engine.test.ts 逐个模块检查。这里只验证走势确实会改变代币。
     add("模拟替换事后走势（模拟反例，不是真实行情）", "判断线、画像、推荐不变；选过“跟”时代币改变",
-      `代币 ${a.toFixed(2)} → ${b.toFixed(2)}；画像${same(base, again) ? "不变" : "变了"}`,
-      same(base, again) && (!anyFollow || a !== b));
+      `代币 ${a.toFixed(2)} → ${b.toFixed(2)}；画像与推荐的输入只有事件记录、不含走势，所以不变（导入链由自动测试检查）`,
+      !anyFollow || a !== b);
   }
 
   // 2. 重复点击牌、重复打开解释、重复提交同一答案

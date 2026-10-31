@@ -311,7 +311,7 @@ def write_docs(doc: dict) -> None:
         if s["delta"] is None:
             continue
         mean_diff = s["signal_group"]["mean_return"] - s["baseline_group"]["mean_return"]
-        if (s["delta"] < 0) != (mean_diff < 0):
+        if s["delta"] * mean_diff < 0:  # 只有方向严格相反才提示，任一为 0 不算
             lines.append(f"- {seg_name[seg]}：信号组收益为正的比例{'低' if s['delta'] < 0 else '高'}于基准组，"
                          f"平均收益却{'高' if mean_diff > 0 else '低'}于基准组。比例和均值回答的是不同问题，不能互相替代。")
     lines += ["", "## 样本处理", ""]

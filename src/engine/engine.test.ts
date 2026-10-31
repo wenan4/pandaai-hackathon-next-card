@@ -81,6 +81,28 @@ describe("隔离与确定性", () => {
     }
   });
 
+  it("evaluate / recommend 的整条导入链里没有 settle 和揭晓数据（反例检查 1 依赖这一条）", () => {
+    // 沿相对导入逐个模块走一遍；import type 不进入运行时，跳过
+    const seen = new Set<string>();
+    const walk = (url: URL) => {
+      if (seen.has(url.href)) return;
+      seen.add(url.href);
+      if (!url.pathname.endsWith(".ts")) return;
+      const src = readFileSync(url, "utf8");
+      for (const m of src.matchAll(/^\s*(?:import|export)\s+(?!type\b)[^;]*?from\s+["'](\.{1,2}\/[^"']+)["']/gm)) {
+        const spec = m[1]!;
+        walk(new URL(/\.(ts|json)$/.test(spec) ? spec : `${spec}.ts`, url));
+      }
+    };
+    walk(new URL("./evaluate.ts", import.meta.url));
+    walk(new URL("./recommend.ts", import.meta.url));
+    const reached = [...seen].map((u) => decodeURIComponent(new URL(u).pathname));
+    expect(reached.some((p) => p.endsWith("/engine/evaluate.ts"))).toBe(true);
+    for (const p of reached) {
+      expect(p).not.toMatch(/\/engine\/settle\.ts$|\/data\/cases\.ts$|cases_reveal|\/public\/data\//);
+    }
+  });
+
   it("同一输入跑 100 次输出相同，且不访问 Date.now / Math.random", () => {
     const first = JSON.stringify(run(preset("yi")));
     for (let i = 0; i < 100; i++) expect(JSON.stringify(run(preset("yi")))).toBe(first);

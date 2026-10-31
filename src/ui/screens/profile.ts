@@ -57,11 +57,16 @@ function tradingView(s: State, profile: Profile): HTMLElement {
 }
 
 export function startTask(s: State, plan: Plan, profile: Profile): void {
-  s.profileBeforeTask = profile;
+  // 回到已开始的任务 B 时保留原来的任务前画像
+  if (plan.task === "A" || !s.taskB) s.profileBeforeTask = profile;
   if (plan.task === "A") {
     s.taskA = { reason: plan.reason, guessFirst: plan.guess_first, steps: plan.steps, stepIndex: 0, assist: plan.assist, aligned: false, exposures: [], readings: false, windowExtended: false, done: false };
     s.back = s.screen;
     s.screen = "taskA";
+  } else if (s.taskB) {
+    // 任务 B 只有一道题：已开始的回到原进度，已完成的看结果，不重置锁定、打开和作答记录
+    s.back = s.screen;
+    s.screen = s.taskB.submitted ? "updated" : "taskB";
   } else {
     s.taskB = { reason: plan.reason, guessFirst: plan.guess_first, locked: false, testOpened: false, submitted: false, assist: plan.assist, exposures: [] };
     s.back = s.screen;
@@ -70,7 +75,8 @@ export function startTask(s: State, plan: Plan, profile: Profile): void {
   window.scrollTo(0, 0);
 }
 
-export function planCard(plan: Plan, profile: Profile): HTMLElement {
+export function planCard(plan: Plan, profile: Profile, s: State): HTMLElement {
+  const resume = plan.task === "B" && s.taskB ? (s.taskB.submitted ? "查看任务 B 结果" : "继续任务 B") : "开始下一关";
   const title = plan.task === "A" ? `任务 A · 同一起点，再比一次（步骤 ${plan.steps.join("、")}）` : `任务 B · ${plan.topic ? TOPIC_NAME[plan.topic] : "选一个主题"}`;
   return h(
     "section",
@@ -84,7 +90,7 @@ export function planCard(plan: Plan, profile: Profile): HTMLElement {
       `协助：${ASSIST_COPY[plan.assist].label}（${profile.help_preference.source === "user" ? "你选过的档位" : "按本局帮助使用推断，可随时改"}）`,
       plan.guess_first ? " · 先猜后验" : "",
     ),
-    h("button", { class: "btn", style: "background:var(--ink);color:var(--paper)", onclick: () => update((s) => startTask(s, plan, profile)) }, "开始下一关", icon("arrow", 18, 2)),
+    h("button", { class: "btn", style: "background:var(--ink);color:var(--paper)", onclick: () => update((st) => startTask(st, plan, profile)) }, resume, icon("arrow", 18, 2)),
   );
 }
 
@@ -149,7 +155,7 @@ export function profileScreen(s: State): HTMLElement {
     ),
     h("section", { class: "panel stack" }, h("h2", null, "还不知道"), h("ul", { class: "small text-2", style: "margin:0;padding-left:18px" }, UNKNOWN_YET.map((x) => h("li", null, x)))),
     tradingView(s, profile),
-    planCard(plan, profile),
+    planCard(plan, profile, s),
     h("button", { class: "btn-line", onclick: () => go("basis") }, "看每条观察的依据"),
     h("button", { class: "btn-text", onclick: () => exportResult(s) }, "导出结构化结果（JSON）"),
     footer(),

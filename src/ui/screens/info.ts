@@ -174,7 +174,7 @@ function headerRows(hd: DataHeader): [string, string][] {
   return rows.filter(([, v]) => typeof v === "string" && v) as [string, string][];
 }
 
-export function dataScreen(s: State, taskA: TaskAData | null, taskB: TaskBData): HTMLElement {
+export function dataScreen(s: State, taskA: TaskAData | null, taskB: TaskBData | null): HTMLElement {
   const revealed = revealedSources().sort((a, b) => a.round_id.localeCompare(b.round_id));
   const header = revealed[0]?.header;
   return h(
@@ -222,7 +222,9 @@ export function dataScreen(s: State, taskA: TaskAData | null, taskB: TaskBData):
       "section",
       { class: "panel stack" },
       h("div", { class: "row" }, h("h2", { class: "grow" }, "任务 B · 猎豹题"), label("real")),
-      h("dl", { class: "kv" }, taskBRows(taskB).map(([k, v]) => [h("dt", null, k), h("dd", null, v)])),
+      taskB
+        ? h("dl", { class: "kv" }, taskBRows(taskB).map(([k, v]) => [h("dt", null, k), h("dd", null, v)]))
+        : h("p", { class: "small text-2" }, "第一幕三轮都揭晓后，这里会显示任务 B 的股票池、分段、样本数和阈值。"),
     ),
     h(
       "section",

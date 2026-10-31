@@ -166,6 +166,19 @@ export function evaluate(events: readonly GameEvent[], cfg: EngineConfig): { pro
       o4.push({ ...completion, rule: "O4-a", event_ids: [guess.event_id, ...completion.event_ids] });
     }
   }
+  // 任务 B 同理（PRD v0.3 §5.3）：先猜“会高出”而数据两段都没达到，或先猜“不会”而两段都达到，之后答对，算一次修正。
+  // 只有一段达到、样本不够，以及先猜“说不准”，都不算明确冲突。
+  const doneB = task_observations.O5.find((i) => i.outcome === "consistent");
+  if (doneB) {
+    const at = events.findIndex((e) => e.event_id === doneB.event_ids[0]);
+    const guess = events.slice(0, at).find((e) => e.stage === "in_task" && e.type === "task_step" && e.payload.task === "B" && e.payload.step === 1 && e.payload.phase === "guess");
+    const submitted = events[at];
+    if (guess?.type === "task_step" && submitted?.type === "task_step") {
+      const answer = submitted.payload.answer.split("|")[0];
+      const conflict = (guess.payload.answer === "higher" && answer === "no_observed_advantage") || (guess.payload.answer === "not_higher" && answer === "both_segments");
+      if (conflict) o4.push({ ...doneB, rule: "O4-a", event_ids: [guess.event_id, ...doneB.event_ids] });
+    }
+  }
   const observations = { O1: aggregate("O1", o1), O2: aggregate("O2", o2), O3: aggregate("O3", o3), O4: revisionObservation(o4) };
   if (!decisive && o3.some((i) => i.rule === "O3-a")) observations.O3.summary = "尚未在可核对情境里作出与证据一致的明确判断";
   const taskA_steps_done = ([1, 2] as const).filter((step) => task_observations[step === 1 ? "O1" : "O2"].some((i) => i.outcome === "consistent"));

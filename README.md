@@ -37,6 +37,8 @@ npm run build      # 类型检查 → 构建到 dist/ → 扫描 dist/ 里有没
 
 揭晓前只加载 `public/data/cases_visible.json`（只有 T 日及以前、相对日期、无代码和名称）。第 n 轮锁定后才请求 `cases_reveal_Rn.json`，且只请求这一轮；`src/data/cases.test.ts` 覆盖了这条规则。
 
+任务 B 的 `taskB_cheetah.json` 是“放量上涨之后”的统计，和第 3 轮同类，所以等第一幕三轮全部锁定后才请求；加载失败只影响任务 B 相关页面。
+
 ### 引擎
 
 `src/engine/` 下都是纯函数：`evaluate`（画像与进度）、`recommend`（下一关）、`settle`（代币结算，与画像隔离，前两者不导入它）。第一幕与任务 A 的规则对齐 PRD v0.3：一次观察为 `partial`，任务证据单独保留；只有重复的独立局内证据或正确完成基础任务步骤才满足 S1/S2。帮助、反馈和重试历史不会因切换档位或重开任务清除。

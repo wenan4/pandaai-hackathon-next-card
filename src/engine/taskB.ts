@@ -31,7 +31,8 @@ export function comparison(signal: number | null, baseline: number | null, margi
 export function verdict(data: SegmentsLike, t: Thresholds): TaskBVerdict {
   for (const seg of SEGMENTS) {
     for (const g of [data[seg].signal_group, data[seg].baseline_group]) {
-      if (g.primary_metric === null || g.n_records < t.min_samples) return { result: "insufficient_evidence" };
+      // 与 Python 一致：字段缺失（undefined）和 null 一样按缺数据处理
+      if (g.primary_metric == null || (g.n_records ?? 0) < t.min_samples) return { result: "insufficient_evidence" };
     }
   }
   const meets = (seg: Segment) =>

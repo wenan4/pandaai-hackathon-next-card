@@ -9,9 +9,11 @@ import type { GameEvent, TopicId } from "./types";
 export const RESULT_FORMAT = "next-card/result@v0.3-native";
 
 export interface Provenance {
-  /** user_session：本机真实体验；simulated_path：评委面板或文档里的模拟路径 */
-  kind: "user_session" | "simulated_path";
+  /** user_session：本机真实体验；simulated_path：评委面板或文档里的模拟路径；judge_fork：评委在某条基线上改过字段的反事实 */
+  kind: "user_session" | "simulated_path" | "judge_fork";
   path_id?: string;
+  /** judge_fork 的基线，不冒充玩家新增表现 */
+  fork_of?: string;
   event_count: number;
 }
 

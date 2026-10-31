@@ -25,7 +25,7 @@ GEN_EXAMPLES=1 npx vitest run src/engine/result.test.ts
 | 字段 | 含义 | 可以怎么用 |
 |---|---|---|
 | `format`、`rules_version` | 输出格式与规则版本；不同版本的规则编号含义不可混用 | 读取方按版本解释 |
-| `provenance` | `user_session`（本机真实体验）或 `simulated_path`（模拟路径，带 `path_id`），以及事件条数 | 区分真实与模拟，不把模拟当成用户数据 |
+| `provenance` | `user_session`（本机真实体验）、`simulated_path`（模拟路径，带 `path_id`）或 `judge_fork`（评委在面板里改过字段的反事实，带 `fork_of` 基线），以及事件条数 | 区分真实、模拟与反事实，不把模拟或改过的记录当成用户数据 |
 | `profile.observations.O1–O4` | 每项：`status`（observed / assisted / uncertain / not_observed）、`aggregation`、一句 `summary`、`instances`（情境、规则编号、是否在帮助下、对应事件编号） | 依据可追溯到事件；`assisted` 不能当独立能力 |
 | `profile.task_observations` | 任务中的新情境：O1 / O2 来自任务 A，O5 来自任务 B | 与局内观察分开，不改写局内结果 |
 | `profile.style` | 本局交易物种、每轮首翻、各牌计入次数 | 偏好，不是能力；可作为任务 B 默认主题的来源之一 |

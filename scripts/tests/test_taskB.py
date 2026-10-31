@@ -20,10 +20,12 @@ PUBLISHED = ROOT / "public/data/taskB_cheetah.json"
 
 
 def as_data(case):
+    # [n_records, primary_metric]；少写一项表示字段不存在
+    def group(pair):
+        return dict(zip(("n_records", "primary_metric"), pair))
     out = {}
     for seg in ("display", "test"):
-        out[seg] = {grp: {"n_records": case[seg][key][0], "primary_metric": case[seg][key][1]}
-                    for grp, key in (("signal_group", "signal"), ("baseline_group", "baseline"))}
+        out[seg] = {grp: group(case[seg][key]) for grp, key in (("signal_group", "signal"), ("baseline_group", "baseline"))}
     return out
 
 

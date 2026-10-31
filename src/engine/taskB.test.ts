@@ -8,12 +8,11 @@ import { evaluate } from "./evaluate";
 import { eventFactory, eventsFromSpecs, type EventMaker } from "./paths";
 import { answerKey, comparison, verdict, type SegmentsLike } from "./taskB";
 
-type Pair = [number, number | null];
+// [n_records, primary_metric]；少写一项表示字段不存在，用来对齐 Python 的 g.get(...)
+type Pair = [number?, (number | null)?];
+const group = (p: Pair) => ({ ...(p.length > 0 ? { n_records: p[0] } : {}), ...(p.length > 1 ? { primary_metric: p[1] } : {}) });
 const asData = (c: { display: Record<string, Pair>; test: Record<string, Pair> }): SegmentsLike => {
-  const seg = (s: Record<string, Pair>) => ({
-    signal_group: { n_records: s.signal![0], primary_metric: s.signal![1] },
-    baseline_group: { n_records: s.baseline![0], primary_metric: s.baseline![1] },
-  });
+  const seg = (s: Record<string, Pair>) => ({ signal_group: group(s.signal!), baseline_group: group(s.baseline!) }) as SegmentsLike["display"];
   return { display: seg(c.display), test: seg(c.test) };
 };
 
@@ -71,6 +70,19 @@ describe("任务 B 的提交只产生 O5，且独立与否由事件推导", () =
     expect(hinted.profile.task_observations.O5[0]!.assisted).toBe(true);
     const retried = evaluate([...base(), submit(ev, "both_segments|delta_high", false), submit(ev, "no_observed_advantage|delta_low", true)], ENGINE_CONFIG);
     expect(retried.profile.task_observations.O5.map((i) => [i.rule, i.assisted])).toEqual([["O5-r", false], ["O5-t", true]]);
+  });
+
+  it("先猜后验：先猜“会高出”、数据两段都没达到、之后答对，O4 增加一次修正；猜对或说不准不算", () => {
+    const run = (guessAnswer: string) => {
+      const ev = eventFactory("t", "v0.3", 500);
+      const guess = ev("taskB", "in_task", "task_step", { task: "B", step: 1, phase: "guess", answer: guessAnswer, correct: null });
+      return evaluate([...base(), guess, submit(ev, "no_observed_advantage|delta_low", true)], ENGINE_CONFIG);
+    };
+    const taskB = (out: ReturnType<typeof run>) => out.profile.observations.O4.instances.filter((i) => i.context === "taskB");
+    expect(taskB(run("higher"))).toMatchObject([{ rule: "O4-a", outcome: "consistent", assisted: false }]);
+    expect(taskB(run("higher"))[0]!.event_ids).toHaveLength(2);
+    expect(taskB(run("not_higher"))).toEqual([]);
+    expect(taskB(run("unsure"))).toEqual([]);
   });
 
   it("重复提交同一答案不增加记录；只有对不上的提交时任务未完成", () => {
