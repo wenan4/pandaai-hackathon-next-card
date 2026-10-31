@@ -1,6 +1,7 @@
 /** Journey observations and research exercises. No combat labels are inputs. */
 import type { Run } from "./types";
 import type { MarketQuote, MarketStage, ResearchMarketCase } from "./market";
+import { relatedCaseIds } from "./market";
 import { centsForShares, requireCents, sharesForCents, sharesForPercent } from "./ledger";
 
 export type Goal = "funding" | "history" | "idea";
@@ -42,6 +43,8 @@ export interface KnowledgeObservation {
   dimension: Knowledge;
   status: KnowledgeStatus;
   evidence_ids: string[];
+  excluded_evidence_ids: string[];
+  disclosure_ids: string[];
   text: string;
   limitations: string[];
 }
@@ -106,6 +109,23 @@ export interface CalibrationResponse {
   affectComparison: "stronger" | "similar" | "weaker" | "unknown";
   actionComparison: "same" | "different" | "unknown";
 }
+export interface PriorExposureDisclosure {
+  id: string;
+  caseId: string;
+  relatedCaseIds: string[];
+  /** The person explicitly says exposure was before the affected tasks/forecasts. */
+  priorToTasks: true;
+  evidenceIds: string[];
+  forecastIds: string[];
+  source: Run["source"];
+}
+export interface CalibrationChange {
+  forecastId: string;
+  before: CalibrationResponse["comparison"];
+  after: "unavailable";
+  evidenceId: string;
+  explanation: string;
+}
 export interface ResearchProfile {
   version: "research-v1";
   enabled: boolean;
@@ -122,6 +142,7 @@ export interface ResearchProfile {
   user_reasons: { id: string; aboutEvidenceId: string; reason: Reason; detail?: string }[];
   forecasts: Forecast[];
   calibration: CalibrationResponse[];
+  prior_exposure_disclosures: PriorExposureDisclosure[];
   profile_changes: ProfileChange[];
   real_world_financial_capacity: "not_assessed";
   stable_trading_type: "not_established";
@@ -129,8 +150,11 @@ export interface ResearchProfile {
 
 const LIMITS = ["本任务的单次观察，不代表稳定能力", "现实财务承受能力未评估"];
 const dimensionNames: Record<Knowledge, string> = { K1: "同期比较", K2: "样本边界", K3: "可用现金" };
-function knowledgeFor(evidence: KnowledgeEvidence[], dimension: Knowledge): KnowledgeObservation {
-  const records = evidence.filter((e) => e.dimension === dimension && e.counted);
+function knowledgeFor(profile: ResearchProfile, dimension: Knowledge): KnowledgeObservation {
+  const disclosures = profile.prior_exposure_disclosures ?? [];
+  const excluded = new Set(disclosures.flatMap((d) => d.evidenceIds));
+  const records = profile.knowledge_evidence.filter((e) => e.dimension === dimension && e.counted && !excluded.has(e.id));
+  const excludedIds = profile.knowledge_evidence.filter((e) => e.dimension === dimension && e.counted && excluded.has(e.id)).map((e) => e.id);
   let status: KnowledgeStatus = "unobserved";
   if (records.length) {
     const hasCorrect = records.some((e) => e.correct);
@@ -145,15 +169,17 @@ function knowledgeFor(evidence: KnowledgeEvidence[], dimension: Knowledge): Know
     needs_confirmation: "本任务的结论仍待确认，可以再核查。",
     conflicting: "不同情境表现不同，保留相反依据供核查。",
   };
-  return { dimension, status, evidence_ids: records.map((e) => e.id), text: `${dimensionNames[dimension]}：${text[status]}`, limitations: LIMITS };
+  return { dimension, status, evidence_ids: records.map((e) => e.id), excluded_evidence_ids: excludedIds,
+    disclosure_ids: disclosures.filter((d) => d.evidenceIds.some((id) => excludedIds.includes(id))).map((d) => d.id),
+    text: `${dimensionNames[dimension]}：${text[status]}`, limitations: excludedIds.length ? [...LIMITS, "本人补充了先前已见，相关原始操作保留但不计独立依据。"] : LIMITS };
 }
 function refresh(profile: ResearchProfile): ResearchProfile {
-  const observations = (["K1", "K2", "K3"] as const).map((d) => knowledgeFor(profile.knowledge_evidence, d));
+  const observations = (["K1", "K2", "K3"] as const).map((d) => knowledgeFor(profile, d));
   return { ...profile, knowledge_observations: observations,
     learning_needs: observations.filter((o) => o.status === "needs_confirmation" || o.status === "assisted" || o.status === "conflicting").map((o) => `${dimensionNames[o.dimension]}：${o.status === "assisted" ? "可在新情境自行练习" : o.status === "conflicting" ? "查看不同情境的依据" : "可先核对这一步"}`) };
 }
 export function emptyResearchProfile(enabled = true, source: Run["source"] = "real"): ResearchProfile {
-  return refresh({ version: "research-v1", enabled, source, journey_observations: [], knowledge_evidence: [], knowledge_observations: [], research_process: [], funding_attempts: [], funding_exposure: [], stated_interest: [], learning_needs: [], help_preference: [], user_reasons: [], forecasts: [], calibration: [], profile_changes: [], real_world_financial_capacity: "not_assessed", stable_trading_type: "not_established" });
+  return refresh({ version: "research-v1", enabled, source, journey_observations: [], knowledge_evidence: [], knowledge_observations: [], research_process: [], funding_attempts: [], funding_exposure: [], stated_interest: [], learning_needs: [], help_preference: [], user_reasons: [], forecasts: [], calibration: [], prior_exposure_disclosures: [], profile_changes: [], real_world_financial_capacity: "not_assessed", stable_trading_type: "not_established" });
 }
 /** Deletes all optional observations; caller persists this replacement immediately. */
 export function revokeResearch(profile: ResearchProfile): ResearchProfile { return emptyResearchProfile(false, profile.source); }
@@ -176,15 +202,73 @@ export function addUserReason(profile: ResearchProfile, id: string, aboutEvidenc
 }
 
 function recordKnowledge(profile: ResearchProfile, evidence: Omit<KnowledgeEvidence, "counted" | "source">, exclusionReason?: string): { profile: ResearchProfile; change: ProfileChange } {
-  const before = knowledgeFor(profile.knowledge_evidence, evidence.dimension).status;
+  const before = knowledgeFor(profile, evidence.dimension).status;
   // A retry of the same item cannot replace its original evidence or count as a new case.
   const duplicate = profile.knowledge_evidence.some((e) => e.questionKey === evidence.questionKey);
   const complete: KnowledgeEvidence = { ...evidence, source: profile.source, counted: !duplicate && !evidence.priorExposure && !evidence.answerExposed && !exclusionReason, ...(exclusionReason ? { exclusion_reason: exclusionReason } : {}) };
   const next = refresh({ ...profile, knowledge_evidence: [...profile.knowledge_evidence, complete] });
-  const after = knowledgeFor(next.knowledge_evidence, evidence.dimension).status;
+  const after = knowledgeFor(next, evidence.dimension).status;
   const change: ProfileChange = { id: `${evidence.id}:change`, dimension: evidence.dimension, before, addedEvidence: evidence.id, after,
     explanation: exclusionReason ?? (duplicate ? "同题重试保留记录，但不增加独立依据。" : evidence.priorExposure || evidence.answerExposed ? "已见案例或答案，本次仅作练习，不增加能力依据。" : before === after ? "新依据已加入；现有观察保持不变。" : "新情境的操作改变了这一步的本局观察。") };
   return { profile: { ...next, profile_changes: [...next.profile_changes, change] }, change };
+}
+
+function hasDeclaredPriorExposure(profile: ResearchProfile, caseId: string): boolean {
+  return (profile.prior_exposure_disclosures ?? []).some((d) => d.relatedCaseIds.includes(caseId));
+}
+function hasShownRelatedHistory(profile: ResearchProfile, caseId: string): boolean {
+  const related = relatedCaseIds(caseId);
+  return profile.research_process.some((a) => !!a.shown && (related.includes(a.caseId) || (!!a.shown.other && related.includes(a.shown.other.caseId))));
+}
+function hasRelatedCalibration(profile: ResearchProfile, caseId: string, exceptForecastId?: string): boolean {
+  const related = relatedCaseIds(caseId);
+  return profile.calibration.some((response) => response.forecastId !== exceptForecastId && related.includes(response.context.caseId));
+}
+function hasRelatedFunding(profile: ResearchProfile, caseId: string): boolean {
+  const related = relatedCaseIds(caseId);
+  return profile.funding_attempts.some((attempt) => related.includes(attempt.caseId));
+}
+
+/** Derived view: the original response and self-reported feelings stay unchanged. */
+export function calibrationForDisplay(profile: ResearchProfile): CalibrationResponse[] {
+  return profile.calibration.map((response) => {
+    const disclosure = (profile.prior_exposure_disclosures ?? []).find((d) => d.forecastIds.includes(response.forecastId));
+    if (!disclosure) return response;
+    return { ...response, comparison: "unavailable", unavailableReason: `本人补充在预期之前已见相关案例（依据 ${disclosure.id}）。`, affectComparison: "unknown", actionComparison: "unknown" };
+  });
+}
+
+/** Only an explicit claim of exposure before these tasks can call this function.
+ * It appends a correction event; ordinary later viewing never calls it and
+ * does not retroactively invalidate an earlier independent operation.
+ */
+export function declarePriorExposure(profile: ResearchProfile, input: { id: string; caseId: string; priorToTasks: true }): { profile: ResearchProfile; changes: ProfileChange[]; calibrationChanges: CalibrationChange[]; recommendation: Recommendation } {
+  if (!profile.enabled) return { profile, changes: [], calibrationChanges: [], recommendation: recommendResearch(profile) };
+  requireId(input.id); requireId(input.caseId);
+  if (input.priorToTasks !== true) throw new Error("需要明确声明在这些任务及预期之前已见");
+  const previous = profile.prior_exposure_disclosures ?? [];
+  if (previous.some((d) => d.id === input.id)) throw new Error("补充依据编号重复");
+  const related = relatedCaseIds(input.caseId);
+  const evidenceIds = profile.knowledge_evidence.filter((e) => {
+    if (related.includes(e.caseId)) return true;
+    if (e.dimension !== "K2") return false;
+    const attempt = profile.research_process.find((a) => e.evidence_ids.includes(a.id));
+    return !!attempt?.shown?.other && related.includes(attempt.shown.other.caseId);
+  }).map((e) => e.id);
+  const forecastIds = profile.forecasts.filter((f) => related.includes(f.caseId)).map((f) => f.id);
+  const alreadyExcluded = new Set(previous.flatMap((d) => d.evidenceIds));
+  const changedDimensions = (["K1", "K2", "K3"] as const).filter((dimension) => profile.knowledge_evidence.some((e) => e.dimension === dimension && e.counted && evidenceIds.includes(e.id) && !alreadyExcluded.has(e.id)));
+  const oldCalibration = calibrationForDisplay(profile);
+  const disclosure: PriorExposureDisclosure = { id: input.id, caseId: input.caseId, relatedCaseIds: [...related], priorToTasks: true, evidenceIds, forecastIds, source: profile.source };
+  let next = refresh({ ...profile, prior_exposure_disclosures: [...previous, disclosure] });
+  const changes = changedDimensions.map((dimension): ProfileChange => ({
+    id: `${input.id}:${dimension}:change`, dimension, before: knowledgeFor(profile, dimension).status,
+    addedEvidence: input.id, after: knowledgeFor(next, dimension).status,
+    explanation: "你补充说在相关任务前已见过案例；原操作保留，但相关依据不再作为未见情境的独立观察。",
+  }));
+  const calibrationChanges = oldCalibration.filter((c) => forecastIds.includes(c.forecastId)).map((c): CalibrationChange => ({ forecastId: c.forecastId, before: c.comparison, after: "unavailable", evidenceId: input.id, explanation: "你补充说在预期之前已见相关案例；原预期、感受和行动保留，但不能再直接比较。" }));
+  next = { ...next, profile_changes: [...next.profile_changes, ...changes] };
+  return { profile: next, changes, calibrationChanges, recommendation: recommendResearch(next) };
 }
 
 /** Whitelisted economic actions only; combat results, card tags and timing cannot feed these rules. */
@@ -228,7 +312,8 @@ export function recommendResearch(profile: ResearchProfile): Recommendation {
   const goal = profile.stated_interest.at(-1);
   const reason = profile.user_reasons.at(-1);
   const chosenHelp = profile.help_preference.at(-1);
-  const lastEvidence = profile.knowledge_evidence.filter((e) => e.counted).at(-1);
+  const invalid = new Set((profile.prior_exposure_disclosures ?? []).flatMap((d) => d.evidenceIds));
+  const lastEvidence = profile.knowledge_evidence.filter((e) => e.counted && !invalid.has(e.id)).at(-1);
   const unresolved = profile.knowledge_observations.find((o) => o.status === "needs_confirmation" || o.status === "conflicting" || o.status === "assisted");
   let task: "D1" | "D2" | null = null;
   let why = "可任选资金安排台或历史对照台作为起点。";
@@ -242,7 +327,7 @@ export function recommendResearch(profile: ResearchProfile): Recommendation {
     why = "你说暂时不感兴趣；两个任务仍可自行选择或跳过。"; kind = "user_reason"; ids = [reason.id];
   } else {
     const limited = [...profile.journey_observations].reverse().find((o) => o.rule_id === "J1-03");
-    const calibration = profile.calibration.find((c) => c.comparison === "matched" && c.affectComparison === "stronger");
+    const calibration = calibrationForDisplay(profile).find((c) => c.comparison === "matched" && c.affectComparison === "stronger");
     const archive = [...profile.journey_observations].reverse().find((o) => o.rule_id === "J2-01");
     if (limited) { task = "D1"; why = "你曾遇到一次无法支付的采购，可以试算另一种安排。"; kind = "purchase_constraint"; ids = limited.evidence_ids; }
     else if (calibration) { task = "D1"; why = "这次自报感受比事前预想更强，可以比较不同参与金额。"; kind = "calibration"; ids = [calibration.forecastId]; }
@@ -425,7 +510,10 @@ export function submitFunding(profile: ResearchProfile, scenario: FundingScenari
   const exposures = (profile.funding_exposure ?? []).filter((e) => e.questionKey === questionKey || e.questionKey === oldQuestionKey || (!e.questionKey && e.caseId === scenario.caseId));
   const help = exposures.reduce<HelpPreference>((highest, e) => HELP_RANK[e.help] > HELP_RANK[highest] ? e.help : highest, submission.help);
   const answerExposed = submission.answerExposed || exposures.some((e) => e.answerExposed);
-  const priorExposure = submission.priorExposure || exposures.some((e) => e.priorExposure);
+  const related = relatedCaseIds(scenario.caseId);
+  const relatedTaskShown = hasShownRelatedHistory(profile, scenario.caseId);
+  const relatedFunding = profile.funding_attempts.some((a) => a.caseId !== scenario.caseId && related.includes(a.caseId));
+  const priorExposure = submission.priorExposure || exposures.some((e) => e.priorExposure) || hasDeclaredPriorExposure(profile, scenario.caseId) || relatedTaskShown || relatedFunding || hasRelatedCalibration(profile, scenario.caseId);
   const record: FundingAttempt = { id: submission.id, caseId: scenario.caseId, scenarioId: scenario.id, questionVersion: submission.questionVersion, plan: { ...submission.plan, recovery: { ...submission.plan.recovery } }, purchaseId: submission.purchaseId, answer: submission.canPay, actualCanPay: purchase.canPay, revisedPlan: { ...submission.revisedPlan, recovery: { ...submission.revisedPlan.recovery } }, help, answerExposed, priorExposure, reason: submission.reason ?? null, timeline, revisedTimeline };
   const withAttempt = { ...profile, funding_attempts: [...profile.funding_attempts, record] };
   const manual = scenario.caseId === "manual-example";
@@ -619,8 +707,8 @@ export function startHistory(profile: ResearchProfile, input: StartHistory): Res
   const previous = profile.research_process.filter((a) => a.caseId === input.caseId && a.questionVersion === input.questionVersion);
   const helpUsed = previous.reduce<HelpPreference>((strongest, a) => HELP_RANK[a.helpUsed] > HELP_RANK[strongest] ? a.helpUsed : strongest, "self");
   // Data previously shown on either side of another comparison is already seen.
-  const shownBefore = profile.research_process.some((a) => !!a.shown && (a.caseId === input.caseId || a.shown.other?.caseId === input.caseId));
-  const attempt: HistoryAttempt = { ...input, priorExposure: input.priorExposure || shownBefore || previous.some((a) => a.priorExposure), schedule: { ...input.schedule }, shown: null, helpUsed, answerExposed: previous.some((a) => a.answerExposed), submitted: false, final: null };
+  const shownBefore = hasShownRelatedHistory(profile, input.caseId) || hasRelatedCalibration(profile, input.caseId) || hasRelatedFunding(profile, input.caseId);
+  const attempt: HistoryAttempt = { ...input, priorExposure: input.priorExposure || shownBefore || hasDeclaredPriorExposure(profile, input.caseId) || previous.some((a) => a.priorExposure), schedule: { ...input.schedule }, shown: null, helpUsed, answerExposed: previous.some((a) => a.answerExposed), submitted: false, final: null };
   return { ...profile, research_process: [...profile.research_process, attempt] };
 }
 /** Only records what was actually shown. A second historical case is optional. */
@@ -633,11 +721,13 @@ export function showHistoryEvidence(profile: ResearchProfile, id: string, primar
     const comparison = a.shown?.primary ?? compareSchedule(primary, a.schedule);
     const otherComparison = oldOther ?? (other ? compareSchedule(other, a.schedule) : undefined);
     const otherId = otherComparison?.caseId;
-    const shownElsewhere = !!otherId && profile.research_process.some((previous) => previous.id !== id && !!previous.shown && (previous.caseId === otherId || previous.shown.other?.caseId === otherId));
+    const related = otherId ? relatedCaseIds(otherId) : [];
+    const shownElsewhere = !!otherId && profile.research_process.some((previous) => previous.id !== id && !!previous.shown && (related.includes(previous.caseId) || (!!previous.shown.other && related.includes(previous.shown.other.caseId))));
+    const relatedPrimaryShown = !!otherId && !!a.shown && related.includes(a.caseId);
     // The relevant fact is exposure *before first display*, not the current
     // seen-set after opening or restoring the page. Older saved attempts did
     // not capture it, so conservatively treat those unknowns as already seen.
-    const alreadySeen = oldOther ? (a.shown?.otherPriorExposure ?? true) : otherPriorExposure || shownElsewhere;
+    const alreadySeen = oldOther ? (a.shown?.otherPriorExposure ?? true) : otherPriorExposure || shownElsewhere || relatedPrimaryShown || (!!otherId && (hasDeclaredPriorExposure(profile, otherId) || hasRelatedCalibration(profile, otherId) || hasRelatedFunding(profile, otherId)));
     return { ...a, shown: { primary: comparison, ...(otherComparison ? { other: otherComparison, otherPriorExposure: alreadySeen } : {}) } };
   });
 }
@@ -661,7 +751,8 @@ export function submitHistory(profile: ResearchProfile, id: string, answers: His
   const process = !answers.comparison || attempt.initialClaim === "unknown" ? "undetermined" : answers.comparison === attempt.initialClaim ? "kept" : "revised";
   let next = updateAttempt(profile, id, (a) => ({ ...a, submitted: true, final: { ...answers, process } }));
   const changes: ProfileChange[] = [];
-  const shared = { caseId: attempt.caseId, independent: attempt.helpUsed === "self" && !attempt.answerExposed && !attempt.priorExposure, help: attempt.helpUsed, answerExposed: attempt.answerExposed, priorExposure: attempt.priorExposure, evidence_ids: [id], };
+  const primaryPrior = attempt.priorExposure || hasDeclaredPriorExposure(profile, attempt.caseId);
+  const shared = { caseId: attempt.caseId, independent: attempt.helpUsed === "self" && !attempt.answerExposed && !primaryPrior, help: attempt.helpUsed, answerExposed: attempt.answerExposed, priorExposure: primaryPrior, evidence_ids: [id], };
   if (answers.comparison) {
     const expected = attempt.shown.primary.direction;
     const result = recordKnowledge(next, { ...shared, id: `${id}:K1`, questionKey: `D2:${attempt.caseId}:benchmark:${attempt.questionVersion}`, dimension: "K1", correct: answers.comparison === expected, detail: `同一日程中资产盈亏 ${(attempt.shown.primary.asset.gainCents / 100).toFixed(2)}，同期基准 ${(attempt.shown.primary.benchmark.gainCents / 100).toFixed(2)} 金币。` });
@@ -670,8 +761,9 @@ export function submitHistory(profile: ResearchProfile, id: string, answers: His
   if (answers.boundary && attempt.shown.other && answers.historyDifference) {
     const expected = direction(attempt.shown.other.asset.gainCents, attempt.shown.primary.asset.gainCents);
     const pair = [attempt.caseId, attempt.shown.other.caseId].sort().join(":");
-    const k2PriorExposure = attempt.priorExposure || !!attempt.shown.otherPriorExposure;
-    const result = recordKnowledge(next, { ...shared, priorExposure: k2PriorExposure, independent: attempt.helpUsed === "self" && !attempt.answerExposed && !k2PriorExposure, id: `${id}:K2`, questionKey: `D2:${pair}:boundary:${attempt.questionVersion}`, dimension: "K2", correct: answers.boundary === "only_samples" && answers.historyDifference === expected, detail: `固定日程下新片段相对原片段为 ${expected}；这只描述样本，不预测未来。` });
+    const k2PriorExposure = primaryPrior || !!attempt.shown.otherPriorExposure || hasDeclaredPriorExposure(profile, attempt.shown.other.caseId);
+    const overlap = relatedCaseIds(attempt.caseId).includes(attempt.shown.other.caseId);
+    const result = recordKnowledge(next, { ...shared, priorExposure: k2PriorExposure, independent: !overlap && attempt.helpUsed === "self" && !attempt.answerExposed && !k2PriorExposure, id: `${id}:K2`, questionKey: `D2:${pair}:boundary:${attempt.questionVersion}`, dimension: "K2", correct: answers.boundary === "only_samples" && answers.historyDifference === expected, detail: `固定日程下新片段相对原片段为 ${expected}；这只描述样本，不预测未来。` }, overlap ? "这两段历史互相重叠，只作相关情境练习，不增加独立依据。" : undefined);
     next = result.profile; changes.push(result.change);
   }
   return { profile: next, changes, recommendation: recommendResearch(next) };
@@ -695,7 +787,9 @@ export function saveForecast(profile: ResearchProfile, forecast: Omit<Forecast, 
   if (profile.forecasts.some((f) => f.id === forecast.id)) throw new Error("预期编号重复");
   if (forecast.amountCents === 0 || !(forecast.lossMin >= 0 && forecast.lossMin <= forecast.lossMax && forecast.lossMax <= 1) || !(forecast.minHealthRatio >= 0 && forecast.minHealthRatio <= 1)) throw new Error("预期条件无效");
   const previous = profile.forecasts.map((f) => f.caseId === forecast.caseId && !f.withdrawn && f.amountCents !== forecast.amountCents ? { ...f, withdrawn: true } : f);
-  return { ...profile, forecasts: [...previous, { ...forecast, withdrawn: false }] };
+  const related = relatedCaseIds(forecast.caseId);
+  const priorExposure = forecast.priorExposure || hasDeclaredPriorExposure(profile, forecast.caseId) || hasShownRelatedHistory(profile, forecast.caseId) || profile.funding_attempts.some((a) => related.includes(a.caseId)) || hasRelatedCalibration(profile, forecast.caseId);
+  return { ...profile, forecasts: [...previous, { ...forecast, priorExposure, withdrawn: false }] };
 }
 export function withdrawForecast(profile: ResearchProfile, id: string): ResearchProfile {
   if (!profile.enabled) return profile;
@@ -726,7 +820,9 @@ export function recordCalibrationFeeling(profile: ResearchProfile, forecastId: s
   if (!profile.enabled) return profile;
   const forecast = profile.forecasts.find((f) => f.id === forecastId);
   if (!forecast || profile.calibration.some((c) => c.forecastId === forecastId)) throw new Error("预期不存在或已记录回应");
-  return { ...profile, calibration: [...profile.calibration, compareSelfForecast(forecast, context, feeling, null)] };
+  const related = relatedCaseIds(forecast.caseId);
+  const priorExposure = forecast.priorExposure || hasDeclaredPriorExposure(profile, forecast.caseId) || hasShownRelatedHistory(profile, forecast.caseId) || profile.funding_attempts.some((a) => related.includes(a.caseId)) || hasRelatedCalibration(profile, forecast.caseId, forecast.id);
+  return { ...profile, calibration: [...profile.calibration, compareSelfForecast({ ...forecast, priorExposure }, context, feeling, null)] };
 }
 /** Then record the voluntary contract action and optional self-reported reason. */
 export function recordCalibrationAction(profile: ResearchProfile, forecastId: string, action: ContractAction, reason?: string): ResearchProfile {
@@ -734,6 +830,8 @@ export function recordCalibrationAction(profile: ResearchProfile, forecastId: st
   const forecast = profile.forecasts.find((f) => f.id === forecastId);
   const current = profile.calibration.find((c) => c.forecastId === forecastId);
   if (!forecast || !current || current.action !== null) throw new Error("请先记录当前感受，且每次只记录一个行动");
-  const compared = { ...compareSelfForecast(forecast, current.context, current.feeling, action), reason: reason ?? null };
+  const related = relatedCaseIds(forecast.caseId);
+  const priorExposure = forecast.priorExposure || hasDeclaredPriorExposure(profile, forecast.caseId) || hasShownRelatedHistory(profile, forecast.caseId) || profile.funding_attempts.some((a) => related.includes(a.caseId)) || hasRelatedCalibration(profile, forecast.caseId, forecast.id);
+  const compared = { ...compareSelfForecast({ ...forecast, priorExposure }, current.context, current.feeling, action), reason: reason ?? null };
   return { ...profile, calibration: profile.calibration.map((c) => c.forecastId === forecastId ? compared : c) };
 }

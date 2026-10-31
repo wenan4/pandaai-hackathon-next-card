@@ -374,3 +374,6 @@ details > :not(summary) { margin-top: 12px; }
   .trace-steps > div { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 8px; }
   .trace-steps small { margin: 0; }
 }
+
+.forecast-panel details { border-top: 0; padding-top: 0; }
+.forecast-panel details > .stack { margin-top: 14px; }

@@ -2,15 +2,17 @@ import "./adventure.css";
 import { h, type Child } from "../ui/dom";
 import { createRun, forkRun, pendingMarketStep, reduceRun } from "./engine";
 import { CARDS, ENEMIES } from "./content";
-import { loadMarketInitial, loadMarketStage, loadResearchCase, type MarketManifest } from "./market";
-import { addUserReason, compareSchedule, emptyResearchProfile, markHistoryHelp, recommendResearch, revokeResearch, setHelpPreference, setResearchGoal, showHistoryEvidence, startHistory, submitHistory, updateJourney, type Direction, type Goal, type HelpPreference, type Reason, type ResearchProfile } from "./research";
+import { loadMarketInitial, loadMarketInitialCase, loadMarketStage, loadResearchCase, type MarketInitialCase, type MarketManifest } from "./market";
+import { addUserReason, compareSchedule, compareSelfForecast, declarePriorExposure, emptyResearchProfile, markHistoryHelp, recommendResearch, revokeResearch, setHelpPreference, setResearchGoal, showHistoryEvidence, startHistory, submitHistory, updateJourney, type Direction, type Goal, type HelpPreference, type Reason, type ResearchProfile } from "./research";
 import type { Run, RunAction } from "./types";
-import { button, coins, deckSummary, details, moneyHistory, note, pill } from "./ui-components";
+import { button, coins, dateText, deckSummary, details, moneyHistory, note, pill } from "./ui-components";
 import { gameView, nodeNames } from "./ui-game";
 import { ResearchUI } from "./ui-research";
 import { makeDemoPath } from "./ui-demo";
 import { mergeFundingExposures, parseFundingExposureArchive, type FundingExposureArchive } from "./ui-exposure";
 import { researchSummary } from "./ui-report";
+import { casesAreRelated, chooseAdventureCase, hasSeenRelatedCase, independentBattleSeed } from "./ui-case";
+import { CalibrationDemoUI } from "./ui-calibration-demo";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const SAVE_KEY = "nextcard:adventure:v0.4";
@@ -29,6 +31,10 @@ let fundingExposureArchive: FundingExposureArchive = { version: 1, createdAt: Da
 let fundingArchiveExpired = false;
 let screen: Screen = "intro";
 let manifest: MarketManifest | null = null;
+let initialCase: MarketInitialCase | null = null;
+let initialCaseLoading = false;
+let initialCaseError: string | null = null;
+let initialCaseVersion = 0;
 let initialError: string | null = null;
 let marketError: string | null = null;
 let marketLoading = false;
@@ -47,6 +53,8 @@ let toastTimer = 0;
 let demoLoading = false;
 let judgeStudyLoading = false;
 let judgeStudy: { label: string; status: string; recommendation: string; help: string }[] | null = null;
+let demoVersion = 0;
+let judgeStudyVersion = 0;
 let requestVersion = 0;
 let idCounter = 0;
 const uid = (prefix: string): string => `${prefix}-${Date.now().toString(36)}-${++idCounter}`;
@@ -115,24 +123,55 @@ function askNewRun(enabled: boolean): void {
   } else startRun(enabled);
 }
 function cancelMarketRequest(): void { requestVersion++; marketLoading = false; marketError = null; }
+function resetInitialCase(): void { initialCaseVersion++; initialCase = null; initialCaseLoading = false; initialCaseError = null; }
+/** Called only after a run has fixed its case; it never fetches other cases' histories. */
+function ensureInitialCase(): void {
+  if (!run || initialCaseLoading || initialCaseError || initialCase?.caseId === run.caseId) return;
+  const caseId = run.caseId; const runId = run.id; const version = ++initialCaseVersion;
+  initialCaseLoading = true; render();
+  void loadMarketInitialCase(caseId, true).then((data) => {
+    if (version !== initialCaseVersion || !run || run.id !== runId || run.caseId !== caseId) return;
+    initialCase = data; initialCaseLoading = false; render();
+  }).catch((error: unknown) => {
+    if (version !== initialCaseVersion || !run || run.id !== runId || run.caseId !== caseId) return;
+    initialCaseLoading = false; initialCaseError = errorMessage(error); render();
+  });
+}
+function retryInitialCase(): void { initialCaseError = null; ensureInitialCase(); }
+function invalidatePendingComparison(existing: ResearchProfile, exposedCase: string): ResearchProfile {
+  if (!existing.enabled) return existing;
+  return { ...existing, calibration: existing.calibration.map((item) => {
+    if (item.action !== null || !casesAreRelated(item.context.caseId, exposedCase)) return item;
+    const forecast = existing.forecasts.find((entry) => entry.id === item.forecastId);
+    if (!forecast) return item;
+    return { ...compareSelfForecast(forecast, { ...item.context, priorExposure: true }, item.feeling, null), reason: item.reason };
+  }) };
+}
 /** External displays reveal a case independently of this real run's natural timeline. */
-function markExternalExposure(caseId: string): void {
+function markExternalExposure(caseId: string, invalidatePending = true): void {
   seenCases.add(caseId);
-  if (realSave?.run.caseId === caseId && realSave.run.status === "active") {
-    realSave = { ...realSave, priorExposure: true };
-    if (run?.source === "real" && run.id === realSave.run.id) priorExposure = true;
+  if (realSave && casesAreRelated(realSave.run.caseId, caseId)) {
+    realSave = { ...realSave, priorExposure: true, profile: invalidatePending ? invalidatePendingComparison(realSave.profile, caseId) : realSave.profile };
+    if (run?.source === "real" && run.id === realSave.run.id) { priorExposure = true; profile = realSave.profile; }
     try { localStorage.setItem(SAVE_KEY, JSON.stringify(realSave)); } catch { storageError = true; }
   }
   try { localStorage.setItem(SEEN_KEY, JSON.stringify([...seenCases])); } catch { storageError = true; }
 }
+/** Showing this run's own T0 history affects later replays, not its current forecast. */
+function markNaturalArchiveSeen(caseId: string): void {
+  if (seenCases.has(caseId)) return;
+  seenCases.add(caseId);
+  try { localStorage.setItem(SEEN_KEY, JSON.stringify([...seenCases])); } catch { storageError = true; }
+}
 function startRun(enabled: boolean): void {
-  cancelMarketRequest();
-  const caseId = manifest?.cases.find((item) => !seenCases.has(item.caseId))?.caseId ?? manifest?.cases[0]?.caseId ?? "lantern-a";
-  priorExposure = seenCases.has(caseId);
-  run = createRun({ caseId, observationEnabled: enabled, source: "real", seed: Math.floor(Math.random() * 0x7fffffff) });
+  if (!manifest?.cases.length) { flash("案例目录尚未准备好，请重试加载。"); if (!initialLoading) loadInitial(); return; }
+  cancelMarketRequest(); resetInitialCase();
+  const chosen = chooseAdventureCase(manifest.cases.map((item) => item.caseId), seenCases);
+  priorExposure = chosen.priorExposure;
+  run = createRun({ caseId: chosen.caseId, observationEnabled: enabled, source: "real", seed: independentBattleSeed() });
   if (Date.now() - fundingExposureArchive.createdAt >= RETENTION_MS && !clearFundingExposures()) fundingExposureArchive = { version: 1, createdAt: Date.now(), entries: [] };
   profile = { ...emptyResearchProfile(enabled), funding_exposure: enabled ? structuredClone(fundingExposureArchive.entries) : [] }; observationStartedAt = Date.now(); selectedCard = null; selectedUpgrade = null; battleFeedback = ""; tutorialStep = 0; entryCents = 0; reserveCents = 0;
-  save(); changeScreen("game");
+  save(); changeScreen("game"); ensureInitialCase();
 }
 function action(next: RunAction): void {
   if (!run) return;
@@ -195,16 +234,37 @@ function loadInitial(): void {
 }
 function restoreReal(): void {
   if (!realSave) { flash("还没有真实旅程记录。"); return; }
-  cancelMarketRequest();
+  cancelMarketRequest(); resetInitialCase();
   run = structuredClone(realSave.run); profile = structuredClone(realSave.profile); if (profile.enabled) profile.funding_exposure = mergeFundingExposures(profile.funding_exposure, fundingExposureArchive.entries); observationStartedAt = realSave.observationStartedAt; priorExposure = realSave.priorExposure ?? false; tutorialStep = restoredTutorial(run, realSave.tutorialStep);
-  changeScreen(run.phase === "ended" ? "report" : "game"); queueMarket();
+  changeScreen(run.phase === "ended" ? "report" : "game"); ensureInitialCase(); queueMarket();
 }
 function settings(): void {
   const state = run?.observationEnabled && profile.enabled;
+  const touchedCases = new Set<string>();
+  if (run) touchedCases.add(run.caseId);
+  for (const attempt of profile.research_process) { if (attempt.shown) { touchedCases.add(attempt.caseId); if (attempt.shown.other) touchedCases.add(attempt.shown.other.caseId); } }
+  for (const attempt of profile.funding_attempts) if (attempt.caseId !== "manual-example") touchedCases.add(attempt.caseId);
+  const caseLabel = (caseId: string): string => { const item = manifest?.cases.find((entry) => entry.caseId === caseId); return `${caseId === run?.caseId ? "本局" : "历史片段"} · ${item ? `${item.name} · ${dateText(item.decisionDate)}` : caseId}`; };
+  const selectedCase = h("select", { "aria-label": "选择要补充的案例" }, [...touchedCases].map((caseId) => h("option", { value: caseId, selected: caseId === run?.caseId }, caseLabel(caseId))));
   const body = h("div", { class: "stack" }, h("p", { class: "hint" }, "进度保存在这台设备的浏览器中，不会默认上传。观察从开启起最多保存 30 天，过期后移除观察并保留游戏进度。"),
     h("p", { class: "hint" }, state ? "当前：生成本局观察。" : "当前：只玩游戏，不保存观察。"),
+    run?.source === "real" ? h("div", { class: "stack" }, h("p", { class: "hint" }, "如果在相关任务和预期之前已看过某个案例，可主动说明。相关观察会按已见处理；玩法和奖励不变。"), h("label", { class: "field" }, "选择要补充的案例", selectedCase), button("我之前看过这个案例", () => {
+      const chosenCaseId = selectedCase.value;
+      if (!touchedCases.has(chosenCaseId)) { flash("请选择已经接触过的案例。"); return; }
+      showDialog("确认你在此前已看过？", h("p", { class: "hint" }, `请仅在相关任务和事前预期之前就了解“${caseLabel(chosenCaseId)}”时确认。此前的操作与自报会保留，相关观察将重新核对；游戏奖励不变。`), [button("确认：此前已看过", () => {
+        if (!run || run.source !== "real") return;
+        try {
+          const caseId = chosenCaseId;
+          const correction = profile.enabled ? declarePriorExposure(profile, { id: uid("disclosure"), caseId, priorToTasks: true }) : null;
+          if (correction) { profile = correction.profile; rememberFundingExposures(profile); save(); }
+          markExternalExposure(caseId, false); save();
+          const affected = (correction?.changes.length ?? 0) + (correction?.calibrationChanges.length ?? 0);
+          showDialog("已记录你的补充", h("p", { class: "hint" }, affected ? `已重新核对 ${affected} 项相关观察。原来的任务操作、预期和感受均保留。` : "之后相关案例会按已见处理；原有操作和游戏进度保留。"), [button("知道了", closeDialog, "secondary")]);
+        } catch (error) { flash(errorMessage(error)); }
+      }, "secondary"), button("取消", closeDialog, "ghost")]);
+    }, "secondary"), priorExposure ? pill("此案例按已见处理", "blue") : null) : null,
     state ? button("撤销观察并删除观察记录", () => showDialog("撤销本局观察？", h("p", { class: "hint" }, run?.source === "real" ? "目标、预期、感受、原因、研究观察与跨局提示暴露记录将删除；冒险进度会保留。" : "当前模拟的观察会删除；真实旅程与其观察保留。"), [button("确认撤销", () => { if (run?.source === "real" && !clearFundingExposures()) { flash("未能删除本地观察记录，请检查存储设置后重试。"); return; } profile = revokeResearch(profile); if (run) run.observationEnabled = false; modal = null; const saved = save(); flash(saved ? "观察已撤销，游戏进度保留。" : "已停止观察，但未能更新本地存档，请检查存储设置。"); }, "danger"), button("返回", closeDialog, "secondary")]), "secondary") : null,
-    button("清除全部本地记录", () => showDialog("清除这台设备的冒险记录？", h("p", { class: "hint" }, "当前冒险与本局观察会删除，此操作无法撤销。旧版 v0.3 存档不受影响。"), [button("确认清除", () => { try { localStorage.removeItem(SAVE_KEY); localStorage.removeItem(SEEN_KEY); localStorage.removeItem(FUNDING_EXPOSURE_KEY); } catch { storageError = true; flash("未能清除浏览器本地记录，请检查存储设置后重试。"); return; } fundingExposureArchive = { version: 1, createdAt: Date.now(), entries: [] }; seenCases.clear(); cancelMarketRequest(); run = null; realSave = null; profile = emptyResearchProfile(); modal = null; changeScreen("intro"); flash("本地冒险记录已清除。"); }, "danger"), button("返回", closeDialog, "secondary")]), "danger"));
+    button("清除全部本地记录", () => showDialog("清除这台设备的冒险记录？", h("p", { class: "hint" }, "当前冒险与本局观察会删除，此操作无法撤销。旧版 v0.3 存档不受影响。"), [button("确认清除", () => { try { localStorage.removeItem(SAVE_KEY); localStorage.removeItem(SEEN_KEY); localStorage.removeItem(FUNDING_EXPOSURE_KEY); } catch { storageError = true; flash("未能清除浏览器本地记录，请检查存储设置后重试。"); return; } fundingExposureArchive = { version: 1, createdAt: Date.now(), entries: [] }; seenCases.clear(); cancelMarketRequest(); resetInitialCase(); resetJudgeDemos(); run = null; realSave = null; profile = emptyResearchProfile(); modal = null; changeScreen("intro"); flash("本地冒险记录已清除。"); }, "danger"), button("返回", closeDialog, "secondary")]), "danger"));
   showDialog("旅程与隐私设置", body, [button("完成", closeDialog, "secondary")]);
 }
 function dataInfo(): void {
@@ -218,7 +278,7 @@ function topbar(): HTMLElement {
 function intro(): HTMLElement {
   return h("div", { class: "intro" }, topbar(), h("main", { class: "intro-hero", id: "main-content" }, h("div", { class: "intro-content" }, h("div", { class: "intro-kicker" }, "一段轻盈的卡牌冒险"), h("h1", null, "下一张牌", h("span", null, "晨光小城 · 守灯之旅")), h("p", { class: "intro-lead" }, "带上你的牌组，穿过晨雾渐散的小城。一路战斗、收集新牌、安排补给，去寻回那盏温暖的灯。"),
     h("div", { class: "intro-actions" }, run ? button(run.phase === "ended" ? "查看上次旅程" : "继续上次旅程", () => { changeScreen(run?.phase === "ended" ? "report" : "game"); queueMarket(); }, "gold", false, "resume") : null,
-      button(run ? "开始新旅程 · 生成观察" : "开始旅程 · 生成本局观察", () => askNewRun(true), "", false, "start-observation"), button("只玩游戏", () => askNewRun(false), "secondary", false, "start-game-only")),
+      button(run ? "开始新旅程 · 生成观察" : "开始旅程 · 生成本局观察", () => askNewRun(true), "", !manifest, "start-observation"), button("只玩游戏", () => askNewRun(false), "secondary", !manifest, "start-game-only")),
     h("p", { class: "intro-note" }, "可选生成本局观察与研究任务。记录仅保存在本机，随时撤销；只玩游戏不记录兴趣、感受或原因。"),
     initialError ? h("div", { class: "notice error", style: "margin-top:14px" }, initialError, " ", button("重试数据", loadInitial, "small secondary", initialLoading)) : null)),
     h("div", { class: "intro-bottom" }, h("div", { class: "intro-feature" }, h("strong", null, "出牌，找到你的组合"), h("span", null, "读懂对手意图，拿新牌，走出自己的打法。")), h("div", { class: "intro-feature" }, h("strong", null, "经营，一路保有选择"), h("span", null, "补给、卡牌与契约共享同一段旅程。")), h("div", { class: "intro-feature" }, h("strong", null, "回望，再试一种可能"), h("span", null, "观察只描述本局，下一步由你选择。"))), h("footer", { class: "footer" }, "虚拟金币不兑换现金 · 历史案例不代表未来 · 现实财务承受能力未评估"));
@@ -253,34 +313,50 @@ function judge(): HTMLElement {
   return h("div", { class: "app-shell" }, topbar(), h("main", { class: "page-grid", id: "main-content" }, h("div", { class: "main-column" }, h("section", { class: "panel stack" }, h("div", { class: "eyebrow" }, "JUDGE'S TABLE"), h("h2", null, "评委面板"), h("p", { class: "hint" }, "真实回放、预设模拟和从决策前状态重新出发的分叉，都会标明来源。后续失效的行动不会冒充真实记录。"), h("div", { class: "button-row" }, pill(current.source === "real" ? "真实记录" : current.source === "fork" ? "模拟 · 分叉" : "模拟 · 预设", current.source === "real" ? "blue" : "gold"), realSave && current.source !== "real" ? button("恢复真实旅程", restoreReal, "small secondary") : null)),
     h("section", { class: "panel stack" }, h("h3", null, "两条模拟路径"), h("p", { class: "hint" }, "调用正式规则与分段行情生成；演示不是玩家的真实行为。"), h("div", { class: "button-row" }, button(demoLoading ? "正在生成…" : "路径甲 · 查看资料", () => void openDemo("A"), "secondary", demoLoading), button(demoLoading ? "正在生成…" : "路径乙 · 购买受限", () => void openDemo("B"), "secondary", demoLoading))),
     h("section", { class: "panel stack" }, h("h3", null, "模拟不同研究表现与帮助"), h("p", { class: "hint" }, "固定相同案例与日程，比较独立完成、提示后完成和待核查三种模拟；不写入真实记录。"), button(judgeStudyLoading ? "正在准备对照…" : "生成研究对照", () => void compareJudgeStudy(), "small secondary", judgeStudyLoading), judgeStudy ? h("div", { class: "item-list" }, judgeStudy.map((item) => h("div", { class: "item" }, h("div", null, h("strong", null, item.label), h("p", null, `${item.status} · ${item.help}`), h("p", null, item.recommendation)), pill("模拟", "gold")))) : null),
+    calibrationDemoUI.render(),
     h("section", { class: "panel stack" }, h("h3", null, "从关键选择前分叉"), h("p", { class: "hint" }, "选择一个检查点，回到当时的合法局面。分叉之后需要重新作选择，原记录不会覆盖。"), checkpoints.length ? h("div", { class: "item-list" }, checkpoints.map((cp) => h("div", { class: "item" }, h("div", null, h("strong", null, `${nodeNames[cp.snapshot.node]} · ${cp.action === "submit-entry" ? "契约参与" : cp.action === "submit-redemption" ? "回收选择" : "历史档案"}`), h("p", null, `当时可用 ${coins(cp.snapshot.wallet.cashCents)} 金币`)), button("从这里分叉", () => { try {
       const exposures = mergeFundingExposures(profile.funding_exposure, fundingExposureArchive.entries);
       const inheritedForecasts = cp.snapshot.node === "N4" || cp.snapshot.node === "N6" ? profile.forecasts.filter((forecast) => forecast.caseId === current.caseId && !forecast.withdrawn).map((forecast) => ({ ...forecast, priorExposure: true })) : [];
       const hadUnplacedForecast = !inheritedForecasts.length && profile.forecasts.some((forecast) => forecast.caseId === current.caseId && !forecast.withdrawn);
-      cancelMarketRequest(); run = forkRun(current, cp.id); priorExposure = true;
+      cancelMarketRequest(); resetInitialCase(); run = forkRun(current, cp.id); priorExposure = true;
       profile = updateJourney({ ...emptyResearchProfile(current.observationEnabled, "fork"), funding_exposure: exposures, forecasts: inheritedForecasts }, run);
-      selectedCard = null; changeScreen("game"); queueMarket();
+      selectedCard = null; changeScreen("game"); ensureInitialCase(); queueMarket();
       if (inheritedForecasts.length) flash("已保留原局事前预期作为模拟参考；分叉不作为可比的新观察。");
       else if (hadUnplacedForecast) flash("此分叉与原预期的先后无法确认，预期不会用于比较。");
     } catch (error) { flash(errorMessage(error)); } }, "small secondary")))) : h("p", { class: "hint" }, "当前记录还没有这些经营检查点。先继续旅程，或打开一条模拟路径。")),
     h("section", { class: "panel stack" }, h("h3", null, "局面、选择与依据"), h("div", { class: "timeline" }, current.history.filter((event) => event.type === "choice" || event.type === "market").slice().reverse().map((event) => h("div", { class: "timeline-item" }, h("strong", null, `${nodeNames[event.node]} · ${event.message}`), h("p", null, `依据 ${event.id}${event.snapshot ? ` · 当时可用 ${coins(event.snapshot.cashCents)} 金币` : ""}`)))), h("p", { class: "hint" }, `当前推荐：${profile.enabled ? recommendResearch(profile).reason : "观察未启用"}`)),
     profile.enabled ? preferencePanel() : null, h("div", { class: "button-row" }, button("回到旅程", () => changeScreen(current.phase === "ended" ? "report" : "game"), "secondary"))), h("aside", { class: "side-column" }, h("section", { class: "panel stack" }, h("h3", null, "分叉边界"), h("p", { class: "hint" }, "改变参与量或回收后，现金、可买项目和后续状态可能改变。分叉不会继承原来的后续感受和理由。")))));
 }
+function resetJudgeDemos(): void {
+  demoVersion++; judgeStudyVersion++;
+  demoLoading = false; judgeStudyLoading = false; judgeStudy = null;
+  calibrationDemoUI.reset();
+}
 async function openDemo(path: "A" | "B"): Promise<void> {
-  if (demoLoading) return; demoLoading = true; render();
+  if (demoLoading) return;
+  const version = ++demoVersion;
+  demoLoading = true; render();
   try {
-    if (!manifest) manifest = await loadMarketInitial();
-    const generated = await makeDemoPath(path, manifest.cases[0]!.caseId);
-    markExternalExposure(generated.caseId); cancelMarketRequest();
-    run = generated; profile = updateJourney({ ...emptyResearchProfile(true, "demo"), funding_exposure: structuredClone(fundingExposureArchive.entries) }, generated); priorExposure = true; demoLoading = false; changeScreen("judge");
+    const available = manifest ?? await loadMarketInitial();
+    if (version !== demoVersion || screen !== "judge") return;
+    manifest = available;
+    const generated = await makeDemoPath(path, available.cases[0]!.caseId);
+    if (version !== demoVersion || screen !== "judge") return;
+    markExternalExposure(generated.caseId); cancelMarketRequest(); resetInitialCase();
+    run = generated; profile = updateJourney({ ...emptyResearchProfile(true, "demo"), funding_exposure: structuredClone(fundingExposureArchive.entries) }, generated); priorExposure = true; changeScreen("judge"); ensureInitialCase();
     flash(`模拟路径${path === "A" ? "甲" : "乙"}已生成，可查看依据或从检查点分叉。`);
-  } catch (error) { demoLoading = false; flash(`生成模拟路径失败：${errorMessage(error)}`); }
+  } catch (error) { if (version === demoVersion && screen === "judge") flash(`生成模拟路径失败：${errorMessage(error)}`); }
+  finally { if (version === demoVersion) { demoLoading = false; if (screen === "judge") render(); } }
 }
 async function compareJudgeStudy(): Promise<void> {
-  if (judgeStudyLoading) return; judgeStudyLoading = true; render();
+  if (judgeStudyLoading) return;
+  const version = ++judgeStudyVersion;
+  judgeStudyLoading = true; render();
   try {
-    if (!manifest) manifest = await loadMarketInitial();
-    const caseId = manifest.cases.find((item) => item.caseId !== run?.caseId)?.caseId ?? manifest.cases[0]!.caseId;
+    const available = manifest ?? await loadMarketInitial();
+    if (version !== judgeStudyVersion || screen !== "judge") return;
+    manifest = available;
+    const caseId = available.cases.find((item) => item.caseId !== run?.caseId)?.caseId ?? available.cases[0]!.caseId;
     const schedule = { startingCashCents: 7200, participationCents: 2000, t1: 0 as const, t2: 0 as const };
     const instances = ["独立完成", "提示后完成", "结论待核查"].map((label) => {
       const id = uid("judge-study");
@@ -288,6 +364,7 @@ async function compareJudgeStudy(): Promise<void> {
       return { label, id, staged };
     });
     const data = await loadResearchCase(caseId, true);
+    if (version !== judgeStudyVersion || screen !== "judge") return;
     const correct = compareSchedule(data, schedule).direction;
     judgeStudy = instances.map((item, index) => {
       let simulated = showHistoryEvidence(item.staged, item.id, data);
@@ -297,10 +374,11 @@ async function compareJudgeStudy(): Promise<void> {
       return { label: item.label, status: result.profile.knowledge_observations.find((observation) => observation.dimension === "K1")?.text ?? "未观察", recommendation: result.recommendation.reason, help: result.recommendation.help === "self" ? "建议自主" : result.recommendation.help === "step" ? "建议分步" : "建议提示" };
     });
     markExternalExposure(caseId);
-    judgeStudyLoading = false; render();
-  } catch (error) { judgeStudyLoading = false; flash(`研究对照加载失败：${errorMessage(error)}`); }
+  } catch (error) { if (version === judgeStudyVersion && screen === "judge") flash(`研究对照加载失败：${errorMessage(error)}`); }
+  finally { if (version === judgeStudyVersion) { judgeStudyLoading = false; if (screen === "judge") render(); } }
 }
-const researchUI = new ResearchUI({ getRun: () => run!, getProfile: () => profile, setProfile, getManifest: () => manifest, back: () => changeScreen(run?.phase === "ended" ? "report" : "game"), refresh: () => render(), notify: flash, uid, isCaseKnown: (caseId) => caseId === run?.caseId && priorExposure, wasCaseSeen: (caseId) => seenCases.has(caseId), markCaseSeen: markExternalExposure });
+const researchUI = new ResearchUI({ getRun: () => run!, getProfile: () => profile, setProfile, getManifest: () => manifest, back: () => changeScreen(run?.phase === "ended" ? "report" : "game"), refresh: () => render(), notify: flash, uid, isCaseKnown: (caseId) => !!run && casesAreRelated(caseId, run.caseId) && priorExposure, wasCaseSeen: (caseId) => hasSeenRelatedCase(seenCases, caseId), markCaseSeen: markExternalExposure });
+const calibrationDemoUI = new CalibrationDemoUI({ refresh: () => render(), isVisible: () => screen === "judge", onExposed: markExternalExposure });
 function render(preserve = true): void {
   const active = preserve ? (document.activeElement as HTMLElement | null)?.dataset.focusKey : undefined;
   const open = preserve ? [...app.querySelectorAll("details[open] > summary")].map((element) => element.textContent ?? "") : [];
@@ -311,7 +389,7 @@ function render(preserve = true): void {
   else if (screen === "report") content = report();
   else if (screen === "judge") content = judge();
   else if (screen === "d1" || screen === "d2") content = h("div", { class: "app-shell" }, topbar(), screen === "d1" ? researchUI.renderFunding() : researchUI.renderHistory());
-  else content = h("div", null, h("div", { class: "app-shell" }, topbar()), gameView({ run, manifest, selectedCard, selectedRetain, selectedUpgrade, entryCents, reserveCents, marketLoading, marketError, battleFeedback, tutorialStep, action, selectCard: (id) => { selectedCard = id; if (id && run?.node === "N1" && tutorialStep < 2) { tutorialStep = 2; save(); } render(); }, selectRetain: (id) => { selectedRetain = id; render(); }, selectUpgrade: (id) => { selectedUpgrade = id; render(); }, setEntry: (amount, redraw) => { entryCents = amount; if (redraw) render(); }, setReserve: (amount) => { reserveCents = amount; }, retryMarket, extraCamp: () => researchUI.campExtras(), openReport: () => changeScreen("report"), openTask: (task) => changeScreen(task), nextTutorial: () => setTutorialStep(tutorialStep + 1), skipTutorial: () => setTutorialStep(4) }));
+  else content = h("div", null, h("div", { class: "app-shell" }, topbar()), gameView({ run, initialCase, initialCaseError, initialCaseLoading, retryInitialCase, selectedCard, selectedRetain, selectedUpgrade, entryCents, reserveCents, marketLoading, marketError, battleFeedback, tutorialStep, action, selectCard: (id) => { selectedCard = id; if (id && run?.node === "N1" && tutorialStep < 2) { tutorialStep = 2; save(); } render(); }, selectRetain: (id) => { selectedRetain = id; render(); }, selectUpgrade: (id) => { selectedUpgrade = id; render(); }, setEntry: (amount, redraw) => { entryCents = amount; if (redraw) render(); }, setReserve: (amount) => { reserveCents = amount; }, retryMarket, extraCamp: () => researchUI.campExtras(), openReport: () => changeScreen("report"), openTask: (task) => changeScreen(task), archiveShown: (caseId) => { if (run?.source === "real") markNaturalArchiveSeen(caseId); else markExternalExposure(caseId); }, nextTutorial: () => setTutorialStep(tutorialStep + 1), skipTutorial: () => setTutorialStep(4) }));
   const wrapper = h("div", { class: `adventure${screen === "game" && run?.phase === "battle" ? " battle-active" : ""}` }, content, storageError ? h("div", { class: "toast", role: "status" }, "浏览器无法保存进度，请检查本地存储设置。") : null, toastMessage ? h("div", { class: "toast", role: "status" }, toastMessage) : null, modal);
   app.replaceChildren(wrapper);
   for (const summary of app.querySelectorAll<HTMLElement>("details > summary")) if (open.includes(summary.textContent ?? "")) (summary.parentElement as HTMLDetailsElement).open = true;
@@ -329,3 +407,4 @@ realSave = readSave();
 if (realSave) { run = realSave.run; profile = realSave.profile; if (profile.enabled) { profile.funding_exposure = fundingArchiveExpired ? [] : mergeFundingExposures(profile.funding_exposure, fundingExposureArchive.entries); rememberFundingExposures(profile); } observationStartedAt = realSave.observationStartedAt; priorExposure = !!realSave.priorExposure || (fundingArchiveExpired && profile.enabled); tutorialStep = restoredTutorial(run, realSave.tutorialStep); save(); }
 render(false);
 loadInitial();
+if (run) ensureInitialCase();

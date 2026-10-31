@@ -6,22 +6,30 @@ export type MarketStage = "entry" | "t1" | "t1-exec" | "t2" | "t2-exec" | "t3" |
   | "exit-after-entry" | "exit-after-t1-exec" | "exit-after-t2-exec";
 export type ExecutionStage = "entry" | "t1-exec" | "t2-exec" | "final-exec";
 
+/** Cases C and D reuse overlapping dates of the same instrument. Treat either
+ * as already exposed when the other is known; this is intentionally conservative.
+ * A fresh array is returned each time so callers cannot mutate the relation.
+ */
+export function relatedCaseIds(caseId: string): string[] {
+  return caseId === "lantern-c" || caseId === "lantern-d" ? ["lantern-c", "lantern-d"] : [caseId];
+}
+
 export interface MarketSeries {
   dates: string[];
   asset: number[];
   benchmark: number[];
 }
-export interface MarketInitialCase {
+export interface MarketCaseSummary {
   caseId: string;
   title: string;
   symbol: string;
   name: string;
   decisionDate: string;
   benchmark: string;
-  history: MarketSeries;
   priceScale: number;
   t0Close: number;
 }
+export interface MarketInitialCase extends MarketCaseSummary { history: MarketSeries }
 export interface MarketManifest {
   schema: string;
   generatedAt: string;
@@ -31,7 +39,7 @@ export interface MarketManifest {
   adjustment: string;
   limitations: string[];
   selection: string;
-  cases: MarketInitialCase[];
+  cases: MarketCaseSummary[];
 }
 export interface MarketQuote {
   caseId: string;
@@ -57,6 +65,7 @@ export interface ResearchMarketCase {
 const stages: readonly MarketStage[] = ["entry", "t1", "t1-exec", "t2", "t2-exec", "t3", "final-exec", "exit-after-entry", "exit-after-t1-exec", "exit-after-t2-exec"];
 const base = import.meta.env.BASE_URL;
 let initial: Promise<MarketManifest> | undefined;
+const initialCases = new Map<string, Promise<MarketInitialCase>>();
 const quotes = new Map<string, Promise<MarketQuote>>();
 const research = new Map<string, Promise<ResearchMarketCase>>();
 
@@ -78,24 +87,51 @@ function validSeries(series: MarketSeries, endDate: string): boolean {
     && series.dates.every((d, i) => validDate(d) && d <= endDate && (i === 0 || d > series.dates[i - 1]!))
     && series.asset.every(positiveInteger) && series.benchmark.every(positiveInteger);
 }
+function onlyKeys(value: object, allowed: readonly string[]): boolean {
+  return Object.keys(value).every((key) => allowed.includes(key));
+}
 async function fetchJson<T>(path: string): Promise<T> {
   const response = await fetch(`${base}data/adventure/${path}`);
   if (!response.ok) throw new MarketDataError(`无法加载市场数据（${response.status}），可重试`);
   return await response.json() as T;
 }
 
-/** Contains past information through each case's T0 only. */
+/** Metadata only. The per-case history is fetched after the run's case is fixed. */
 export function loadMarketInitial(): Promise<MarketManifest> {
-  initial ??= fetchJson<MarketManifest>("manifest.json").then((data) => {
-    if (data.schema !== "adventure-market-v1" || !Array.isArray(data.cases) || data.cases.length < 2) throw new MarketDataError("案例目录不完整");
+  initial ??= fetchJson<MarketManifest>("manifest.v2.json").then((data) => {
+    if (data.schema !== "adventure-market-v2" || !onlyKeys(data, ["schema", "generatedAt", "dataAsOf", "source", "apis", "adjustment", "limitations", "selection", "cases"]) || !Array.isArray(data.cases) || data.cases.length < 2 || new Set(data.cases.map((c) => c.caseId)).size !== data.cases.length) throw new MarketDataError("案例目录不完整");
     for (const c of data.cases) {
       safeCaseId(c.caseId);
       if (!validDate(c.decisionDate) || c.priceScale !== PRICE_SCALE || c.t0Close !== PRICE_SCALE
-        || !validSeries(c.history, c.decisionDate) || c.history.dates.at(-1) !== c.decisionDate) throw new MarketDataError("起始历史数据无效");
+        || !onlyKeys(c, ["caseId", "title", "symbol", "name", "decisionDate", "benchmark", "priceScale", "t0Close"])) throw new MarketDataError("案例目录包含意外行情或元数据无效");
     }
     return data;
   }).catch((error: unknown) => { initial = undefined; throw error; });
   return initial;
+}
+
+/** Only call after fixing the case for this run; contains no dates after T0. */
+export function loadMarketInitialCase(caseId: string, locked: boolean): Promise<MarketInitialCase> {
+  if (!locked) return Promise.reject(new MarketLockedError("请先固定本局案例"));
+  safeCaseId(caseId);
+  let pending = initialCases.get(caseId);
+  if (!pending) {
+    pending = loadMarketInitial().then((manifest) => {
+      const summary = manifest.cases.find((item) => item.caseId === caseId);
+      if (!summary) throw new MarketDataError("案例不在当前数据目录中");
+      return fetchJson<MarketInitialCase>(`initial/${caseId}.json`).then((c) => ({ c, summary }));
+    }).then(({ c, summary }) => {
+      if (c.caseId !== caseId || !validDate(c.decisionDate) || c.priceScale !== PRICE_SCALE || c.t0Close !== PRICE_SCALE
+        || c.decisionDate !== summary.decisionDate || c.symbol !== summary.symbol || c.benchmark !== summary.benchmark
+        || !onlyKeys(c, ["caseId", "title", "symbol", "name", "decisionDate", "benchmark", "priceScale", "t0Close", "history"])
+        || !validSeries(c.history, c.decisionDate) || c.history.dates.at(-1) !== c.decisionDate
+        || !onlyKeys(c.history, ["dates", "asset", "benchmark"])
+        || c.history.asset.at(-1) !== PRICE_SCALE || c.history.benchmark.at(-1) !== PRICE_SCALE) throw new MarketDataError("起始历史数据无效");
+      return c;
+    }).catch((error: unknown) => { initialCases.delete(caseId); throw error; });
+    initialCases.set(caseId, pending);
+  }
+  return pending;
 }
 
 /** unlocked means the corresponding order is locked or the battle time was advanced.
@@ -140,4 +176,4 @@ export function loadResearchCase(caseId: string, locked: boolean): Promise<Resea
 }
 
 /** Test helper, not used to alter the saved observation/exposure history. */
-export function resetMarketCacheForTest(): void { initial = undefined; quotes.clear(); research.clear(); }
+export function resetMarketCacheForTest(): void { initial = undefined; initialCases.clear(); quotes.clear(); research.clear(); }

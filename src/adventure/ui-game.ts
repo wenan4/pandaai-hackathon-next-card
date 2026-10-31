@@ -1,13 +1,16 @@
 import { h, type Child } from "../ui/dom";
 import { availableActions, canPlayCard } from "./engine";
 import { CARDS, ENEMIES, PRICES, ROUTES } from "./content";
-import type { MarketManifest } from "./market";
+import type { MarketInitialCase } from "./market";
 import type { CardInstance, Run, RunAction } from "./types";
 import { button, cardFace, chart, coins, dateText, deckSummary, details, metric, moneyHistory, moneyPanel, note, panel, pill } from "./ui-components";
 
 export interface GameViewContext {
   run: Run;
-  manifest: MarketManifest | null;
+  initialCase: MarketInitialCase | null;
+  initialCaseError: string | null;
+  initialCaseLoading: boolean;
+  retryInitialCase: () => void;
   selectedCard: string | null;
   selectedRetain: string | null;
   selectedUpgrade: string | null;
@@ -27,6 +30,7 @@ export interface GameViewContext {
   extraCamp: () => Child;
   openReport: () => void;
   openTask: (task: "d1" | "d2") => void;
+  archiveShown: (caseId: string) => void;
   nextTutorial: () => void;
   skipTutorial: () => void;
 }
@@ -129,10 +133,11 @@ function shop(ctx: GameViewContext, roadside = false): HTMLElement {
     !roadside && run.archiveOwned ? archiveView(ctx) : null);
 }
 function archiveView(ctx: GameViewContext): HTMLElement {
-  const c = ctx.manifest?.cases.find((item) => item.caseId === ctx.run.caseId); if (!c) return h("p", { class: "hint" }, "正在加载历史档案……");
+  const c = ctx.initialCase?.caseId === ctx.run.caseId ? ctx.initialCase : null;
+  if (!c) return ctx.initialCaseError ? h("div", { class: "stack" }, note(`历史档案暂时无法加载：${ctx.initialCaseError}`, true), button("重试加载档案", ctx.retryInitialCase, "small secondary", ctx.initialCaseLoading)) : h("p", { class: "hint", role: "status" }, "正在加载本局已固定案例的历史档案……");
   const a = c.history.asset; const b = c.history.benchmark;
   const view = details("翻开已购买的历史档案", h("p", { class: "hint" }, `截至 ${dateText(c.decisionDate)} 的资料；绿色为案例资产，金色为${c.benchmark}。两条线各自从同一起点比较，不包含未来行情。`), chart(a, b, "案例资产与同期基准的历史走势"), h("div", { class: "metric-grid" }, metric("案例这一段", `${((a.at(-1)! / a[0]! - 1) * 100).toFixed(1)}%`), metric("同期基准", `${((b.at(-1)! / b[0]! - 1) * 100).toFixed(1)}%`)));
-  view.addEventListener("toggle", () => { if (view.open && !ctx.run.history.some((event) => event.action === "open-archive")) ctx.action({ type: "open-archive" }); });
+  view.addEventListener("toggle", () => { if (!view.open) return; ctx.archiveShown(ctx.run.caseId); if (!ctx.run.history.some((event) => event.action === "open-archive")) ctx.action({ type: "open-archive" }); });
   return view;
 }
 function entryPanel(ctx: GameViewContext): HTMLElement {

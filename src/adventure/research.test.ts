@@ -1,12 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createRun, decisionSnapshot } from "./engine";
+import { calibrationDemoContext, makeCalibrationDemo } from "./calibration-demo";
+import { resetMarketCacheForTest } from "./market";
 import type { ResearchMarketCase } from "./market";
 import {
-  addUserReason, attachFundingFinalQuote, compareSchedule, compareSelfForecast, emptyResearchProfile, evaluateFundingPractice,
+  addUserReason, attachFundingFinalQuote, calibrationForDisplay, compareSchedule, compareSelfForecast, declarePriorExposure, emptyResearchProfile, evaluateFundingPractice,
   evaluateHistoryPractice, fundingQuestionKey, fundingScenarioFromRun, markFundingAnswerExposed, markFundingHelp, markHistoryAnswerExposed, markHistoryHelp,
-  mechanicalFundingExample, observeJourney, recommendResearch, revokeResearch, saveForecast, setResearchGoal,
+  mechanicalFundingExample, observeJourney, recommendResearch, recordCalibrationAction, recordCalibrationFeeling, revokeResearch, saveForecast, setResearchGoal,
   showHistoryEvidence, simulateFundingPlan, startHistory, submitFunding, submitHistory, updateJourney,
 } from "./research";
 import type { CalibrationContext, FixedSchedule, Forecast, ResearchProfile } from "./research";
@@ -17,6 +19,7 @@ function data(id: string): ResearchMarketCase {
 const a = data("lantern-a");
 const b = data("lantern-b");
 const c = data("lantern-c");
+const d = data("lantern-d");
 const schedule: FixedSchedule = { startingCashCents: 7200, participationCents: 4000, t1: 50, t2: 0 };
 function status(profile: ResearchProfile, dimension: string): string | undefined { return profile.knowledge_observations.find((o) => o.dimension === dimension)?.status; }
 function initial(profile: ResearchProfile, id: string, primary = a, priorExposure = false): ResearchProfile {
@@ -177,6 +180,70 @@ describe("data-driven research observations", () => {
     const second = p.knowledge_evidence.find((e) => e.id === "b-a:K2")!;
     expect(second.questionKey).toBe(first.questionKey);
     expect(second.counted).toBe(false);
+  });
+
+  it("C and D are related: later viewing does not erase earlier independent evidence", () => {
+    let p = showHistoryEvidence(initial(emptyResearchProfile(), "first-c", c), "first-c", c);
+    p = submitHistory(p, "first-c", { comparison: compareSchedule(c, schedule).direction, reason: "模拟：核对基准" }).profile;
+    expect(status(p, "K1")).toBe("independent");
+    const original = structuredClone(p.knowledge_evidence[0]);
+    p = initial(p, "later-d", d);
+    expect(p.research_process.at(-1)?.priorExposure).toBe(true);
+    p = showHistoryEvidence(p, "later-d", d);
+    p = submitHistory(p, "later-d", { comparison: compareSchedule(d, schedule).direction, reason: "模拟：重叠片段" }).profile;
+    expect(p.knowledge_evidence[0]).toEqual(original);
+    expect(p.knowledge_evidence.at(-1)).toMatchObject({ priorExposure: true, counted: false });
+    expect(status(p, "K1")).toBe("independent");
+  });
+
+  it("a fresh C/D comparison is labelled related practice rather than independent K2", () => {
+    let p = showHistoryEvidence(initial(emptyResearchProfile(), "pair-cd", c), "pair-cd", c, d);
+    const x = compareSchedule(c, schedule).asset.gainCents;
+    const y = compareSchedule(d, schedule).asset.gainCents;
+    const difference = y > x ? "outperform" : y < x ? "underperform" : "equal";
+    const result = submitHistory(p, "pair-cd", { comparison: compareSchedule(c, schedule).direction, historyDifference: difference, boundary: "only_samples", reason: "模拟：核对重叠片段" });
+    expect(result.profile.knowledge_evidence.find((e) => e.dimension === "K1")).toMatchObject({ counted: true, independent: true });
+    expect(result.profile.knowledge_evidence.find((e) => e.dimension === "K2")).toMatchObject({ counted: false, independent: false, exclusion_reason: "这两段历史互相重叠，只作相关情境练习，不增加独立依据。" });
+  });
+
+  it("explicit prior-exposure disclosure revises only related dimensions without rewriting events", () => {
+    let p = showHistoryEvidence(initial(emptyResearchProfile(true, "demo"), "b-c", b), "b-c", b, c);
+    const bGain = compareSchedule(b, schedule).asset.gainCents;
+    const cGain = compareSchedule(c, schedule).asset.gainCents;
+    p = submitHistory(p, "b-c", { comparison: compareSchedule(b, schedule).direction, historyDifference: cGain > bGain ? "outperform" : cGain < bGain ? "underperform" : "equal", boundary: "only_samples", reason: "模拟：比较两个样本" }).profile;
+    expect([status(p, "K1"), status(p, "K2")]).toEqual(["independent", "independent"]);
+    // Simulated legacy state: the original events predate the new related-case rule.
+    const f = { id: "simulated-forecast", caseId: "lantern-d", amountCents: 4000, lossMin: .1, lossMax: .2, minCashCents: 1000, minHealthRatio: .5, feeling: "mild" as const, action: "continue" as const, priorExposure: false, beforeFuture: true };
+    const ctx: CalibrationContext = { caseId: "lantern-d", node: "N4", amountCents: 4000, referenceValueCents: 3485, cashCents: 3200, health: 30, maxHealth: 42, priorExposure: false, autonomousChoice: true, pendingSettlement: false, forcedOrAutomatic: false, changedGoalOrUnderstanding: false, afterCloseBeforeExecution: true, sameShareBasis: true };
+    let earlier = saveForecast(emptyResearchProfile(true, "demo"), f);
+    earlier = recordCalibrationFeeling(earlier, f.id, ctx, "strong");
+    earlier = recordCalibrationAction(earlier, f.id, "continue", "模拟自报");
+    expect(earlier.calibration[0]?.comparison).toBe("matched");
+    p = { ...p, forecasts: earlier.forecasts, calibration: earlier.calibration };
+    const originals = structuredClone({ tasks: p.research_process, evidence: p.knowledge_evidence, forecasts: p.forecasts, calibration: p.calibration });
+    const result = declarePriorExposure(p, { id: "user-disclosure", caseId: "lantern-d", priorToTasks: true });
+    expect([status(result.profile, "K1"), status(result.profile, "K2")]).toEqual(["independent", "unobserved"]);
+    expect(result.changes).toMatchObject([{ dimension: "K2", before: "independent", after: "unobserved", addedEvidence: "user-disclosure" }]);
+    expect(result.profile.knowledge_observations.find((o) => o.dimension === "K2")).toMatchObject({ excluded_evidence_ids: ["b-c:K2"], disclosure_ids: ["user-disclosure"] });
+    expect(result.calibrationChanges).toMatchObject([{ forecastId: f.id, before: "matched", after: "unavailable", evidenceId: "user-disclosure" }]);
+    expect(calibrationForDisplay(result.profile)[0]).toMatchObject({ comparison: "unavailable", affectComparison: "unknown", actionComparison: "unknown", feeling: "strong", action: "continue" });
+    expect({ tasks: result.profile.research_process, evidence: result.profile.knowledge_evidence, forecasts: result.profile.forecasts, calibration: result.profile.calibration }).toEqual(originals);
+    expect(result.recommendation.reason_type).not.toBe("calibration");
+    expect(result.profile.prior_exposure_disclosures[0]).toMatchObject({ id: "user-disclosure", caseId: "lantern-d", relatedCaseIds: ["lantern-c", "lantern-d"] });
+  });
+
+  it("a disclosure affects pending and later related tasks, and only-play stores nothing", () => {
+    const off = emptyResearchProfile(false);
+    expect(declarePriorExposure(off, { id: "off", caseId: "lantern-c", priorToTasks: true }).profile).toEqual(off);
+    let p = initial(emptyResearchProfile(), "pending-d", d);
+    p = declarePriorExposure(p, { id: "earlier-c", caseId: "lantern-c", priorToTasks: true }).profile;
+    p = showHistoryEvidence(p, "pending-d", d);
+    p = submitHistory(p, "pending-d", { comparison: compareSchedule(d, schedule).direction, reason: "模拟：已见" }).profile;
+    expect(p.knowledge_evidence.at(-1)).toMatchObject({ priorExposure: true, counted: false });
+    const forecast = { id: "later-forecast", caseId: "lantern-d", amountCents: 4000, lossMin: .1, lossMax: .2, minCashCents: 1000, minHealthRatio: .5, feeling: null, action: null, priorExposure: false, beforeFuture: true };
+    p = saveForecast(p, forecast);
+    expect(p.forecasts.at(-1)?.priorExposure).toBe(true);
+    expect(revokeResearch(p).prior_exposure_disclosures).toEqual([]);
   });
 
   it("T33 D1: stops at unaffordable purchase, checks answer, saves and rechecks a revised plan", () => {
@@ -345,5 +412,35 @@ describe("data-driven research observations", () => {
     const p = saveForecast(emptyResearchProfile(), (({ withdrawn: _withdrawn, ...rest }) => rest)(forecast));
     const p2 = saveForecast(p, { ...forecast, id: "f2", amountCents: 3000 });
     expect(p2.forecasts[0]!.withdrawn).toBe(true);
+  });
+
+  it("simulated forecast is saved after the entry order but before actual D quotes and legal N4 actions", async () => {
+    let profile = emptyResearchProfile(true, "demo");
+    const order: string[] = [];
+    resetMarketCacheForTest();
+    vi.stubGlobal("fetch", async (url: string) => {
+      const path = String(url).split("/data/adventure/")[1]!;
+      if (path === "stages/lantern-d/entry.json") {
+        profile = saveForecast(profile, { id: "simulated-before-entry", caseId: "lantern-d", amountCents: 2000,
+          lossMin: .1, lossMax: .2, minCashCents: 1000, minHealthRatio: .5, feeling: "mild", action: "continue", priorExposure: false, beforeFuture: true });
+        order.push("simulated-forecast-saved");
+      }
+      order.push(path);
+      return new Response(readFileSync(join(process.cwd(), "public/data/adventure", path)), { status: 200 });
+    });
+    try {
+      const run = await makeCalibrationDemo();
+      const context = calibrationDemoContext(run);
+      expect(order).toEqual(["simulated-forecast-saved", "stages/lantern-d/entry.json", "stages/lantern-d/t1.json"]);
+      expect(context).toMatchObject({ referenceValueCents: 1743, cashCents: 3900, health: 42, afterCloseBeforeExecution: true });
+      profile = recordCalibrationFeeling(profile, "simulated-before-entry", context, "strong");
+      profile = recordCalibrationAction(profile, "simulated-before-entry", "continue", "模拟测试输入");
+      expect(profile.source).toBe("demo");
+      expect(calibrationForDisplay(profile)[0]).toMatchObject({ comparison: "matched", affectComparison: "stronger", actionComparison: "same", reason: "模拟测试输入" });
+      expect(compareSelfForecast(profile.forecasts[0]!, { ...context, health: 20 }, "strong", "continue")).toMatchObject({ comparison: "unavailable", affectComparison: "unknown" });
+    } finally {
+      vi.unstubAllGlobals();
+      resetMarketCacheForTest();
+    }
   });
 });
