@@ -511,6 +511,10 @@ def export(chosen, groups, bench_close, stats, t_days, as_of):
     reveal = {"header": {**full_header(stats, t_days, as_of), "file": "cases_reveal"}, "rounds": rev_rounds}
     (DATA_DIR / "cases_visible.json").write_text(json.dumps(visible, ensure_ascii=False, separators=(",", ":"), default=_np), encoding="utf-8")
     (DATA_DIR / "cases_reveal.json").write_text(json.dumps(reveal, ensure_ascii=False, indent=1, default=_np), encoding="utf-8")
+    # 每轮单独一个揭晓文件：前端揭晓第 n 轮时只加载这一轮，其他轮的后续走势不会提前进入内存
+    for r in rev_rounds:
+        one = {"header": {**reveal["header"], "file": f"cases_reveal_{r['round_id']}"}, "rounds": [r]}
+        (DATA_DIR / f"cases_reveal_{r['round_id']}.json").write_text(json.dumps(one, ensure_ascii=False, indent=1, default=_np), encoding="utf-8")
     (REPO_ROOT / "src" / "config" / "rounds_act1.json").write_text(json.dumps({
         "_comment": "第一幕命题定稿，由 scripts/build_cases.py 生成，与 public/data/cases_*.json 对齐",
         "rules_version": RULES_VERSION,

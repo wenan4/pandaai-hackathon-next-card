@@ -1,0 +1,186 @@
+{
+ "header": {
+  "schema": "draft（YOU-145 冻结前的临时格式）",
+  "script": "scripts/build_cases.py",
+  "script_version": "cases-0.1.1",
+  "rules_version": "v0.3",
+  "generated_at": "2026-10-31T08:20:01Z",
+  "data_as_of": "20261030",
+  "source": "Panda Data（panda_data 1.0.5）",
+  "apis": [
+   "get_stock_daily_pre",
+   "get_index_daily",
+   "get_index_weights",
+   "get_adj_factor",
+   "get_industry_constituents",
+   "get_trade_cal"
+  ],
+  "pool": "000300.SH + 000905.SH 在决策日 T 的点时成分",
+  "benchmark": "000300.SH 沪深300（筛选前固定）",
+  "adjustment": "前复权，以数据截止日为锚回算；区间收益不受锚点影响，但绝对价位不是当时的成交价",
+  "dividends": "前复权价已包含分红送转的影响（相当于分红再投资）",
+  "volume": "原始成交量（股），未复权；量比 = 当日量 ÷ 之前 20 个非停牌交易日均量（不含当日）",
+  "normalization": "每张卡的价格序列以窗口首日 = 100 归一化；揭晓走势以 T 日收盘 = 100",
+  "timing": {
+   "decision": "T 日收盘后",
+   "reveal_entry": "T+1 开盘",
+   "reveal_exit": "T+20 收盘"
+  },
+  "windows": {
+   "short": 60,
+   "long": 729,
+   "volume": 20,
+   "after": 20
+  },
+  "candidate_decision_days": {
+   "from": "20231101",
+   "to": "20260924",
+   "every_n_trading_days": 5,
+   "count": 142
+  },
+  "filters": {
+   "R1": {
+    "min_r60": 0.1,
+    "require_bench_higher": true,
+    "min_r3y": 0.0
+   },
+   "R2": {
+    "r60_range": [
+     0.0,
+     0.05
+    ],
+    "min_r3y": 0.0,
+    "max_mdd3y": 0.15
+   },
+   "R3": {
+    "vol_mult": 3.0,
+    "min_day_ret": 0.05,
+    "trigger_within": 3,
+    "max_abs_r3y": 0.15,
+    "max_bench_day_ret": 0.02,
+    "max_sector_day_ret": 0.02,
+    "split_factor": 1.1
+   }
+  },
+  "exclusions": [
+   "决策日停牌（trade_status ≠ 0）",
+   "按交易日历对齐；历史不足 729 日、标的或基准窗口缺失，或揭晓窗口不足 20 日",
+   "T+1 停牌、无成交量，或开盘价缺失／非正；排除数量见 sample.excluded_records",
+   "R3：量比回看窗口内有送转除权（ex_factor ≥ 1.1）",
+   "trade_status 为空时：有成交量视为正常交易，否则视为停牌"
+  ],
+  "sample": {
+   "R1": {
+    "evaluated": 108351,
+    "passed": 1311
+   },
+   "R2": {
+    "evaluated": 108351,
+    "passed": 145
+   },
+   "R3": {
+    "evaluated": 108351,
+    "passed": 263,
+    "passed_basic": 513
+   },
+   "excluded_records": {
+    "incomplete_history": 5101,
+    "entry_suspended_or_missing": 15,
+    "incomplete_reveal_window": 5
+   }
+  },
+  "selection": "每轮在通过条件的候选中按 T 日前 60 日平均成交额最高者自动选取；未参考 T 之后数据",
+  "industry_note": "申万一级归属取当前分类（接口不提供历史归属），映射到中证全指一级行业指数作为行业基准",
+  "public_scope": "尚未获得 PandaAI 公开展示许可的明确答复，暂按最保守方式处理：只发布归一化曲线与派生统计，不发布原始行情",
+  "file": "cases_reveal_R3"
+ },
+ "rounds": [
+  {
+   "round_id": "R3",
+   "after": {
+    "offsets": [
+     0,
+     20
+    ],
+    "close": [
+     100.0,
+     109.375,
+     108.1597,
+     104.6007,
+     106.5104,
+     110.2141,
+     118.6053,
+     115.9722,
+     118.0556,
+     116.8981,
+     109.7512,
+     103.1539,
+     100.6944,
+     102.5174,
+     100.9259,
+     111.0243,
+     109.1146,
+     112.8472,
+     120.081,
+     118.4028,
+     115.625
+    ],
+    "open_t1": 100.897,
+    "close_t20": 115.625,
+    "return_close_t_to_close_t20": 0.15625,
+    "return_open_t1_to_close_t20": 0.145971,
+    "t1_open_at_limit_up": false
+   },
+   "source": {
+    "symbol": "000063.SZ",
+    "name": "中兴通讯",
+    "decision_date": "20241218",
+    "windows": {
+     "fox": [
+      "20240918",
+      "20241218"
+     ],
+     "elephant": [
+      "20211215",
+      "20241218"
+     ],
+     "leopard": [
+      "20241120",
+      "20241218"
+     ],
+     "after": [
+      "20241219",
+      "20250116"
+     ]
+    },
+    "benchmark": "000300.SH 沪深300",
+    "claim": "20 个交易日后，C 的收盘价会高于今天。",
+    "evidence_verdict": "insufficient",
+    "checks": {
+     "r3y": 0.093382,
+     "pass_surge": true,
+     "pass_range_bound": true,
+     "pass_basic": true,
+     "trigger_date": "20241217",
+     "sw_l1": "801770",
+     "sector_index": "000994.SH",
+     "bench_day_ret": 0.002605,
+     "sector_day_ret": -0.008483,
+     "pass_bench_quiet": true,
+     "pass_sector_quiet": true,
+     "pass": true,
+     "surges": [
+      {
+       "date": "20241217",
+       "vol_ratio": 6.0059,
+       "day_ret": 0.057735
+      }
+     ]
+    },
+    "selection": "在通过全部条件的候选中，按 T 日前 60 个交易日平均成交额最高者自动选取；三轮标的互不相同。",
+    "hindsight_disclosure": "选取只用 T 日及以前的数据，未参考 T 之后的走势。",
+    "sector_index": "000994.SH 全指通信"
+   }
+  }
+ ]
+}
