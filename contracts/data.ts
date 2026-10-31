@@ -273,7 +273,8 @@ export const TaskBHeaderSchema = z.looseObject({
   signal: z.strictObject({ definition: z.string().min(1), params: z.record(z.string(), z.union([z.number(), z.string()])) }),
   /** 主指标不可与“上涨比例 / 跑赢比例”混用。 */
   primary_metric: z.strictObject({ id: z.enum(["share_positive_return", "share_positive_excess_return"]), label: z.string().min(1) }),
-  execution: z.strictObject({ entry: z.string().min(1), exit: z.string().min(1), horizon_days: z.number().int().positive() }),
+  /** 按自然月持有（狐狸题）时没有固定天数，horizon_days 为 null，持有期由 entry / exit 说明。 */
+  execution: z.strictObject({ entry: z.string().min(1), exit: z.string().min(1), horizon_days: z.number().int().positive().nullable() }),
   /** 股票池冻结：规模、来源、快照日期、已知偏差。 */
   pool: z.strictObject({
     description: z.string().min(1),

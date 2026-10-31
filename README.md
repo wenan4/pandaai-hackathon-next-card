@@ -37,7 +37,7 @@ npm run build      # 类型检查 → 构建到 dist/ → 扫描 dist/ 里有没
 
 揭晓前只加载 `public/data/cases_visible.json`（只有 T 日及以前、相对日期、无代码和名称）。第 n 轮锁定后才请求 `cases_reveal_Rn.json`，且只请求这一轮；`src/data/cases.test.ts` 覆盖了这条规则。
 
-任务 B 的 `taskB_cheetah.json` 是“放量上涨之后”的统计，和第 3 轮同类，所以等第一幕三轮全部锁定后才请求；加载失败只影响任务 B 相关页面。
+任务 B 的三个主题（`taskB_cheetah.json` / `taskB_elephant.json` / `taskB_fox.json`）都是多只股票的汇总统计，等已开始的轮次全部锁定后才按需请求；加载失败只影响任务 B 相关页面。可用主题由 `src/config/taskB_topics.json` 决定，这份清单由 `check_taskB.py --write-manifest` 生成，检查不通过的主题不会出现在界面里。
 
 ### 引擎
 
@@ -45,7 +45,7 @@ npm run build      # 类型检查 → 构建到 dist/ → 扫描 dist/ 里有没
 
 ### 当前范围
 
-第一幕三轮、揭晓、人物卡 / 依据页 / 分享卡、行动习惯、任务 A、任务 B 猎豹题、画像更新、评委面板（含 9 项反例检查）和结构化结果导出都可用。未实现：第二幕、任务 B 的大象题和狐狸题、自我预期校准、分享卡导出图片、引擎输出改用契约类型。完整对照见 [docs/PROJECT.md](docs/PROJECT.md) 第 9 节。
+第一幕三轮、揭晓、人物卡 / 依据页 / 分享卡、行动习惯、任务 A、任务 B 三个主题（猎豹 / 大象 / 狐狸，可换题）、画像更新、评委面板（含 9 项反例检查）和结构化结果导出都可用。未实现：第二幕、自我预期校准、分享卡导出图片、引擎输出改用契约类型。完整对照见 [docs/PROJECT.md](docs/PROJECT.md) 第 9 节。
 
 ## 离线取数
 
@@ -56,8 +56,9 @@ cp .env.example .env   # 填 PANDA_USER / PANDA_PASS
 .venv/bin/python scripts/pd_probe.py            # 接口可行性
 .venv/bin/python scripts/build_cases.py         # 第一幕 R1–R3
 .venv/bin/python scripts/build_taskA.py         # 任务 A 标的 D
-.venv/bin/python scripts/build_taskB.py --topic cheetah   # 任务 B 猎豹题
-.venv/bin/python scripts/check_taskB.py         # 任务 B 逐条口径检查
+.venv/bin/python scripts/build_taskB.py --topic cheetah   # 任务 B 猎豹题（elephant / fox 同理）
+.venv/bin/python scripts/check_taskB.py --topic cheetah   # 任务 B 逐条口径检查
+.venv/bin/python scripts/check_taskB.py --write-manifest  # 检查全部主题，只把通过的写进可用主题清单
 npm run test:py                                 # Python 测试
 ```
 

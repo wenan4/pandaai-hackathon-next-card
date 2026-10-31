@@ -1,6 +1,6 @@
 // 游戏状态与本地存储。只存在本机 localStorage，不上传。
 import { CONTENT_VERSION } from "../config/constants";
-import type { Action, AssistLevel, Card, FollowupId, GameEvent, Profile, Reaction, Stage, Verdict } from "../engine/types";
+import type { Action, AssistLevel, Card, FollowupId, GameEvent, Profile, Reaction, Stage, TopicId, Verdict } from "../engine/types";
 
 export const STORAGE_KEY = "nextcard:v1";
 export const NOTICE_VERSION = "notice-v1";
@@ -37,6 +37,8 @@ export interface TaskAUI {
 }
 
 export interface TaskBUI {
+  /** 开始时锁定的主题；旧记录没有这个字段时按猎豹题处理。开始后不换题，避免两题的作答混成一条证据。 */
+  topic?: TopicId;
   reason: string;
   guessFirst: boolean;
   locked: boolean;

@@ -1,0 +1,183 @@
+{
+ "header": {
+  "schema": "next-card/data@v0.3",
+  "file": "taskB",
+  "topic": "elephant",
+  "script": "scripts/build_taskB.py",
+  "script_version": "taskB-0.2.0",
+  "rules_version": "v0.3",
+  "generated_at": "2026-10-31T14:43:03Z",
+  "data_as_of": "20261030",
+  "source": "Panda Data（panda_data 1.0.5）",
+  "apis": [
+   "get_stock_daily_pre",
+   "get_index_weights",
+   "get_trade_cal"
+  ],
+  "benchmark": "基准组：同股票池、同分段、同持有窗口的全部月末候选日（不是指数）",
+  "adjustment": "前复权日线；收益只用同一复权序列内的比值，不受锚点影响",
+  "dividends": "前复权价已包含分红送转的影响（相当于分红再投资）",
+  "normalization": "不发布价格序列；每条样本只记 C[T+250] / O[T+1] - 1",
+  "selection": "股票池内全部股票、两段内全部月末交易日按同一规则判定，没有人工挑选样本",
+  "public_scope": "尚未获得 PandaAI 公开展示许可的明确答复，暂按最保守方式处理：只发布汇总统计，逐条样本不入库",
+  "question": "过去约一年累计上涨、且最大回撤小于 15% 的股票，之后约一年收益为正的比例比同期一般情况更高吗？",
+  "signal": {
+   "definition": "月末交易日 T：T-250 到 T 的收盘累计收益 > 0，且这 251 个收盘的最大回撤 < 15%",
+   "params": {
+    "lookback_days": 250,
+    "min_return": 0.0,
+    "max_drawdown": 0.15,
+    "candidate_dates": "month_end"
+   }
+  },
+  "primary_metric": {
+   "id": "share_positive_return",
+   "label": "T+1 开盘到 T+250 收盘收益为正的比例"
+  },
+  "execution": {
+   "entry": "T+1 开盘",
+   "exit": "T+250 收盘",
+   "horizon_days": 250
+  },
+  "pool": {
+   "description": "000300.SH + 000905.SH（中证800）在 20210104 的成分股，两段共用",
+   "size": 800,
+   "snapshot_date": "20210104",
+   "bias_note": "快照日之后调入的股票不在池内；之后调出或退市的股票仍保留，缺数据的样本按排除规则计数。中证800 只覆盖大中盘，结论不能推到小盘股"
+  },
+  "segments": {
+   "lookback_from": "20191101",
+   "display": {
+    "from": "20210101",
+    "to": "20221231"
+   },
+   "test": {
+    "from": "20230101",
+    "to": "20241231"
+   }
+  },
+  "thresholds": {
+   "min_samples": 30,
+   "advantage_margin": 0.05,
+   "frozen_at": "2026-10-31T14:45:00Z"
+  },
+  "baseline_rule": "同股票池、同一分段、同持有窗口与同样的数据完整性规则，枚举全部候选，不按信号（也不按信号的反面）筛选",
+  "non_overlap_rule": "信号组与基准组分别按标的、分段排序；保留最早有效记录，之后只保留执行日严格晚于上一条保留记录退出日的记录",
+  "exclusions": [
+   "候选日 = 分段内该股有成交的月末交易日（按月生成候选，之后另做不重叠过滤）",
+   "T-250 到 T 任何一天没有有效收盘（未上市、数据缺失）的候选日不能计算信号，两组都不用（history_incomplete）",
+   "结果窗口越过分段终点的记录剔除（window_crosses_segment）",
+   "进场日没有成交或开盘价缺失（entry_unavailable）、退出日没有成交（exit_unavailable）的记录剔除；不前向填充",
+   "不重叠规则去掉的记录计入 overlap"
+  ],
+  "limitations": [
+   "持有约一年，两年的分段里每只股票每组最多留下一条记录；按月生成候选本身不消除重叠，靠不重叠规则过滤",
+   "基准组几乎都在分段的第一个月末进场，信号组的进场月份分散，两组经历的市场环境不完全相同",
+   "股票池按快照日冻结，存在选择偏差；中证800 只代表大中盘",
+   "不重叠只保证同一只股票的持有期不重叠，不同股票同一时段的样本高度相关，不等于独立样本",
+   "min_samples 和 advantage_margin 只是这道练习的描述标准，不是统计显著性门槛",
+   "未计手续费、滑点、冲击成本和容量；T+1 开盘涨停时实际可能买不到，这类样本保留并在 diagnostics 里计数",
+   "结论只描述这两段样本，不回答这条规则以后是否有效"
+  ],
+  "pool_symbols_without_data": 0,
+  "coverage": {
+   "display": {
+    "candidate_days": 19142,
+    "history_incomplete": 37
+   },
+   "test": {
+    "candidate_days": 18925,
+    "history_incomplete": 0
+   }
+  },
+  "diagnostics": {
+   "display.signal_group.t1_open_limit_up": 0,
+   "display.baseline_group.t1_open_limit_up": 0,
+   "test.signal_group.t1_open_limit_up": 0,
+   "test.baseline_group.t1_open_limit_up": 0
+  }
+ },
+ "display": {
+  "range": {
+   "from": "20210101",
+   "to": "20221231"
+  },
+  "signal_group": {
+   "n_records": 43,
+   "n_symbols": 43,
+   "primary_metric": 0.581395,
+   "mean_return": 0.069137,
+   "covered": [
+    "20210129",
+    "20221209"
+   ],
+   "excluded": {
+    "window_crosses_segment": 146,
+    "entry_unavailable": 0,
+    "exit_unavailable": 2,
+    "overlap": 94
+   }
+  },
+  "baseline_group": {
+   "n_records": 799,
+   "n_symbols": 799,
+   "primary_metric": 0.516896,
+   "mean_return": 0.080005,
+   "covered": [
+    "20210129",
+    "20220913"
+   ],
+   "excluded": {
+    "window_crosses_segment": 10365,
+    "entry_unavailable": 2,
+    "exit_unavailable": 27,
+    "overlap": 7912
+   }
+  },
+  "delta": 0.064499,
+  "meets_threshold": true
+ },
+ "test": {
+  "range": {
+   "from": "20230101",
+   "to": "20241231"
+  },
+  "signal_group": {
+   "n_records": 149,
+   "n_symbols": 149,
+   "primary_metric": 0.52349,
+   "mean_return": 0.054317,
+   "covered": [
+    "20230131",
+    "20241212"
+   ],
+   "excluded": {
+    "window_crosses_segment": 511,
+    "entry_unavailable": 0,
+    "exit_unavailable": 2,
+    "overlap": 406
+   }
+  },
+  "baseline_group": {
+   "n_records": 789,
+   "n_symbols": 789,
+   "primary_metric": 0.195184,
+   "mean_return": -0.180154,
+   "covered": [
+    "20230131",
+    "20240311"
+   ],
+   "excluded": {
+    "window_crosses_segment": 10204,
+    "entry_unavailable": 6,
+    "exit_unavailable": 80,
+    "overlap": 7846
+   }
+  },
+  "delta": 0.328306,
+  "meets_threshold": true
+ },
+ "verdict": {
+  "result": "both_segments"
+ }
+}

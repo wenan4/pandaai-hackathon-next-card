@@ -1,5 +1,5 @@
 {
-  "_comment": "任务 B 结论判定的共用用例：scripts/pd_common/taskb.py 与 src/engine/taskB.ts 必须对每一条给出相同结果。先检查数据，再检查阈值；刚好等于阈值算达到。 组写成 [n_records, primary_metric]；少写一项表示该字段不存在（不是 null）。",
+  "_comment": "任务 B 结论判定的共用用例：scripts/pd_common/taskb.py 与 src/engine/taskB.ts 必须对每一条给出相同结果。先检查数据，再检查阈值；刚好等于阈值算达到。 组写成 [n_records, primary_metric]；少写一项表示该字段不存在（不是 null）。狐狸题的主指标是“超额收益为正的比例”，规则相同，末尾几条用超额口径的数字。",
   "thresholds": { "min_samples": 30, "advantage_margin": 0.05 },
   "cases": [
     {
@@ -61,6 +61,24 @@
       "display": { "signal": [120, 0.41], "baseline": [900, 0.5] },
       "test": { "signal": [90, 0.45], "baseline": [800, 0.52] },
       "expected": { "result": "no_observed_advantage" }
+        },
+    {
+      "name": "狐狸题：超额收益为正比例刚好高出 5 个百分点，两段都达到",
+      "display": { "signal": [9633, 0.505], "baseline": [19099, 0.455] },
+      "test": { "signal": [9099, 0.53], "baseline": [18899, 0.48] },
+      "expected": { "result": "both_segments" }
+    },
+    {
+      "name": "狐狸题：信号 0 次触发，超额指标为空，暂不判断",
+      "display": { "signal": [0, null], "baseline": [19099, 0.505576] },
+      "test": { "signal": [9099, 0.480492], "baseline": [18899, 0.490502] },
+      "expected": { "result": "insufficient_evidence" }
+    },
+    {
+      "name": "狐狸题：只有检验段超额比例高出阈值",
+      "display": { "signal": [9633, 0.496938], "baseline": [19099, 0.505576] },
+      "test": { "signal": [9099, 0.55], "baseline": [18899, 0.490502] },
+      "expected": { "result": "segment_difference", "only_segment": "test" }
     }
   ]
 }

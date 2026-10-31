@@ -4,9 +4,9 @@
   "file": "taskB",
   "topic": "cheetah",
   "script": "scripts/build_taskB.py",
-  "script_version": "taskB-0.1.0",
+  "script_version": "taskB-0.2.0",
   "rules_version": "v0.3",
-  "generated_at": "2026-10-31T11:41:12Z",
+  "generated_at": "2026-10-31T14:42:55Z",
   "data_as_of": "20261030",
   "source": "Panda Data（panda_data 1.0.5）",
   "apis": [
@@ -62,13 +62,13 @@
    "advantage_margin": 0.05,
    "frozen_at": "2026-10-31T11:40:00Z"
   },
-  "baseline_rule": "同股票池、同一分段、同持有窗口与同样的数据完整性规则，枚举全部候选日，不按信号（也不按信号的反面）筛选",
+  "baseline_rule": "同股票池、同一分段、同持有窗口与同样的数据完整性规则，枚举全部候选，不按信号（也不按信号的反面）筛选",
   "non_overlap_rule": "信号组与基准组分别按标的、分段排序；保留最早有效记录，之后只保留执行日严格晚于上一条保留记录退出日的记录",
   "exclusions": [
    "候选日 = 分段内该股有成交的交易日；trade_status 为空时有成交量视为正常交易",
    "此前不足 20 个有成交交易日、前一交易日没有成交，或量比回看窗口内有送转除权（ex_factor ≥ 1.1）的候选日不能计算信号，两组都不用（见 coverage）",
-   "结果窗口（T+1 至 T+20）越过分段终点的记录剔除（window_crosses_segment）",
-   "T+1 没有成交或开盘价缺失（entry_unavailable）、T+20 没有成交（exit_unavailable）的记录剔除",
+   "结果窗口越过分段终点的记录剔除（window_crosses_segment）",
+   "进场日没有成交或开盘价缺失（entry_unavailable）、退出日没有成交（exit_unavailable）的记录剔除；不前向填充",
    "不重叠规则去掉的记录计入 overlap"
   ],
   "limitations": [

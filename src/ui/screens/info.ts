@@ -1,8 +1,9 @@
 // 开局告知、开场、隐私说明、数据说明
-import { VERDICT_COPY } from "../../config/copy";
+import { TOPIC_COPY, VERDICT_COPY } from "../../config/copy";
+import { AVAILABLE_TOPICS } from "../../config/engine";
 import { ROUNDS } from "../../config/rounds";
 import type { DataHeader, TaskAData, TaskBData } from "../../data/cases";
-import type { Verdict } from "../../engine/types";
+import type { TopicId, Verdict } from "../../engine/types";
 import { clearAll, emit, go, NOTICE_VERSION, update, type State } from "../../state/store";
 import { footer, label, topbar } from "../components";
 import { fmtDate, h } from "../dom";
@@ -174,7 +175,7 @@ function headerRows(hd: DataHeader): [string, string][] {
   return rows.filter(([, v]) => typeof v === "string" && v) as [string, string][];
 }
 
-export function dataScreen(s: State, taskA: TaskAData | null, taskB: TaskBData | null): HTMLElement {
+export function dataScreen(s: State, taskA: TaskAData | null, taskB: Partial<Record<TopicId, TaskBData>>): HTMLElement {
   const revealed = revealedSources().sort((a, b) => a.round_id.localeCompare(b.round_id));
   const header = revealed[0]?.header;
   return h(
@@ -218,14 +219,17 @@ export function dataScreen(s: State, taskA: TaskAData | null, taskB: TaskBData |
           h("p", { class: "xs muted" }, String(taskA.header.selection ?? "")),
         )
       : null,
-    h(
-      "section",
-      { class: "panel stack" },
-      h("div", { class: "row" }, h("h2", { class: "grow" }, "任务 B · 猎豹题"), label("real")),
-      taskB
-        ? h("dl", { class: "kv" }, taskBRows(taskB).map(([k, v]) => [h("dt", null, k), h("dd", null, v)]))
-        : h("p", { class: "small text-2" }, "第一幕三轮都揭晓后，这里会显示任务 B 的股票池、分段、样本数和阈值。"),
-    ),
+    AVAILABLE_TOPICS.map((topic) => {
+      const d = taskB[topic];
+      return h(
+        "section",
+        { class: "panel stack" },
+        h("div", { class: "row" }, h("h2", { class: "grow" }, `任务 B · ${TOPIC_COPY[topic].name}`), label("real")),
+        d
+          ? h("dl", { class: "kv" }, taskBRows(d).map(([k, v]) => [h("dt", null, k), h("dd", null, v)]))
+          : h("p", { class: "small text-2" }, "已开始的轮次都揭晓后，这里会显示这个主题的股票池、分段、样本数和阈值。"),
+      );
+    }),
     h(
       "section",
       { class: "panel stack" },

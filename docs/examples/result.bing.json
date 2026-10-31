@@ -183,6 +183,8 @@
     ],
     "topic": null,
     "topic_source": null,
+    "topic_sources": [],
+    "topic_conflict": false,
     "assist": "hint",
     "guess_first": true,
     "reason": "这几轮还没看到你用同期对照判断，这关专门练这一步；这几轮还没看到你拉长窗口判断，这关专门练这一步。"

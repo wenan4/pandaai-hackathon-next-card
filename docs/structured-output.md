@@ -33,7 +33,7 @@ GEN_EXAMPLES=1 npx vitest run src/engine/result.test.ts
 | `profile.flags.o3d` | 第 3 轮看过量价就对未来下判断 | 推荐猎豹题定向练习 |
 | `progress` | K、S1、S2、已完成的任务 A 步骤、`taskB_done`、`ready_for_B` | 决定下一步该练什么 |
 | `habits` | 判断与下一步同向 / 不同向的轮次、证据不足时的选择、跟过的押注形态（是否常押）、每轮决策链 | 只计数，不评高低；常押形态只影响任务 B 主题 |
-| `recommendation` | 路由（R-A1 / R-A2 / R-B / R-B-progress）、任务、步骤、主题与来源、协助档位、是否先猜后验、理由 | 直接决定用户的下一关 |
+| `recommendation` | 路由（R-A1 / R-A2 / R-B / R-B-progress）、任务、步骤、主题与来源（`topic_sources` 列出指向它的全部来源，`topic_conflict` 表示常押形态与物种指向不同主题）、协助档位、是否先猜后验、理由 | 直接决定用户的下一关 |
 | `unknowns` | 这一局还不知道的事 | 提醒读取方不要过度解读 |
 
 ## 与契约的关系

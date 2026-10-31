@@ -80,7 +80,7 @@
 - **路由**：S1 = O1 有两次独立一致，或任务 A 步骤 1 已完成；S2 同理对应 O2 和步骤 2。两者都满足 → 任务 B（R-B / R-B-progress）；否则做任务 A 缺的那一步（R-A1）或两步（R-A2）。完成基础步骤就进 B，不会因为 K 没涨而把人送回 A。
 - **先猜后验**：O4 不是“观察到”时开启，前后两次答案都记录，不强迫改。
 - **协助档位**：按帮助偏好给默认值，用户可随时切换。
-- **任务 B 主题**：用户明确选题 > O3-d 定向练习 > 常押形态 > 物种默认 > 唯一开放主题。目前只开放猎豹题，界面写明“其他主题尚未开放”。
+- **任务 B 主题**：用户明确选题 > O3-d 定向练习 > 常押形态 > 物种默认 > 选题入口。常押形态和物种指向不同主题时，默认高亮常押形态的主题，并同时写出两个来源，由用户决定。三个主题（猎豹 / 大象 / 狐狸）都已发布，任务开始前可以换题，开始后不换。
 
 ### 两条模拟路径的差别（由引擎生成，见 `docs/examples/`）
 
@@ -102,13 +102,19 @@
 |---|---|---|
 | `cases_visible.json`、`cases_reveal_R1–R3.json` | `build_cases.py` | `get_stock_daily_pre`、`get_index_daily`、`get_index_weights`、`get_adj_factor`、`get_industry_constituents`、`get_trade_cal` |
 | `taskA.json` | `build_taskA.py` | `get_stock_daily_pre`、`get_index_daily`、`get_index_weights`、`get_industry_constituents` |
-| `taskB_cheetah.json` | `build_taskB.py` | `get_stock_daily_pre`、`get_index_weights`、`get_adj_factor`、`get_trade_cal` |
+| `taskB_cheetah.json` | `build_taskB.py --topic cheetah` | `get_stock_daily_pre`、`get_index_weights`、`get_adj_factor`、`get_trade_cal` |
+| `taskB_elephant.json` | `build_taskB.py --topic elephant` | `get_stock_daily_pre`、`get_index_weights`、`get_trade_cal` |
+| `taskB_fox.json` | `build_taskB.py --topic fox` | `get_stock_daily_pre`、`get_index_daily`、`get_index_weights`、`get_trade_cal` |
 
 口径：前复权日线；累计收益 = 末值 ÷ 首值 − 1；最大回撤 = 从此前最高点往下跌的最大比例；量比的均量不含触发当日；决策时只看到 T 日收盘及以前；“跟”的演示按 T+1 开盘进、T+20 收盘出，不计费用和滑点。Python 与 TS 的计算公式共用一组固定用例，保证两边结果一致。
 
 **揭晓前不持有未来数据**：揭晓前只加载 `cases_visible.json`（只有相对日期，没有代码和名称）；某一轮锁定后才请求这一轮的揭晓文件。这是防止界面误用未来数据的工程边界，不是防作弊——静态站点的文件用户都能在网络面板里看到。
 
-任务 B 的样本处理见 `docs/taskB-cheetah.md`。结论是“两段都没有观察到达到阈值的优势”：信号组收益为正的比例没有比基准组高出 5 个百分点（两段差值分别是 −0.1 和 −1.1 个百分点），而信号组的平均收益更高，界面会说明比例和均值回答的是不同问题。
+任务 B 三个主题共用股票池（2021-01-04 的中证800 成分）、分段（展示段 2021–2022，检验段 2023–2024）、不重叠规则和判定函数，信号与主指标各自冻结。样本处理分别见 `docs/taskB-cheetah.md`、`docs/taskB-elephant.md`、`docs/taskB-fox.md`：
+
+- **猎豹题**（放量上涨后 20 个交易日）：两段都没有观察到达到阈值的优势。信号组收益为正的比例比基准组低 0.1 和 1.1 个百分点，平均收益却更高，界面会说明比例和均值回答的是不同问题。
+- **大象题**（过去 250 日累计上涨且最大回撤 < 15%，之后 250 日）：两段都达到阈值（+6.4 和 +32.8 个百分点）。但持有约一年，两年分段里每只股票每组最多一条记录，基准组几乎都在分段第一个月末进场，信号组进场月份分散，两组经历的行情不同；界面在两段并排处直接写出这一点，不把达到阈值说成规则有效。
+- **狐狸题**（上月跑赢沪深300，次月超额收益）：两段都没有观察到达到阈值的优势（−0.9 和 −1.0 个百分点）。比较的是超额收益，不是普通上涨。
 
 所有数据文件都通过 `contracts/` 的 schema 校验（`src/data/contracts.test.ts`）。公开展示许可尚未获得 PandaAI 明确答复，暂按最保守方式处理：只发布归一化曲线和派生统计，不发布原始行情。
 
@@ -140,7 +146,7 @@
 | 行动习惯与“换成交易语言来看” | 已实现（第一幕三轮的形态各一次，不会出现常押） |
 | 任务 A 两步、三档协助、先猜后验、帮助暴露 | 已实现 |
 | 任务 B 猎豹题（真实数据、锁定规则、两段对比、五分支结论） | 已实现 |
-| 任务 B 大象题、狐狸题 | 未实现，界面写明尚未开放 |
+| 任务 B 大象题、狐狸题（真实数据、口径检查、可换题） | 已实现；可用主题清单由检查脚本生成 |
 | 评委面板：字段编辑、分叉、撤销、差异解释、9 项反例检查 | 已实现 |
 | 结构化结果导出（人物卡与评委面板） | 已实现，字段说明见 `docs/structured-output.md` |
 | 数据文件通过契约 schema 校验 | 已实现 |

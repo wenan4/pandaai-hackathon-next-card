@@ -96,7 +96,7 @@ export interface Progress {
   ready_for_B: boolean;
 }
 
-export type TopicSource = "user" | "o3d" | "bet" | "style_default" | "chooser" | "only_available";
+export type TopicSource = "user" | "o3d" | "bet" | "style_default" | "only_available";
 
 export interface Plan {
   route: "R-A2" | "R-A1" | "R-B" | "R-B-progress";
@@ -104,6 +104,9 @@ export interface Plan {
   steps: number[];
   topic: TopicId | null;
   topic_source: TopicSource | null;
+  /** 指向所选主题的全部来源；押注与物种指向不同主题时两个来源都在，topic_conflict 为 true。 */
+  topic_sources: TopicSource[];
+  topic_conflict: boolean;
   assist: AssistLevel;
   guess_first: boolean;
   reason: string;

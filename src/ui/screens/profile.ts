@@ -1,26 +1,25 @@
 // 人物卡、依据页、分享卡：全部由引擎输出渲染，组件里不做规则判断。
-import { ACTION_COPY, ASSIST_COPY, BET_FAMILY_COPY, CARD_COPY, OBS_COPY, REACTION_COPY, SPECIES_COPY, STATUS_COPY, TRADING_VIEW, UNKNOWN_YET, VERDICT_COPY } from "../../config/copy";
+import { ACTION_COPY, ASSIST_COPY, BET_FAMILY_COPY, CARD_COPY, OBS_COPY, REACTION_COPY, SPECIES_COPY, STATUS_COPY, TOPIC_COPY, TOPIC_SOURCE_COPY, TRADING_VIEW, UNKNOWN_YET, VERDICT_COPY } from "../../config/copy";
 import { AVAILABLE_TOPICS, ENGINE_CONFIG } from "../../config/engine";
 import { ROUNDS } from "../../config/rounds";
 import { evaluate } from "../../engine/evaluate";
 import { actionHabits, betTopic, FREQUENT_BET_THRESHOLD, type DecisionChain } from "../../engine/habits";
-import { recommend } from "../../engine/recommend";
+import { recommend, selectedTopic, STYLE_TOPIC } from "../../engine/recommend";
 import { structuredResult } from "../../engine/result";
 import { collectRound } from "../../engine/rounds";
-import type { ObsId, ObsInstance, Plan, Profile } from "../../engine/types";
-import { go, update, type State } from "../../state/store";
+import type { ObsId, ObsInstance, Plan, Profile, TopicId } from "../../engine/types";
+import { emit, go, update, type State } from "../../state/store";
 import { footer, label, statusPill, topbar } from "../components";
 import { downloadJson, h } from "../dom";
 import { icon } from "../icons";
 
 const OBS: ObsId[] = ["O1", "O2", "O3", "O4"];
-const TOPIC_NAME = { cheetah: "猎豹题：放量上涨之后", elephant: "大象题", fox: "狐狸题" } as const;
 
 export function currentProfile(s: State) {
   const { profile, progress } = evaluate(s.events, ENGINE_CONFIG);
   // 行动习惯只用来给任务 B 选默认主题，不进入能力观察
   const habits = actionHabits(s.events, ROUNDS);
-  return { profile, progress, habits, plan: recommend(profile, progress, AVAILABLE_TOPICS, { betTopic: betTopic(habits) }) };
+  return { profile, progress, habits, plan: recommend(profile, progress, AVAILABLE_TOPICS, { betTopic: betTopic(habits), userTopic: selectedTopic(s.events) }) };
 }
 
 function exportResult(s: State): void {
@@ -68,16 +67,45 @@ export function startTask(s: State, plan: Plan, profile: Profile): void {
     s.back = s.screen;
     s.screen = s.taskB.submitted ? "updated" : "taskB";
   } else {
-    s.taskB = { reason: plan.reason, guessFirst: plan.guess_first, locked: false, testOpened: false, submitted: false, assist: plan.assist, exposures: [] };
+    if (!plan.topic) return;
+    s.taskB = { topic: plan.topic, reason: plan.reason, guessFirst: plan.guess_first, locked: false, testOpened: false, submitted: false, assist: plan.assist, exposures: [] };
+    // 记下这次任务实际用的主题和来源；只有来源为 user 的记录会被当作用户明确选题
+    emit(s, "taskB", "in_task", "topic_select", { topic: plan.topic, source: plan.topic_source ?? "user" });
     s.back = s.screen;
     s.screen = "taskB";
   }
   window.scrollTo(0, 0);
 }
 
+/** 任务 B 开始前可以换题：每个主题旁注明有哪些来源指向它，默认高亮推荐的那一个。开始后不换。 */
+function topicChooser(plan: Plan, profile: Profile): HTMLElement {
+  const sources = (t: TopicId): string[] => {
+    const out: string[] = [];
+    if (plan.topic === t) out.push(...plan.topic_sources.filter((x) => x !== "style_default" || STYLE_TOPIC[profile.style.species] === t).map((x) => TOPIC_SOURCE_COPY[x]));
+    if (plan.topic !== t && plan.topic_conflict && STYLE_TOPIC[profile.style.species] === t) out.push(TOPIC_SOURCE_COPY.style_default);
+    return out;
+  };
+  const pick = (topic: TopicId) => update((st) => { if (!st.taskB) emit(st, "taskB", "in_task", "topic_select", { topic, source: "user" }); });
+  return h(
+    "div",
+    { class: "stack", style: "gap:6px" },
+    h("span", { class: "xs", style: "color:var(--ink-2)" }, plan.topic_conflict ? "你反复跟的形态和你先翻的牌指向不同题目，先高亮前者，选哪个由你定：" : plan.topic ? "可以换题：" : "选一个主题："),
+    AVAILABLE_TOPICS.map((t) => {
+      const why = sources(t);
+      return h(
+        "button",
+        { class: "opt", style: "text-align:left;font-weight:400;background:var(--paper-2);color:var(--ink)", "aria-pressed": String(plan.topic === t), onclick: () => pick(t) },
+        h("b", null, `${TOPIC_COPY[t].name} · ${TOPIC_COPY[t].title}`),
+        why.length ? h("span", { class: "xs", style: "display:block;color:var(--ink-2)" }, why.join("；")) : null,
+      );
+    }),
+  );
+}
+
 export function planCard(plan: Plan, profile: Profile, s: State): HTMLElement {
-  const resume = plan.task === "B" && s.taskB ? (s.taskB.submitted ? "查看任务 B 结果" : "继续任务 B") : "开始下一关";
-  const title = plan.task === "A" ? `任务 A · 同一起点，再比一次（步骤 ${plan.steps.join("、")}）` : `任务 B · ${plan.topic ? TOPIC_NAME[plan.topic] : "选一个主题"}`;
+  const resume = plan.task === "B" && s.taskB ? (s.taskB.submitted ? "查看任务 B 结果" : "继续任务 B") : plan.task === "B" && !plan.topic ? "先选一个主题" : "开始下一关";
+  const topic = s.taskB?.topic ?? (s.taskB ? "cheetah" : plan.topic);
+  const title = plan.task === "A" ? `任务 A · 同一起点，再比一次（步骤 ${plan.steps.join("、")}）` : `任务 B · ${topic ? `${TOPIC_COPY[topic].name}：${TOPIC_COPY[topic].title}` : "选一个主题"}`;
   return h(
     "section",
     { class: "paper stack", style: "gap:8px" },
@@ -90,7 +118,8 @@ export function planCard(plan: Plan, profile: Profile, s: State): HTMLElement {
       `协助：${ASSIST_COPY[plan.assist].label}（${profile.help_preference.source === "user" ? "你选过的档位" : "按本局帮助使用推断，可随时改"}）`,
       plan.guess_first ? " · 先猜后验" : "",
     ),
-    h("button", { class: "btn", style: "background:var(--ink);color:var(--paper)", onclick: () => update((st) => startTask(st, plan, profile)) }, resume, icon("arrow", 18, 2)),
+    plan.task === "B" && !s.taskB && AVAILABLE_TOPICS.length > 1 ? topicChooser(plan, profile) : null,
+    h("button", { class: "btn", style: "background:var(--ink);color:var(--paper)", disabled: plan.task === "B" && !s.taskB && !plan.topic, onclick: () => update((st) => startTask(st, plan, profile)) }, resume, icon("arrow", 18, 2)),
   );
 }
 

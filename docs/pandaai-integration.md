@@ -12,7 +12,7 @@
 |---|---|---|
 | 默认协助档位（带我做 / 给我提示 / 我自己来） | `profile.help_preference.level` | 字段已实现；接入是构想 |
 | 第一个研究任务练什么（对照、长窗口、两段检验） | `recommendation.route`、`recommendation.steps` | 已实现；接入是构想 |
-| 推荐哪一组数据或主题 | `recommendation.topic`、`topic_source` | 已实现（目前只有猎豹题）；更多主题是构想 |
+| 推荐哪一组数据或主题 | `recommendation.topic`、`topic_source`、`topic_sources`、`topic_conflict` | 已实现（猎豹 / 大象 / 狐狸三题）；更多主题是构想 |
 | 是否先让用户猜一次再看数据 | `recommendation.guess_first` | 已实现；接入是构想 |
 | 哪些观察不能当作已掌握 | `observations.*.status = assisted / uncertain` | 已实现 |
 | 任务完成后更新画像 | `profile.task_observations`、`progress` | 已实现（本地）；回写 PandaAI 账户是构想 |

@@ -1,6 +1,6 @@
 // 界面文案模板。组件只按 ID 取文案，不在组件里拼对错判断。
 import type { JudgementId } from "../engine/evaluate";
-import type { Action, AssistLevel, Card, FollowupId, ObsId, ObsStatus, Reaction, Species, Verdict } from "../engine/types";
+import type { Action, AssistLevel, Card, FollowupId, ObsId, ObsStatus, Reaction, Species, TopicId, TopicSource, Verdict } from "../engine/types";
 
 export const CARD_COPY: Record<Card, { animal: string; title: string }> = {
   fox: { animal: "狐狸", title: "同期对照" },
@@ -93,6 +93,37 @@ export const BET_FAMILY_COPY: Record<"relative_strength" | "steady_trend" | "vol
   relative_strength: "相对强弱",
   steady_trend: "稳健趋势",
   volume_surge: "放量异动",
+};
+
+/**
+ * 任务 B 三个主题的界面文案。指标名不可混用：猎豹题、大象题比“收益为正”，狐狸题比“超额收益为正”。
+ * guess 里的 {m} 换成数据文件头里冻结的 advantage_margin（百分点）。
+ */
+export const TOPIC_COPY: Record<TopicId, { name: string; title: string; metric: string; mean: string; guess: string; caution?: string; next: string }> = {
+  cheetah: {
+    name: "猎豹题", title: "放量上涨之后", metric: "收益为正", mean: "平均收益",
+    guess: "放量上涨之后的 20 个交易日，收益为正的比例会比一般情况高出至少 {m} 个百分点吗？",
+    next: "用 Panda Data 的日线和成交量字段重做同一个信号，换一组股票池或分段，按同样的锁定规则再比一次",
+  },
+  elephant: {
+    name: "大象题", title: "稳步上涨一年之后", metric: "收益为正", mean: "平均收益",
+    guess: "过去一年累计上涨、最大回撤小于 15% 的股票，之后约一年收益为正的比例会比一般情况高出至少 {m} 个百分点吗？",
+    caution: "持有约一年，两年的分段里每只股票每组最多一条记录；基准组几乎都在分段第一个月末进场，信号组的进场月份分散，两组经历的行情不一样。达到阈值也不说明这条规则有效。",
+    next: "用 Panda Data 换更长的历史和不同的股票池，按同一条规则再比一次",
+  },
+  fox: {
+    name: "狐狸题", title: "上个月跑赢之后", metric: "超额为正", mean: "平均超额",
+    guess: "上个月跑赢沪深300的股票，下个月跑赢的比例会比一般情况高出至少 {m} 个百分点吗？",
+    caution: "这里比的是相对沪深300的超额收益（同一起止点），不是普通上涨。",
+    next: "用 Panda Data 的指数日线，把个股和指数放到同一起止点比较超额收益",
+  },
+};
+export const TOPIC_SOURCE_COPY: Record<TopicSource, string> = {
+  user: "你选的",
+  o3d: "第 3 轮看了量价后下了判断",
+  bet: "你反复跟的形态",
+  style_default: "你先翻的牌",
+  only_available: "目前只有这一题",
 };
 
 export const UNKNOWN_YET = ["能不能自己设计验证方法", "希望得到多少帮助（只看了这几轮）", "长期的交易偏好"];

@@ -1,0 +1,28 @@
+{
+  "_comment": "已发布且通过 scripts/check_taskB.py 的任务 B 主题；由 check_taskB.py --write-manifest 生成，不手写",
+  "topics": [
+    "cheetah",
+    "elephant",
+    "fox"
+  ],
+  "checked": {
+    "cheetah": {
+      "records": 45409,
+      "result": "no_observed_advantage",
+      "script_version": "taskB-0.2.0",
+      "data_as_of": "20261030"
+    },
+    "elephant": {
+      "records": 1780,
+      "result": "both_segments",
+      "script_version": "taskB-0.2.0",
+      "data_as_of": "20261030"
+    },
+    "fox": {
+      "records": 56730,
+      "result": "no_observed_advantage",
+      "script_version": "taskB-0.2.0",
+      "data_as_of": "20261030"
+    }
+  }
+}

@@ -1,12 +1,12 @@
 // 任务 A「同一起点，再比一次」、画像更新、任务 B「换一段数据，还成立吗？」
-import { ASSIST_COPY, CHANGE_REASON, OBS_COPY, STATUS_COPY, TASK_STATUS_COPY } from "../../config/copy";
-import { AVAILABLE_TOPICS, ENGINE_CONFIG } from "../../config/engine";
+import { ASSIST_COPY, CHANGE_REASON, OBS_COPY, STATUS_COPY, TASK_STATUS_COPY, TOPIC_COPY } from "../../config/copy";
+import { ENGINE_CONFIG } from "../../config/engine";
 import type { TaskAData, TaskBData } from "../../data/cases";
 import { eventsBeforeTask, profileChanges } from "../../engine/changes";
 import { evaluate } from "../../engine/evaluate";
 import { compareToBenchmark, maxDrawdown, periodReturn } from "../../engine/metrics";
 import { answerKey, type TaskBAnswer } from "../../engine/taskB";
-import type { AssistLevel, ObsInstance } from "../../engine/types";
+import type { AssistLevel, ObsInstance, TopicId } from "../../engine/types";
 import { emit, go, update, type State, type TaskAUI, type TaskBUI } from "../../state/store";
 import { lineChart } from "../chart";
 import { footer, label, topbar } from "../components";
@@ -252,12 +252,12 @@ const ANSWER_OPTS: [TaskBAnswer, string][] = [
   ["no_observed_advantage", "两段都没达到"],
   ["insufficient_evidence", "样本不够，暂不判断"],
 ];
-const WHY_OPTS: [string, string][] = [
+const whyOpts = (topic: TopicId): [string, string][] => [
   ["delta_low", "两段的差值都不到阈值"],
   ["delta_high", "两段的差值都达到阈值"],
   ["delta_one", "只有一段的差值达到阈值"],
   ["samples", "有一组样本少于最少样本数"],
-  ["mean_higher", "信号组的平均收益更高"],
+  ["mean_higher", `信号组的${TOPIC_COPY[topic].mean}更高`],
 ];
 const WHY_OF: Record<TaskBAnswer, string> = {
   both_segments: "delta_high",
@@ -267,16 +267,18 @@ const WHY_OF: Record<TaskBAnswer, string> = {
   insufficient_evidence: "samples",
 };
 const SEG_NAME = { display: "展示段", test: "检验段" } as const;
-const B_HINT = {
-  hint: "先看每组样本是否都够最少样本数，再看两段的差值是否达到阈值。主指标是收益为正的比例，不是平均收益。",
+const bHint = (topic: TopicId) => ({
+  hint: `先看每组样本是否都够最少样本数，再看两段的差值是否达到阈值。主指标是${TOPIC_COPY[topic].metric}的比例，不是${TOPIC_COPY[topic].mean}。`,
   guide: "1. 四组样本数是否都不少于最少样本数？不够就暂不判断\n2. 展示段：信号组比例 − 基准组比例，是否达到阈值？\n3. 检验段同样算一次\n4. 按两段各自是否达到，选对应的结论",
-};
+});
+const topicOf = (d: TaskBData): TopicId => d.header.topic;
 
 const pp = (v: number | null) => (v === null ? "—" : `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)} 个百分点`);
 const pct1 = (v: number | null) => (v === null ? "暂不计算" : `${(v * 100).toFixed(1)}%`);
 
 function segmentCard(d: TaskBData, seg: "display" | "test"): HTMLElement {
   const x = d[seg];
+  const tc = TOPIC_COPY[topicOf(d)];
   const row = (name: string, g: TaskBData["display"]["signal_group"]) =>
     h("tr", null, h("th", { scope: "row" }, name), h("td", { class: "mono" }, `${g.n_records}`), h("td", { class: "mono" }, pct1(g.primary_metric)), h("td", { class: "mono" }, g.mean_return === null ? "—" : fmtPct(g.mean_return)));
   const meanDiff = x.signal_group.mean_return !== null && x.baseline_group.mean_return !== null ? x.signal_group.mean_return - x.baseline_group.mean_return : null;
@@ -289,12 +291,12 @@ function segmentCard(d: TaskBData, seg: "display" | "test"): HTMLElement {
     h(
       "table",
       { class: "btable" },
-      h("thead", null, h("tr", null, h("th", null, ""), h("th", null, "样本"), h("th", null, "收益为正"), h("th", null, "平均收益"))),
+      h("thead", null, h("tr", null, h("th", null, ""), h("th", null, "样本"), h("th", null, tc.metric), h("th", null, tc.mean))),
       h("tbody", null, row("信号组", x.signal_group), row("基准组", x.baseline_group)),
     ),
     h("p", { class: "small", style: "color:var(--ink)" }, `差值（信号组 − 基准组）：`, h("b", { class: "mono" }, pp(x.delta)), x.meets_threshold === null ? "" : x.meets_threshold ? " · 达到阈值" : " · 未达到阈值"),
     disagree
-      ? h("p", { class: "xs", style: "color:var(--ink-2)" }, x.delta! < 0 ? "信号组平均收益更高，但收益为正的比例没有更高：平均数可能被少数大涨样本拉高，更高的平均不代表更常赚到。" : "信号组收益为正更常见，但平均收益更低：更常发生不代表平均收益更高。")
+      ? h("p", { class: "xs", style: "color:var(--ink-2)" }, x.delta! < 0 ? `信号组${tc.mean}更高，但${tc.metric}的比例没有更高：平均数可能被少数大涨样本拉高，更高的平均不代表更常发生。` : `信号组${tc.metric}更常见，但${tc.mean}更低：更常发生不代表平均更高。`)
       : null,
     h("p", { class: "xs", style: "color:var(--ink-2)" }, `信号组覆盖 ${x.signal_group.n_symbols} 只股票，基准组 ${x.baseline_group.n_symbols} 只；不重叠规则去掉信号组 ${x.signal_group.excluded["overlap"] ?? 0} 条。`),
   );
@@ -302,9 +304,10 @@ function segmentCard(d: TaskBData, seg: "display" | "test"): HTMLElement {
 
 /** 两段并排：三列，手机上不需要横向滚动。 */
 function compareCard(d: TaskBData): HTMLElement {
+  const tc = TOPIC_COPY[topicOf(d)];
   const rows: [string, (seg: "display" | "test") => string][] = [
-    ["信号组收益为正", (seg) => pct1(d[seg].signal_group.primary_metric)],
-    ["基准组收益为正", (seg) => pct1(d[seg].baseline_group.primary_metric)],
+    [`信号组${tc.metric}`, (seg) => pct1(d[seg].signal_group.primary_metric)],
+    [`基准组${tc.metric}`, (seg) => pct1(d[seg].baseline_group.primary_metric)],
     // 单位写在下方说明里，窄屏上不折行
     ["差值", (seg) => { const v = d[seg].delta; return v === null ? "—" : `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}`; }],
     ["达到阈值", (seg) => (d[seg].meets_threshold === null ? "暂不判断" : d[seg].meets_threshold ? "达到" : "未达到")],
@@ -320,6 +323,7 @@ function compareCard(d: TaskBData): HTMLElement {
       h("tbody", null, rows.map(([k, f]) => h("tr", null, h("th", { scope: "row" }, k), h("td", { class: "mono" }, f("display")), h("td", { class: "mono" }, f("test"))))),
     ),
     h("p", { class: "xs", style: "color:var(--ink-2)" }, `差值 = 信号组 − 基准组，单位是百分点；高出至少 ${(d.header.thresholds.advantage_margin * 100).toFixed(0)} 个百分点，才算这一段达到。`),
+    tc.caution ? h("p", { class: "xs", style: "color:var(--ink)" }, tc.caution) : null,
   );
 }
 
@@ -345,6 +349,9 @@ function ruleCard(d: TaskBData, locked: boolean): HTMLElement {
 
 export function taskBScreen(s: State, d: TaskBData): HTMLElement {
   const t = s.taskB!;
+  const topic = topicOf(d);
+  const tc = TOPIC_COPY[topic];
+  const margin = (d.header.thresholds.advantage_margin * 100).toFixed(0);
   const assist = t.assist ?? "hint";
   const exposures = t.exposures ?? [];
   const fb = t.feedback;
@@ -414,7 +421,7 @@ export function taskBScreen(s: State, d: TaskBData): HTMLElement {
     assist === "self" || !t.testOpened
       ? null
       : exposures.includes(hintId)
-        ? h("div", { class: "panel row", style: "align-items:flex-start" }, h("span", { style: "color:var(--ele);margin-top:2px" }, icon("bulb", 16, 2)), h("span", { class: "small", style: "white-space:pre-line" }, B_HINT[assist]))
+        ? h("div", { class: "panel row", style: "align-items:flex-start" }, h("span", { style: "color:var(--ele);margin-top:2px" }, icon("bulb", 16, 2)), h("span", { class: "small", style: "white-space:pre-line" }, bHint(topic)[assist]))
         : h("button", { class: "btn-line", onclick: showHint }, icon("bulb", 18), assist === "guide" ? "带我做这一步" : "看一句提示");
 
   const explain = (["display", "test"] as const)
@@ -427,11 +434,11 @@ export function taskBScreen(s: State, d: TaskBData): HTMLElement {
     topbar({ title: "下一关 · 任务 B", onBack: () => go("profile") }),
     h("h1", { class: "display" }, "换一段数据，还成立吗？"),
     h("p", { class: "small text-2" }, `为什么是这关：${t.reason}`),
-    h("p", { class: "xs muted" }, `主题：猎豹题 · 放量上涨之后（${AVAILABLE_TOPICS.length === 1 ? "其他主题尚未开放" : "可在人物卡换题"}）`),
+    h("p", { class: "xs muted" }, `主题：${tc.name} · ${tc.title}（开始后不换题，换题要回到人物卡、在开始前选）`),
     assistBar("B", assist),
     ruleCard(d, t.locked),
     needGuess
-      ? h("section", { class: "stack" }, h("h2", null, "先猜一下（之后可以改）"), h("p", { class: "small text-2" }, `放量上涨之后的 ${d.header.execution.horizon_days} 个交易日，收益为正的比例会比一般情况高出至少 ${(d.header.thresholds.advantage_margin * 100).toFixed(0)} 个百分点吗？`),
+      ? h("section", { class: "stack" }, h("h2", null, "先猜一下（之后可以改）"), h("p", { class: "small text-2" }, tc.guess.replace("{m}", margin)),
           options([["higher", "会"], ["not_higher", "不会"], ["unsure", "说不准"]], undefined, false, guess))
       : null,
     !needGuess && !t.locked
@@ -451,7 +458,7 @@ export function taskBScreen(s: State, d: TaskBData): HTMLElement {
           h("p", { class: "xs muted" }, "只针对这两段样本，不回答这条规则以后灵不灵。"),
           h("div", { class: "stack", style: "gap:6px" }, ANSWER_OPTS.map(([v, l]) => h("button", { class: "opt", "aria-pressed": String(t.answer === v), disabled: !!fb, onclick: () => set((x) => (x.answer = v)) }, l))),
           h("h2", { style: "margin-top:6px" }, "依据哪一条数字？"),
-          h("div", { class: "stack", style: "gap:6px" }, WHY_OPTS.map(([v, l]) => h("button", { class: "opt", style: "font-weight:400", "aria-pressed": String(t.why === v), disabled: !!fb, onclick: () => set((x) => (x.why = v)) }, l))),
+          h("div", { class: "stack", style: "gap:6px" }, whyOpts(topic).map(([v, l]) => h("button", { class: "opt", style: "font-weight:400", "aria-pressed": String(t.why === v), disabled: !!fb, onclick: () => set((x) => (x.why = v)) }, l))),
         )
       : null,
     hint,
@@ -460,8 +467,8 @@ export function taskBScreen(s: State, d: TaskBData): HTMLElement {
           "div",
           { class: "panel stack", style: `border-color:${fb.correct ? "var(--ok)" : "var(--leo)"}` },
           h("span", { class: "small bold", style: `color:${fb.correct ? "var(--ok)" : "var(--leo)"}` }, fb.correct ? "和数据一致" : "和数据对不上"),
-          h("p", { class: "small" }, `${explain}。阈值是 ${(d.header.thresholds.advantage_margin * 100).toFixed(0)} 个百分点。`),
-          fb.why === "mean_higher" ? h("p", { class: "small text-2" }, "这道题的主指标是收益为正的比例；平均收益只作参考，不能替代主指标。") : null,
+          h("p", { class: "small" }, `${explain}。阈值是 ${margin} 个百分点。`),
+          fb.why === "mean_higher" ? h("p", { class: "small text-2" }, `这道题的主指标是${tc.metric}的比例；${tc.mean}只作参考，不能替代主指标。`) : null,
           fb.correct ? null : h("button", { class: "btn-text", style: "align-self:flex-start;padding:0", onclick: retry }, "再试一次（之后的作答记为有帮助）"),
         )
       : null,
@@ -522,13 +529,13 @@ function taskBDoneScreen(s: State, d: TaskBData): HTMLElement {
         : null,
       h("p", { class: "xs muted" }, "O5 只说明你能按给定规则读两段样本，不代表会自己设计回测。"),
     ),
-    h("section", { class: "panel stack" }, h("h2", null, "这两段数据支持的观察"), h("p", { class: "small" }, `${verdictText}。`), h("p", { class: "xs muted" }, "只描述这两段样本，不回答这条规则以后是否有效。")),
+    h("section", { class: "panel stack" }, h("h2", null, `这两段数据支持的观察 · ${TOPIC_COPY[topicOf(d)].name}`), h("p", { class: "small" }, `${verdictText}。`), h("p", { class: "xs muted" }, "只描述这两段样本，不回答这条规则以后是否有效。")),
     h(
       "section",
       { class: "panel stack" },
       h("div", { class: "row" }, h("h2", { class: "grow" }, "在 PandaAI 继续"), label("sample", "示例·未接入")),
       h("ul", { class: "small text-2", style: "margin:0;padding-left:18px" },
-        h("li", null, "用 Panda Data 的日线接口换一组股票池或分段，按同样的锁定规则再比一次"),
+        h("li", null, TOPIC_COPY[topicOf(d)].next),
         h("li", null, "QuantSkills 里关于样本外验证的方法说明（拟参考，未集成）")),
     ),
     h("button", { class: "btn", onclick: () => go("profile") }, "回到人物卡"),

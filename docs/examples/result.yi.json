@@ -223,6 +223,8 @@
     ],
     "topic": null,
     "topic_source": null,
+    "topic_sources": [],
+    "topic_conflict": false,
     "assist": "hint",
     "guess_first": false,
     "reason": "用同期对照判断只见过一次，换一只股票再练一次；拉长窗口判断只见过一次，换一只股票再练一次。"
