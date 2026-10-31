@@ -4,7 +4,7 @@
   "script": "scripts/build_cases.py",
   "script_version": "cases-0.1.0",
   "rules_version": "v0.3",
-  "generated_at": "2026-10-31T07:34:50Z",
+  "generated_at": "2026-10-31T08:25:11Z",
   "data_as_of": "20261030",
   "source": "Panda Data（panda_data 1.0.5）",
   "apis": [

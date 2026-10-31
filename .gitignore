@@ -33,3 +33,6 @@ logs/
 .DS_Store
 .idea/
 .vscode/
+
+# 本地工具配置
+.claude/
