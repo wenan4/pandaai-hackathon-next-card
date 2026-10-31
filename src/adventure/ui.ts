@@ -234,6 +234,10 @@ function action(next: RunAction): void {
     if (run.phase === "ended") screen = "report";
     const changed = previousPhase !== run.phase || previousNode !== run.node;
     render(!changed);
+    if (next.type === "end-turn" && run.phase === "battle") {
+      const hand = app.querySelector<HTMLElement>('[data-scroll-key="battle-hand"]');
+      if (hand) hand.scrollLeft = 0;
+    }
     if (changed) window.scrollTo({ top: 0, behavior: "auto" });
     queueMarket();
   } catch (error) { flash(errorMessage(error)); }
