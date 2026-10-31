@@ -32,7 +32,7 @@ const EXTRA: Record<string, Omit<RoundConfig, "round_id" | "act" | "label" | "cl
     method_card: { id: "long_lens", name: "长镜头", line: "说“稳”之前，把窗口拉长，看累计涨跌和最大回撤。" },
   },
   R3: {
-    key_card: null,
+    key_card: "leopard",
     named_card: null,
     horizon: "future",
     bet_family: "volume_surge",

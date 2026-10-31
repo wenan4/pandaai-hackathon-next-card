@@ -13,6 +13,7 @@ import { getState } from "../state/store";
 import { label } from "../ui/components";
 import { h } from "../ui/dom";
 import { PRESETS } from "./presets";
+import { changeOnlyActions, forkEvents } from "./replay";
 
 export function isJudgeMode(search: string = location.search): boolean {
   return new URLSearchParams(search).get("judge") === "1";
@@ -55,8 +56,10 @@ function baselineSpecs(): { specs: RoundSpec[]; flip: string[]; simulated: boole
   return { specs: p.specs, flip: p.flipOutcomes ?? [], simulated: true };
 }
 
-function compute(specs: RoundSpec[], flip: string[]) {
-  const events = eventsFromSpecs(specs, ROUNDS, "judge");
+function compute(specs: RoundSpec[], flip: string[], fork = false) {
+  const events = ps.baseline === "live"
+    ? fork ? forkEvents(getState().events, specs, ROUNDS) : getState().events
+    : eventsFromSpecs(specs, ROUNDS, "judge");
   const { profile, progress } = evaluate(events, ENGINE_CONFIG);
   const plan = recommend(profile, progress, AVAILABLE_TOPICS);
   const chips = settle(
@@ -67,13 +70,12 @@ function compute(specs: RoundSpec[], flip: string[]) {
 }
 
 function runChecks(specs: RoundSpec[]): PanelState["checks"] {
-  const base = JSON.stringify(evaluate(eventsFromSpecs(specs, ROUNDS, "judge"), ENGINE_CONFIG));
+  const events = compute(specs, [], ps.fork !== null).events;
+  const base = JSON.stringify(evaluate(events, ENGINE_CONFIG));
   const decisions = specs.map((s) => ({ round_id: s.round_id, action: s.action }));
   const a = settle(decisions, outcomes).balance;
   const b = settle(decisions, flipOutcomes(outcomes, ROUNDS.map((r) => r.round_id))).balance;
-  const swapped = specs.map((s) => ({ ...s, action: (s.action === "follow" ? "pass" : "follow") as Action, followupAnswer: null }));
-  const actionSame = JSON.stringify(evaluate(eventsFromSpecs(swapped, ROUNDS, "judge"), ENGINE_CONFIG)) === base;
-  const events = eventsFromSpecs(specs, ROUNDS, "judge");
+  const actionSame = JSON.stringify(evaluate(changeOnlyActions(events), ENGINE_CONFIG)) === base;
   const doubled: GameEvent[] = events.flatMap((e): GameEvent[] => (e.type === "card_flip" ? [e, { ...e, event_id: `${e.event_id}:dup` }] : [e]));
   const dupSame = JSON.stringify(evaluate(doubled, ENGINE_CONFIG)) === base;
   return [
@@ -116,7 +118,7 @@ function editor(specs: RoundSpec[]): HTMLElement {
     else if (d.flips[0] && d.flips[0] === d.flips[1]) ps.error = "同一张牌不能翻两次。";
     else {
       ps.error = null;
-      ps.fork = (ps.fork ?? specs).map((s) => (s.round_id === d.round_id ? { ...d, followupAnswer: q ? (d.followupAnswer ?? null) : undefined } : s));
+      ps.fork = (ps.fork ?? specs).map((s) => (s.round_id === d.round_id ? { ...d, followupAnswer: q ? (FOLLOWUP_COPY[q].options.includes(d.followupAnswer ?? "") ? d.followupAnswer : null) : undefined } : s));
       ps.draft = null;
     }
     rerender();
@@ -128,8 +130,12 @@ function editor(specs: RoundSpec[]): HTMLElement {
     h(
       "div",
       { class: "grid2" },
-      select("首翻", d.flips[0] ?? "", CARD_OPTS, (v) => setDraft({ flips: [v as Card, d.flips[1] as Card].filter(Boolean) as Card[] })),
-      select("次翻", d.flips[1] ?? "", CARD_OPTS, (v) => setDraft({ flips: [d.flips[0] as Card, v as Card].filter(Boolean) as Card[] })),
+      select("首翻", d.flips[0] ?? "", CARD_OPTS, (v) => setDraft({ flips: v ? [v as Card, d.flips[1] as Card].filter(Boolean) as Card[] : [] })),
+      select("次翻", d.flips[1] ?? "", CARD_OPTS, (v) => {
+        if (v && !d.flips[0]) { ps.error = "请先选择首翻，再选择次翻。"; rerender(); return; }
+        ps.error = null;
+        setDraft({ flips: [d.flips[0] as Card, v as Card].filter(Boolean) as Card[] });
+      }),
       select("最终判断", d.final, (["supports", "refutes", "insufficient"] as Verdict[]).map((v) => [v, VERDICT_COPY[v].label]), (v) => setDraft({ final: v as Verdict, followupAnswer: null })),
       select("行动", d.action, (["follow", "pass", "wait"] as Action[]).map((a) => [a, ACTION_COPY[a]]), (v) => setDraft({ action: v as Action, followupAnswer: null })),
     ),
@@ -181,7 +187,7 @@ function whyUnchanged(a: Result, b: Result, base: RoundSpec[], fork: RoundSpec[]
 export function renderPanel(): HTMLElement {
   const { specs, flip, simulated } = baselineSpecs();
   const a = compute(specs, flip);
-  const b = ps.fork ? compute(ps.fork, flip) : null;
+  const b = ps.fork ? compute(ps.fork, flip, true) : null;
   const why = b && ps.fork ? whyUnchanged(a, b, specs, ps.fork) : null;
   const shown = b ?? a;
   const live = getState().events.some((e) => e.type === "final_assessment");

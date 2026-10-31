@@ -29,7 +29,7 @@ export type GameEvent = EventBase &
     | { type: "self_note"; payload: { text: string } }
     | { type: "assist_switch"; payload: { task: "A" | "B"; level: AssistLevel } }
     | { type: "assist_exposure"; payload: { task: "A" | "B"; step: number; content_id: string; kind: "hint" | "demo" | "feedback" } }
-    | { type: "task_step"; payload: { task: "A" | "B"; step: number; phase: "guess" | "submit"; answer: string; correct: boolean | null; aligned?: boolean } }
+    | { type: "task_step"; payload: { task: "A" | "B"; step: number; phase: "guess" | "submit"; answer: string; correct: boolean | null; aligned?: boolean; window_extended?: boolean } }
     | { type: "topic_select"; payload: { topic: TopicId; source: TopicSource } }
     | { type: "notice_ack"; payload: { notice_version: string } }
   );
@@ -42,7 +42,7 @@ export interface RoundConfig {
   label: string;
   claim: string;
   verdict: Verdict;
-  /** 判断这句话最关键的那张牌；未来型说法没有关键牌 */
+  /** 检验说法或证据边界所需的关键牌 */
   key_card: Card | null;
   /** 说法直接点名的那张牌，物种统计时排除它的首翻 */
   named_card: Card | null;
@@ -54,7 +54,7 @@ export interface RoundConfig {
 
 export type ObsId = "O1" | "O2" | "O3" | "O4";
 export type ObsStatus = "observed" | "assisted" | "uncertain" | "not_observed";
-export type Outcome = "consistent" | "conflict" | "unchecked" | "recorded";
+export type Outcome = "consistent" | "conflict" | "unchecked" | "recorded" | "uncertain";
 
 export interface ObsInstance {
   context: string;
@@ -67,6 +67,7 @@ export interface ObsInstance {
 export interface Observation {
   id: ObsId;
   status: ObsStatus;
+  aggregation: "partial" | "repeated" | "mixed" | "single" | "assisted" | "none" | "uncertain";
   /** 只见一次 / 两次一致 / 有冲突 / 有一次不一致 / 未观察到 / 只选了证据不足 */
   summary: string;
   instances: ObsInstance[];
@@ -78,6 +79,7 @@ export type Species = Card | "mixed" | "unknown";
 export interface Profile {
   rules_version: string;
   observations: Record<ObsId, Observation>;
+  task_observations: Record<"O1" | "O2", ObsInstance[]>;
   style: { species: Species; first_flips: { round_id: string; card: Card; counted: boolean }[]; counts: Record<Card, number> };
   help_preference: { level: AssistLevel; source: "user" | "understanding" | "explain_count"; explain_count: number };
   flags: { o3d: boolean };
@@ -85,6 +87,8 @@ export interface Profile {
 
 export interface Progress {
   K: number;
+  S1: boolean;
+  S2: boolean;
   rounds_completed: number;
   taskA_steps_done: number[];
   taskB_done: boolean;

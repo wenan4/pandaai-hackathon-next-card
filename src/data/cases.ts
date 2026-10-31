@@ -93,7 +93,9 @@ export function loadReveal(roundId: string, locked: boolean): Promise<{ header: 
   if (!locked) return Promise.reject(new RevealLockedError(`${roundId} 尚未锁定，不能加载揭晓数据`));
   let p = reveals.get(roundId);
   if (!p) {
-    p = fetchJson<{ header: DataHeader; rounds: RevealRound[] }>(`cases_reveal_${roundId}.json`).then((d) => ({ header: d.header, round: d.rounds[0]! }));
+    p = fetchJson<{ header: DataHeader; rounds: RevealRound[] }>(`cases_reveal_${roundId}.json`)
+      .then((d) => ({ header: d.header, round: d.rounds[0]! }))
+      .catch((error: unknown) => { reveals.delete(roundId); throw error; });
     reveals.set(roundId, p);
   }
   return p;

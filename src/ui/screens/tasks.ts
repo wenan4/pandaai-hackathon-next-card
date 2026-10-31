@@ -2,10 +2,10 @@
 import { ASSIST_COPY, OBS_COPY, STATUS_COPY } from "../../config/copy";
 import type { TaskAData } from "../../data/cases";
 import { compareToBenchmark, maxDrawdown, periodReturn } from "../../engine/metrics";
-import type { AssistLevel, ObsId } from "../../engine/types";
+import type { AssistLevel } from "../../engine/types";
 import { emit, go, update, type State, type TaskAUI } from "../../state/store";
 import { lineChart } from "../chart";
-import { footer, label, statusPill, topbar } from "../components";
+import { footer, label, topbar } from "../components";
 import { fmtPct, h } from "../dom";
 import { icon } from "../icons";
 import { currentProfile, planCard } from "./profile";
@@ -38,7 +38,7 @@ const STEP2_OPTS: [string, string][] = [["supports", "符合"], ["refutes", "不
 function assistBar(t: TaskAUI): HTMLElement {
   const pick = (level: AssistLevel) =>
     update((s) => {
-      if (!s.taskA || s.taskA.assist === level) return;
+      if (!s.taskA) return;
       s.taskA.assist = level;
       emit(s, "taskA", "in_task", "assist_switch", { task: "A", level });
     });
@@ -85,9 +85,10 @@ export function taskAScreen(s: State, d: TaskAData): HTMLElement {
   const submit = () =>
     update((st) => {
       const x = st.taskA!;
-      if (!x.answer) return;
+      if (!x.answer || x.feedback?.step === step || (step === 1 ? !x.aligned : !x.windowExtended)) return;
       const correct = x.answer === (step === 1 ? step1Answer(d) : step2Answer(d));
-      emit(st, "taskA", "in_task", "task_step", { task: "A", step, phase: "submit", answer: x.answer, correct, aligned: step === 1 ? x.aligned : undefined });
+      emit(st, "taskA", "in_task", "task_step", { task: "A", step, phase: "submit", answer: x.answer, correct, aligned: step === 1 ? x.aligned : undefined, window_extended: step === 2 ? x.windowExtended : undefined });
+      emit(st, "taskA", "in_task", "assist_exposure", { task: "A", step, content_id: `A${step}-feedback`, kind: "feedback" });
       x.feedback = { step, answer: x.answer, correct };
     });
   const guess = (v: string) =>
@@ -101,6 +102,7 @@ export function taskAScreen(s: State, d: TaskAData): HTMLElement {
   const next = () =>
     update((st) => {
       const x = st.taskA!;
+      if (!x.feedback?.correct || x.feedback.step !== step) return;
       if (lastStep) {
         x.done = true;
         st.back = st.screen;
@@ -111,6 +113,8 @@ export function taskAScreen(s: State, d: TaskAData): HTMLElement {
         x.guess = undefined;
         x.answer = undefined;
         x.readings = false;
+        x.windowExtended = false;
+        x.feedback = undefined;
       }
       window.scrollTo(0, 0);
     });
@@ -150,29 +154,21 @@ export function taskAScreen(s: State, d: TaskAData): HTMLElement {
   } else {
     const r = periodReturn(d.step2.series)!;
     const m = maxDrawdown(d.step2.series)!;
-    const showReadings = () =>
-      update((st) => {
-        const x = st.taskA!;
-        if (x.readings) return;
-        x.readings = true;
-        emit(st, "taskA", "in_task", "assist_exposure", { task: "A", step: 2, content_id: "A2-readings", kind: "demo" });
-      });
     body = [
       h("p", { class: "small text-2" }, `把窗口从 60 个交易日拉长到约 3 年，核对：${d.step2.claim}`),
-      h(
+      needGuess || !t.windowExtended ? h("button", { class: "btn-line", disabled: needGuess, onclick: () => set((x) => (x.windowExtended = true)) }, needGuess ? "先猜一下，再打开长窗口" : "把窗口拉长到近 3 年") : h(
         "section",
         { class: "paper stack" },
         h("span", { class: "xs muted" }, "D 近 3 年，起点 = 100"),
         lineChart({ series: [{ values: d.step2.series, color: "var(--ele-ink)" }], baseline: 100, height: 150, label: "D 近 3 年走势" }),
-        t.readings
-          ? h("div", { class: "grid2" }, h("div", null, h("div", { class: "xs muted" }, "累计涨跌"), h("div", { class: "mono bold" }, fmtPct(r))), h("div", null, h("div", { class: "xs muted" }, "最大回撤"), h("div", { class: "mono bold" }, `${(m * 100).toFixed(1)}%`)))
-          : h("button", { class: "btn-text", style: "align-self:flex-start;padding:0;color:var(--ele-ink)", onclick: showReadings }, "显示读数（记为看过示范）"),
+        h("div", { class: "grid2" }, h("div", null, h("div", { class: "xs muted" }, "累计涨跌"), h("div", { class: "mono bold" }, fmtPct(r))), h("div", null, h("div", { class: "xs muted" }, "最大回撤"), h("div", { class: "mono bold" }, `${(m * 100).toFixed(1)}%`))),
+        h("p", { class: "xs muted" }, "累计涨跌是最后一天相对起点的变化；最大回撤是从此前最高点往下跌的最大比例。数字是题目数据，查看它们不算使用答案提示。"),
       ),
     ];
   }
 
   const opts = step === 1 ? STEP1_OPTS : STEP2_OPTS;
-  const canSubmit = !!t.answer && (step !== 1 || t.aligned) && !fb;
+  const canSubmit = !!t.answer && (step === 1 ? t.aligned : t.windowExtended) && !fb && !needGuess;
   const explain =
     step === 1
       ? `对齐后看最后一天：D ${fmtPct(d.step1.asset_return)}，${d.step1.benchmark_name} ${fmtPct(d.step1.benchmark_return)}。`
@@ -186,7 +182,7 @@ export function taskAScreen(s: State, d: TaskAData): HTMLElement {
     t.stepIndex === 0 ? h("p", { class: "small text-2" }, `为什么是这关：${t.reason}`) : null,
     assistBar(t),
     body,
-    hintBox(t, step),
+    needGuess ? null : hintBox(t, step),
     h(
       "section",
       { class: "stack" },
@@ -205,7 +201,7 @@ export function taskAScreen(s: State, d: TaskAData): HTMLElement {
       : null,
     h("div", { class: "grow" }),
     fb
-      ? h("button", { class: "btn", onclick: next }, lastStep ? "完成任务 A" : "下一步", icon("arrow", 18, 2))
+      ? fb.correct ? h("button", { class: "btn", onclick: next }, lastStep ? "完成任务 A" : "下一步", icon("arrow", 18, 2)) : null
       : needGuess
         ? null
         : h("button", { class: "btn", disabled: !canSubmit, onclick: submit }, "提交"),
@@ -213,161 +209,31 @@ export function taskAScreen(s: State, d: TaskAData): HTMLElement {
   );
 }
 
-const OBS: ObsId[] = ["O1", "O2", "O3", "O4"];
-
 export function updatedScreen(s: State): HTMLElement {
-  const { profile, plan } = currentProfile(s);
-  const before = s.profileBeforeTask;
-  const changed = OBS.filter((id) => before && (before.observations[id].status !== profile.observations[id].status || before.observations[id].summary !== profile.observations[id].summary));
-  const unchanged = OBS.filter((id) => !changed.includes(id));
-  const lastSubmit = [...s.events].reverse().find((e) => e.type === "task_step" && e.payload.phase === "submit");
-  const lastTask = lastSubmit?.type === "task_step" ? lastSubmit.payload.task : "A";
-  return h(
-    "main",
-    { class: "screen" },
-    h(
-      "div",
-      { class: "row", style: "margin-top:8px" },
-      h("div", { style: "flex:none;width:52px;height:52px;border-radius:26px;background:var(--ok);color:var(--bg);display:flex;align-items:center;justify-content:center" }, icon("check", 26, 2.6)),
-      h("div", { class: "stack", style: "gap:0" }, h("h1", { class: "display", style: "font-size:28px" }, `任务 ${lastTask} 完成`), h("span", { class: "small text-2" }, "画像根据这一关更新了")),
-    ),
-    h(
-      "section",
-      { class: "stack" },
-      h("h2", null, "有变化的"),
-      changed.length
-        ? changed.map((id) => {
-            const b = before!.observations[id];
-            const a = profile.observations[id];
-            const fresh = a.instances.filter((i) => i.context.startsWith("task"));
-            return h(
-              "div",
-              { class: "panel ok-frame stack" },
-              h("div", { class: "row" }, h("span", { class: "xs muted bold" }, id), h("span", { class: "grow bold" }, OBS_COPY[id])),
-              h("div", { class: "row wrap", style: "gap:6px" }, h("span", { class: "xs muted", style: "text-decoration:line-through" }, `${STATUS_COPY[b.status]} · ${b.summary}`), icon("arrow", 16, 2), statusPill(a.status, a.summary)),
-              h("p", { class: "small text-2" }, fresh.some((i) => i.assisted) ? "任务里做到了，但提交前看过提示或示范，记为“在帮助下”，不和独立完成混在一起。" : "任务里独立做到了，和局内那一次合在一起看。"),
-            );
-          })
-        : h("p", { class: "panel small text-2" }, "这一关没有改变能力观察：提交与数据不一致只做记录，不贴标签。"),
-    ),
-    h(
-      "section",
-      { class: "stack" },
-      h("h2", null, "没变的"),
-      h("ul", { class: "list panel sunken", style: "padding:0" }, unchanged.map((id) => h("li", { class: "row small" }, h("span", { class: "xs muted bold", style: "width:24px" }, id), h("span", { class: "grow text-2" }, OBS_COPY[id]), statusPill(profile.observations[id].status)))),
-    ),
-    !s.taskB ? planCard(plan, profile) : h("button", { class: "btn", onclick: () => go("profile") }, "回到人物卡"),
-    footer(),
-  );
+  const { profile, progress, plan } = currentProfile(s);
+  return h("main", { class: "screen" },
+    h("h1", { class: "display" }, "任务 A 完成"),
+    h("p", { class: "small text-2" }, "任务中的新情境单独记录，不改写第一幕的观察。"),
+    ...(["O1", "O2"] as const).map((id, index) => {
+      const completed = profile.task_observations[id].find((i) => i.outcome === "consistent");
+      return h("section", { class: "panel stack" }, h("h2", null, OBS_COPY[id]),
+        h("p", null, completed ? completed.assisted ? "本次在帮助下完成" : "本次独立完成" : "本次未完成"),
+        h("p", { class: "xs muted" }, `第一幕记录：${STATUS_COPY[profile.observations[id].status]} · ${profile.observations[id].summary}`),
+        h("p", { class: "small text-2" }, progress.taskA_steps_done.includes(index + 1) ? "已完成这个基础步骤，可以继续体验。" : "还需在新情境里完成这个步骤。"));
+    }),
+    h("p", { class: "panel small" }, `根据新证据修正判断：${profile.observations.O4.summary}`),
+    planCard(plan, profile),
+    h("button", { class: "btn-line", onclick: () => go("basis") }, "查看全部依据"), footer());
 }
 
-const BRANCHES: [string, string, string][] = [
-  ["insufficient_evidence", "数据不足", "样本没到门槛，先不下结论"],
-  ["both_segments", "两段都成立", "两段里信号组都高出门槛"],
-  ["segment_difference_display", "只在展示段成立", "换一段数据就不灵了"],
-  ["segment_difference_test", "只在检验段成立", "前一段没看到，后一段才出现"],
-  ["no_observed_advantage", "没看到优势", "两段都没高出门槛"],
-];
-
+/** YOU-153 尚未提供两段可验证的数据；预览不产生提交或完成事件。 */
 export function taskBScreen(s: State): HTMLElement {
-  const t = s.taskB!;
-  const set = (fn: (x: NonNullable<State["taskB"]>) => void) => update((st) => st.taskB && fn(st.taskB));
-  const lock = () =>
-    update((st) => {
-      const x = st.taskB!;
-      if (x.locked) return;
-      x.locked = true;
-      emit(st, "taskB", "in_task", "topic_select", { topic: "cheetah", source: "only_available" });
-    });
-  const guess = (v: string) =>
-    update((st) => {
-      const x = st.taskB!;
-      if (x.guess) return;
-      x.guess = v;
-      emit(st, "taskB", "in_task", "task_step", { task: "B", step: 2, phase: "guess", answer: v, correct: null });
-    });
-  const submit = () =>
-    update((st) => {
-      const x = st.taskB!;
-      if (!x.answer || x.submitted) return;
-      x.submitted = true;
-      // 结论要等数据生成后核对，这里只记录作答
-      emit(st, "taskB", "in_task", "task_step", { task: "B", step: 3, phase: "submit", answer: x.answer, correct: null });
-    });
-
-  return h(
-    "main",
-    { class: "screen" },
-    topbar({ title: "下一关 · 任务 B · 猎豹题", onBack: () => go("profile") }),
+  return h("main", { class: "screen" },
+    topbar({ title: "下一关 · 任务 B", onBack: () => go("profile") }),
     h("h1", { class: "display" }, "换一段数据，还成立吗？"),
-    h("p", { class: "small text-2" }, t.reason),
-    h("p", { class: "xs muted" }, "其他主题（大象题、狐狸题）尚未开放。"),
-    h(
-      "section",
-      { class: "paper stack" },
-      h("div", { class: "row" }, icon("lock", 18, 2), h("span", { class: "grow bold" }, t.locked ? "研究规则 · 已锁定" : "研究规则"), h("span", { class: "xs muted" }, "看结果前锁定，之后不能改")),
-      h(
-        "dl",
-        { class: "kv" },
-        [
-          ["信号", "当天成交量 ≥ 之前 20 个交易日均量的 2 倍，且当天涨 ≥ 5%"],
-          ["进出", "信号第二天开盘进入，第 20 个交易日收盘退出"],
-          ["看什么", "20 天后上涨的比例（另附平均收益）"],
-          ["对照组", "同一批股票、同样持有 20 天，但不按信号筛选"],
-          ["门槛", "每组至少 30 次，信号组高出至少 5 个百分点"],
-        ].map(([k, v]) => [h("dt", null, k), h("dd", null, v)]),
-      ),
-      t.locked ? null : h("button", { class: "btn", style: "background:var(--ink);color:var(--paper)", onclick: lock }, "锁定规则，看展示段"),
-    ),
-    t.locked
-      ? h("section", { class: "panel stack" }, h("div", { class: "row" }, h("h2", { class: "grow" }, "展示段"), label("todo", "数据待生成")), h("p", { class: "small text-2" }, "信号组 / 对照组的样本数、上涨比例、平均收益和差值会显示在这里。样本不足时显示“暂不判断”，不显示 0%。"))
-      : null,
-    t.locked && t.guessFirst
-      ? h(
-          "section",
-          { class: "stack" },
-          h("h2", null, "打开检验段之前，先猜一下"),
-          h("p", { class: "small text-2" }, "换一段时间，信号组还会比对照组好吗？"),
-          options([["yes", "会"], ["no", "不会"], ["unsure", "说不准"]], t.guess, !!t.guess, guess),
-        )
-      : null,
-    t.locked && (!t.guessFirst || t.guess)
-      ? t.testOpened
-        ? h("section", { class: "panel stack" }, h("div", { class: "row" }, h("h2", { class: "grow" }, "检验段"), label("todo", "数据待生成")), h("p", { class: "small text-2" }, "此前没有展示过的一段，指标与展示段相同，两段并排对比。"))
-        : h("button", { class: "btn-line", onclick: () => set((x) => (x.testOpened = true)) }, "打开检验段")
-      : null,
-    t.testOpened
-      ? h(
-          "section",
-          { class: "stack" },
-          h("h2", null, "这两段数据分别支持什么观察？"),
-          BRANCHES.map(([v, name, desc]) =>
-            h(
-              "button",
-              { class: "opt opt-row", "aria-pressed": String(t.answer === v), disabled: t.submitted, onclick: () => set((x) => (x.answer = v)) },
-              h("span", { class: "dot" }),
-              h("span", null, h("span", { class: "t" }, name), h("span", { class: "d" }, desc)),
-            ),
-          ),
-          h("p", { class: "xs muted" }, "结论只针对这次样本，不回答“这条规律永远靠不靠谱”。"),
-          t.submitted ? null : h("button", { class: "btn", disabled: !t.answer, onclick: submit }, "提交"),
-        )
-      : null,
-    t.submitted
-      ? h(
-          "section",
-          { class: "stack" },
-          h("p", { class: "panel small text-2" }, "已记录你的判断。数据生成后，这里会给出由数据决定的结论，哪一种都是有效答案。"),
-          h("div", { class: "panel stack" }, h("h2", null, "这类检验的局限"), h("ul", { class: "small text-2", style: "margin:0;padding-left:18px" }, ["固定股票池会带来选择偏差", "结果窗口不重叠不等于彼此独立", "5 个百分点的门槛不是统计显著性", "没有计入费用、滑点和容量"].map((x) => h("li", null, x)))),
-          h(
-            "div",
-            { class: "panel stack" },
-            h("div", { class: "row" }, h("h2", { class: "grow" }, "在 PandaAI 继续"), label("sample", "示例 · 未接入")),
-            h("p", { class: "small text-2" }, "用 Panda Data 查询同类信号的更多样本；QuantSkills 里有量化研究流程的参考技能。"),
-          ),
-          h("button", { class: "btn", onclick: () => go("updated") }, "看画像更新"),
-        )
-      : null,
-    footer(),
-  );
+    h("p", { class: "small text-2" }, s.taskB!.reason),
+    h("section", { class: "panel stack" }, label("todo", "尚未开放 · 数据准备中"),
+      h("p", null, "这关将比较同一信号在展示段和检验段的表现。两段真实数据准备好后，才能锁定规则、查看样本并作出判断。"),
+      h("p", { class: "small text-2" }, "当前没有可以作答的数据，不记录完成或能力证据。")),
+    h("button", { class: "btn", onclick: () => go("profile") }, "回到人物卡"), footer());
 }

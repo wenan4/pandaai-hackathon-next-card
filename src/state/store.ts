@@ -32,6 +32,7 @@ export interface TaskAUI {
   feedback?: { step: number; answer: string; correct: boolean };
   exposures: string[];
   readings: boolean;
+  windowExtended: boolean;
   done: boolean;
 }
 

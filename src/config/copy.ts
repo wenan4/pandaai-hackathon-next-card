@@ -27,8 +27,8 @@ export const ACTION_COPY: Record<Action, string> = {
 };
 
 export const FOLLOWUP_COPY: Record<FollowupId, { question: string; options: string[] }> = {
-  missing: { question: "你觉得还缺什么？", options: ["更长的历史", "和别的比一比", "之后的走势", "说不清"] },
-  basis: { question: "你主要依据什么？", options: ["主图走势", "翻开的牌", "说法本身", "直觉"] },
+  missing: { question: "你觉得还缺什么？", options: ["更长的历史", "和别的比一比", "之后的走势", "图没看懂", "说不清"] },
+  basis: { question: "你主要依据什么？", options: ["主图走势", "翻开的牌", "说法本身", "直觉", "图没看懂"] },
   waiting: { question: "你在等什么？", options: ["等更多信号", "等未来走势", "图没看懂", "说不清"] },
 };
 

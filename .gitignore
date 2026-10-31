@@ -36,3 +36,5 @@ logs/
 
 # 本地工具配置
 .claude/
+.playwright-cli/
+output/playwright/

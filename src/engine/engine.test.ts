@@ -19,42 +19,41 @@ describe("路径乙", () => {
   const { profile, progress } = run(preset("yi"));
 
   it("画像", () => {
-    expect(profile.observations.O1).toMatchObject({ status: "observed", summary: "只见一次" });
-    expect(profile.observations.O2).toMatchObject({ status: "observed", summary: "只见一次" });
-    expect(profile.observations.O3.status).toBe("uncertain");
-    expect(profile.observations.O4).toMatchObject({ status: "observed", summary: "两次一致" });
+    expect(profile.observations.O1).toMatchObject({ status: "observed", aggregation: "partial" });
+    expect(profile.observations.O2).toMatchObject({ status: "observed", aggregation: "partial" });
+    expect(profile.observations.O3.status).toBe("not_observed");
+    expect(profile.observations.O4).toMatchObject({ status: "observed", summary: "本局 2 次可比较情境中调整 2 次（独立 2，有帮助 0）" });
     expect(profile.style.species).toBe("elephant");
-    expect(progress).toMatchObject({ K: 2, ready_for_B: true, rounds_completed: 3 });
+    expect(progress).toMatchObject({ K: 0, S1: false, S2: false, ready_for_B: false, rounds_completed: 3 });
   });
 
-  it("推荐任务 B；只有猎豹题可选时给猎豹题，全部开放时按物种给大象题", () => {
-    expect(recommend(profile, progress, AVAILABLE_TOPICS)).toMatchObject({ route: "R-B", task: "B", topic: "cheetah", topic_source: "only_available" });
-    expect(recommend(profile, progress, ["cheetah", "elephant", "fox"])).toMatchObject({ topic: "elephant", topic_source: "style_default" });
+  it("第一幕每项只见一次，仍推荐 A 的两个新情境", () => {
+    expect(recommend(profile, progress, AVAILABLE_TOPICS)).toMatchObject({ route: "R-A2", task: "A", steps: [1, 2] });
   });
 
-  it("R1 最终判断改成支持：O1 变 O1-b，K 2→1，推荐 A 步骤 1，并触发“主要依据什么”，O4 保留 R2 证据", () => {
+  it("R1 最终判断改成支持：O1 变 O1-b，第一幕仍需 A 两步，并触发“主要依据什么”，O4 保留 R2 证据", () => {
     const specs = edit(preset("yi"), "R1", { final: "supports" });
     const after = run(specs);
     expect(after.profile.observations.O1.status).toBe("uncertain");
     expect(after.profile.observations.O1.instances[0]!.rule).toBe("O1-b");
-    expect(after.progress.K).toBe(1);
-    expect(recommend(after.profile, after.progress, AVAILABLE_TOPICS)).toMatchObject({ route: "R-A1", task: "A", steps: [1] });
+    expect(after.progress.K).toBe(0);
+    expect(recommend(after.profile, after.progress, AVAILABLE_TOPICS)).toMatchObject({ route: "R-A2", task: "A", steps: [1, 2] });
     expect(followupFor({ final: "supports", flips: ["elephant", "fox"], action: "pass" }, R("R1"))).toBe("basis");
     expect(after.profile.observations.O4.instances.some((i) => i.context === "R2" && i.outcome === "consistent")).toBe(true);
   });
 
-  it("R3 追问改成“图没看懂”：O3 理解待确认，建议带我做，仍进 B，O4 不变", () => {
+  it("R3 追问改成“图没看懂”：O3 理解待确认，建议带我做，仍进 A，O4 不变", () => {
     const after = run(edit(preset("yi"), "R3", { followupAnswer: "图没看懂" }));
     expect(after.profile.observations.O3).toMatchObject({ status: "uncertain", understanding_unclear: true });
     expect(after.profile.help_preference.level).toBe("guide");
-    expect(recommend(after.profile, after.progress, AVAILABLE_TOPICS).task).toBe("B");
+    expect(recommend(after.profile, after.progress, AVAILABLE_TOPICS).task).toBe("A");
     expect(after.profile.observations.O4).toEqual(profile.observations.O4);
   });
 
-  it("R1 不看对照、改翻历史和量价，结论仍对：O1 未观察到，推荐 A 步骤 1", () => {
+  it("R1 不看对照、改翻历史和量价，结论仍对：O1 未观察到，第一幕仍推荐 A 两步", () => {
     const after = run(edit(preset("yi"), "R1", { flips: ["elephant", "leopard"] }));
     expect(after.profile.observations.O1.status).toBe("not_observed");
-    expect(recommend(after.profile, after.progress, AVAILABLE_TOPICS)).toMatchObject({ task: "A", steps: [1] });
+    expect(recommend(after.profile, after.progress, AVAILABLE_TOPICS)).toMatchObject({ task: "A", steps: [1, 2] });
   });
 });
 
@@ -138,7 +137,7 @@ describe("追问触发", () => {
     ["没翻关键牌、结论不一致：不追问依据", { final: "supports", flips: ["leopard"], action: "pass" }, "R1", null],
     ["先看看", { final: "refutes", flips: ["fox"], action: "wait" }, "R1", "waiting"],
     ["行动与判断不同不追问", { final: "refutes", flips: ["fox"], action: "follow" }, "R1", null],
-    ["未来型轮次没有关键牌：明确判断 + 跟，不追问", { final: "supports", flips: ["leopard"], action: "follow" }, "R3", null],
+    ["未来型查看量价后作明确判断也应追问", { final: "supports", flips: ["leopard"], action: "follow" }, "R3", "basis"],
     ["未来型轮次先看看", { final: "supports", flips: [], action: "wait" }, "R3", "waiting"],
   ];
   for (const [name, rec, round, expected] of cases) it(name, () => expect(followupFor(rec, R(round))).toBe(expected));
@@ -146,9 +145,9 @@ describe("追问触发", () => {
 
 describe("判断线", () => {
   const events = eventsFromSpecs(preset("yi"), ROUNDS);
-  it("R1 依据与结论一致，R3 结论与已见证据尚未对应", () => {
+  it("R1 依据与结论一致，R3 未查看关键牌", () => {
     expect(roundJudgement(events, R("R1"), ENGINE_CONFIG)).toBe("consistent");
-    expect(roundJudgement(events, R("R3"), ENGINE_CONFIG)).toBe("mismatch");
+    expect(roundJudgement(events, R("R3"), ENGINE_CONFIG)).toBe("unchecked");
   });
   it("没翻关键牌：未查看本轮关键证据", () => {
     expect(roundJudgement(eventsFromSpecs(preset("bing"), ROUNDS), R("R1"), ENGINE_CONFIG)).toBe("unchecked");
@@ -158,7 +157,7 @@ describe("判断线", () => {
 describe("任务 A 与进度", () => {
   const ev = eventFactory("s", "v0.3", 100);
   const step = (n: number, answer: string, correct: boolean, aligned = true) =>
-    ev("taskA", "in_task", "task_step", { task: "A", step: n, phase: "submit", answer, correct, aligned });
+    ev("taskA", "in_task", "task_step", { task: "A", step: n, phase: "submit", answer, correct, aligned, window_extended: n === 2 });
 
   it("甲：K=0，提示下完成 A 两步后 K 仍为 0，但 B 开放，不循环回 A", () => {
     const before = run(preset("jia"));
@@ -172,7 +171,8 @@ describe("任务 A 与进度", () => {
     ];
     const after = run(preset("jia"), extra);
     expect(after.progress.K).toBe(0);
-    expect(after.profile.observations.O1.status).toBe("assisted");
+    expect(after.profile.observations.O1).toEqual(before.profile.observations.O1);
+    expect(after.profile.task_observations.O1[0]).toMatchObject({ outcome: "consistent", assisted: true });
     expect(after.progress.ready_for_B).toBe(true);
     expect(recommend(after.profile, after.progress, AVAILABLE_TOPICS).task).toBe("B");
   });
@@ -183,13 +183,14 @@ describe("任务 A 与进度", () => {
       ev("taskA", "in_task", "assist_switch", { task: "A", level: "self" }),
       step(1, "outperform", true),
     ];
-    expect(run(preset("jia"), extra).profile.observations.O1.status).toBe("assisted");
+    expect(run(preset("jia"), extra).profile.task_observations.O1[0]).toMatchObject({ outcome: "consistent", assisted: true });
   });
 
   it("没对齐就提交不算完成；重复提交同一答案不增加证据", () => {
-    const o1 = run(preset("jia"), [step(1, "outperform", true, false), step(1, "outperform", true, false)]).profile.observations.O1;
-    expect(o1.instances.filter((i) => i.context === "taskA-1")).toHaveLength(1);
-    expect(o1.status).toBe("not_observed");
+    const result = run(preset("jia"), [step(1, "outperform", true, false), step(1, "outperform", true, false)]);
+    expect(result.profile.task_observations.O1).toHaveLength(1);
+    expect(result.progress.taskA_steps_done).toEqual([]);
+    expect(result.profile.observations.O1.status).toBe("not_observed");
   });
 });
 

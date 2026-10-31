@@ -22,7 +22,7 @@ export function currentProfile(s: State) {
 export function startTask(s: State, plan: Plan, profile: Profile): void {
   s.profileBeforeTask = profile;
   if (plan.task === "A") {
-    s.taskA = { reason: plan.reason, guessFirst: plan.guess_first, steps: plan.steps, stepIndex: 0, assist: plan.assist, aligned: false, exposures: [], readings: false, done: false };
+    s.taskA = { reason: plan.reason, guessFirst: plan.guess_first, steps: plan.steps, stepIndex: 0, assist: plan.assist, aligned: false, exposures: [], readings: false, windowExtended: false, done: false };
     s.back = s.screen;
     s.screen = "taskA";
   } else {
@@ -47,7 +47,7 @@ export function planCard(plan: Plan, profile: Profile): HTMLElement {
       `协助：${ASSIST_COPY[plan.assist].label}（${profile.help_preference.source === "user" ? "你选过的档位" : "按本局帮助使用推断，可随时改"}）`,
       plan.guess_first ? " · 先猜后验" : "",
     ),
-    h("button", { class: "btn", style: "background:var(--ink);color:var(--paper)", onclick: () => update((s) => startTask(s, plan, profile)) }, "开始下一关", icon("arrow", 18, 2)),
+    h("button", { class: "btn", style: "background:var(--ink);color:var(--paper)", onclick: () => update((s) => startTask(s, plan, profile)) }, plan.task === "B" ? "查看任务 B（数据准备中）" : "开始下一关", icon("arrow", 18, 2)),
   );
 }
 
@@ -120,13 +120,16 @@ export function profileScreen(s: State): HTMLElement {
 const ALTERNATIVES: Record<string, string> = {
   a: "也可能只是习惯先看这张牌；需要在另一个情境里再看到一次。",
   b: "可能是没读懂这张牌，也可能更相信说法本身。",
-  c: "没翻这一轮的关键牌：结论碰巧对上不算查证。",
+  c: "明确表示图表没看懂，理解暂待确认。",
+  e: "看过关键牌但还未下结论，可能更谨慎或仍在理解。",
+  f: "自述知道还需要查看对应证据，不等于已经核验。",
+  g: "没翻这一轮的关键牌：结论碰巧对上不算查证。",
   t: "任务中提交的答案与数据一致。",
   r: "提交与数据不一致：只做记录，不贴标签。",
 };
 const O3_ALT: Record<string, string> = {
   "O3-a": "选了证据不足；还要看在可以判断的轮次里会不会明确下结论。",
-  "O3-b": "对未来下了明确判断，但手里的牌不足以支持；也可能是把“支持”理解成“看好”。",
+  "O3-b": "没有查看量价牌就选择证据不足，尚未展示核验依据。",
   "O3-d": "看了近期量价后对未来下了判断，可能把一次放量当成了信号。",
 };
 const O4_ALT: Record<string, string> = {
@@ -172,6 +175,7 @@ export function basisScreen(s: State): HTMLElement {
               ),
             ),
         o.understanding_unclear ? h("p", { class: "xs", style: "color:var(--leo)" }, "追问里你选了“图没看懂”：这项先记为理解待确认，不算没查证。") : null,
+        id === "O1" || id === "O2" ? profile.task_observations[id].map((inst) => h("p", { class: "small text-2" }, `${describe(s, inst)} · ${inst.outcome === "consistent" ? inst.assisted ? "在帮助下完成" : "独立完成" : "与数据尚未对应"}。这是任务中的新情境，不改写局内观察。`)) : null,
       );
     }),
     h(

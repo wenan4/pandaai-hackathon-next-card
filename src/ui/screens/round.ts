@@ -15,14 +15,16 @@ import { icon } from "../icons";
 const CARDS: Card[] = ["fox", "elephant", "leopard"];
 const revealCache = new Map<string, { header: DataHeader; round: RevealRound }>();
 const pending = new Set<string>();
+const revealErrors = new Set<string>();
 
 /** 已锁定的轮次才去请求揭晓数据；请求完成后重绘。 */
 function ensureReveal(roundId: string, locked: boolean): { header: DataHeader; round: RevealRound } | undefined {
   const hit = revealCache.get(roundId);
-  if (hit || !locked || pending.has(roundId)) return hit;
+  if (hit || !locked || pending.has(roundId) || revealErrors.has(roundId)) return hit;
   pending.add(roundId);
   loadReveal(roundId, locked)
     .then((r) => revealCache.set(roundId, r))
+    .catch(() => revealErrors.add(roundId))
     .finally(() => {
       pending.delete(roundId);
       update(() => {});
@@ -190,7 +192,7 @@ function revealSection(s: State, ui: RoundUI, cfg: RoundConfig, d: VisibleRound)
   s.rounds.forEach((u, i) => {
     if (u.locked) ensureReveal(ROUNDS[i]!.round_id, true);
   });
-  if (!data) return h("section", { class: "panel" }, h("p", { class: "text-2" }, "正在揭晓……"));
+  if (!data) return h("section", { class: "panel stack" }, h("p", { class: "text-2" }, revealErrors.has(cfg.round_id) ? "揭晓数据加载失败，已保留你的选择。" : "正在揭晓……"), revealErrors.has(cfg.round_id) ? h("button", { class: "btn", onclick: () => { revealErrors.delete(cfg.round_id); update(() => {}); } }, "重试加载") : null);
 
   const judgement = roundJudgement(s.events, cfg, ENGINE_CONFIG)!;
   const ret = data.round.after.return_open_t1_to_close_t20;

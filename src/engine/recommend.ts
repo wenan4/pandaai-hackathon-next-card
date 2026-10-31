@@ -34,13 +34,13 @@ export function recommend(profile: Profile, progress: Progress, available: Topic
     const { topic, source } = pickTopic(profile, available, opts);
     const why = profile.flags.o3d
       ? "第 3 轮你根据近期量价对 20 天后的价格下了判断，这关用很多只股票检验这类信号。"
-      : "两个基础查法都已经有过一次，这关换一段数据检验一个规律。";
+      : "两个基础步骤都已确认，这关换一段数据检验一个规律。";
     return { route: progress.K === 2 ? "R-B" : "R-B-progress", task: "B", steps: [1, 2, 3], topic, topic_source: source, assist, guess_first, reason: why };
   }
 
   const need: number[] = [];
-  if (O.O1.status !== "observed" && !progress.taskA_steps_done.includes(1)) need.push(1);
-  if (O.O2.status !== "observed" && !progress.taskA_steps_done.includes(2)) need.push(2);
+  if (!progress.S1) need.push(1);
+  if (!progress.S2) need.push(2);
   const steps = need.length ? need : [1, 2].filter((s) => !progress.taskA_steps_done.includes(s));
 
   const parts: string[] = [];
@@ -48,13 +48,13 @@ export function recommend(profile: Profile, progress: Progress, available: Topic
     if (!steps.includes(step)) continue;
     const o = O[id];
     const name = id === "O1" ? "用同期对照判断" : "拉长窗口判断";
-    if (o.summary === "只见一次") parts.push(`${name}只见过一次，换一只股票再练一次`);
+    if (o.status === "observed") parts.push(`${name}只见过一次，换一只股票再练一次`);
     else if (o.status === "assisted") parts.push(`${name}是在提示下完成的，这次试试少用提示`);
     else if (o.status === "uncertain") parts.push(`${name}的结论和看到的证据还没对上，再比一次`);
     else parts.push(`这几轮还没看到你${name}，这关专门练这一步`);
   }
   return {
-    route: progress.K === 0 ? "R-A2" : "R-A1",
+    route: !progress.S1 && !progress.S2 ? "R-A2" : "R-A1",
     task: "A",
     steps,
     topic: null,
