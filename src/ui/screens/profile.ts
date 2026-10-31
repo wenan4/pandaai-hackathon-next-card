@@ -1,8 +1,9 @@
 // 人物卡、依据页、分享卡：全部由引擎输出渲染，组件里不做规则判断。
-import { ASSIST_COPY, CARD_COPY, OBS_COPY, REACTION_COPY, SPECIES_COPY, UNKNOWN_YET, VERDICT_COPY } from "../../config/copy";
+import { ACTION_COPY, ASSIST_COPY, BET_FAMILY_COPY, CARD_COPY, OBS_COPY, REACTION_COPY, SPECIES_COPY, STATUS_COPY, TRADING_VIEW, UNKNOWN_YET, VERDICT_COPY } from "../../config/copy";
 import { AVAILABLE_TOPICS, ENGINE_CONFIG } from "../../config/engine";
 import { ROUNDS } from "../../config/rounds";
 import { evaluate } from "../../engine/evaluate";
+import { actionHabits, betTopic, FREQUENT_BET_THRESHOLD, type DecisionChain } from "../../engine/habits";
 import { recommend } from "../../engine/recommend";
 import { collectRound } from "../../engine/rounds";
 import type { ObsId, ObsInstance, Plan, Profile } from "../../engine/types";
@@ -16,7 +17,37 @@ const TOPIC_NAME = { cheetah: "猎豹题：放量上涨之后", elephant: "大�
 
 export function currentProfile(s: State) {
   const { profile, progress } = evaluate(s.events, ENGINE_CONFIG);
-  return { profile, progress, plan: recommend(profile, progress, AVAILABLE_TOPICS) };
+  // 行动习惯只用来给任务 B 选默认主题，不进入能力观察
+  const habits = actionHabits(s.events, ROUNDS);
+  return { profile, progress, habits, plan: recommend(profile, progress, AVAILABLE_TOPICS, { betTopic: betTopic(habits) }) };
+}
+
+/** 换成交易语言来看 + 你的下一步习惯。只描述本局，不评高低，不影响能力观察。 */
+function tradingView(s: State, profile: Profile): HTMLElement {
+  const habits = actionHabits(s.events, ROUNDS);
+  const chain = (c: DecisionChain) => {
+    const looked = c.flips.length ? c.flips.map((x) => CARD_COPY[x].animal).join("、") : "没翻牌";
+    const first = c.initial ? `第一判断${REACTION_COPY[c.initial]} → ` : "";
+    return `${c.round_id}：看了${looked} → ${first}最终${VERDICT_COPY[c.final].label} → ${ACTION_COPY[c.action]}${c.followup ? `（${c.followup}）` : ""}`;
+  };
+  const backed = habits.backed_families.length
+    ? habits.backed_families.map((b) => `${BET_FAMILY_COPY[b.family]}（${b.rounds.join("、")}）${b.frequent ? "，算常押" : ""}`).join("；")
+    : "这一局没有选过“跟”";
+  return h(
+    "details",
+    { class: "panel" },
+    h("summary", { class: "small" }, "换成交易语言来看"),
+    h(
+      "div",
+      { class: "stack", style: "margin-top:8px;gap:10px" },
+      h("ul", { class: "small", style: "margin:0;padding-left:18px" }, (["O1", "O2", "O3", "O4"] as const).map((id) =>
+        h("li", null, TRADING_VIEW[id], h("span", { class: "xs muted" }, ` · 本局：${STATUS_COPY[profile.observations[id].status]}`)))),
+      h("h3", { class: "small bold", style: "margin:0" }, "你的下一步习惯"),
+      h("ul", { class: "xs text-2", style: "margin:0;padding-left:18px" }, habits.decision_chains.map((c) => h("li", null, chain(c)))),
+      h("p", { class: "xs text-2" }, `判断和下一步同向 ${habits.aligned.length} 轮，不同向 ${habits.diverged.length} 轮。选过“跟”的形态：${backed}。同一形态至少跟 ${FREQUENT_BET_THRESHOLD} 次才算常押。`),
+      h("p", { class: "xs muted" }, `这部分不影响能力观察，只用来给任务 B 选默认主题${AVAILABLE_TOPICS.length === 1 ? "；目前只开放猎豹题，其他主题尚未发布" : ""}。认可一个说法，不代表必须跟。`),
+    ),
+  );
 }
 
 export function startTask(s: State, plan: Plan, profile: Profile): void {
@@ -111,7 +142,7 @@ export function profileScreen(s: State): HTMLElement {
       h("div", { class: "stack", style: "gap:0" }, h("span", { class: "xs muted" }, "帮助偏好"), h("span", { class: "small" }, `${ASSIST_COPY[profile.help_preference.level].label}：本局展开解释 ${profile.help_preference.explain_count} 次`)),
     ),
     h("section", { class: "panel stack" }, h("h2", null, "还不知道"), h("ul", { class: "small text-2", style: "margin:0;padding-left:18px" }, UNKNOWN_YET.map((x) => h("li", null, x)))),
-    h("details", { class: "panel" }, h("summary", { class: "small" }, "换成交易语言来看"), h("p", { class: "small muted", style: "margin-top:6px" }, "更新中：第二幕会补上这一部分。")),
+    tradingView(s, profile),
     planCard(plan, profile),
     h("button", { class: "btn-line", onclick: () => go("basis") }, "看每条观察的依据"),
     footer(),
