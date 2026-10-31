@@ -46,7 +46,7 @@ function rig(): Run {
 function context(run: Run, openPile: (pile: PileKind) => void): GameViewContext {
   return { run, initialCase: null, initialCaseError: null, initialCaseLoading: false, retryInitialCase: vi.fn(), selectedCard: "private-card-0", selectedRetain: "private-card-1", selectedUpgrade: null,
     entryCents: 0, reserveCents: 0, marketLoading: false, marketError: null, battleFeedback: "", tutorialStep: 4, action: vi.fn(), selectCard: vi.fn(), selectRetain: vi.fn(), selectUpgrade: vi.fn(),
-    setEntry: vi.fn(), setReserve: vi.fn(), retryMarket: vi.fn(), extraCamp: () => null, openReport: vi.fn(), openTask: vi.fn(), openPile, archiveShown: vi.fn(), nextTutorial: vi.fn(), skipTutorial: vi.fn() };
+    setEntry: vi.fn(), setReserve: vi.fn(), retryMarket: vi.fn(), extraCamp: () => null, openReport: vi.fn(), openTask: vi.fn(), openPile, openEnemyPlan: vi.fn(), archiveShown: vi.fn(), nextTutorial: vi.fn(), skipTutorial: vi.fn() };
 }
 beforeEach(() => { vi.stubGlobal("Node", FakeNode); vi.stubGlobal("document", { createElement: (tag: string) => new FakeElement(tag) }); });
 afterEach(() => vi.unstubAllGlobals());

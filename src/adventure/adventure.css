@@ -134,8 +134,9 @@ details > :not(summary) { margin-top: 12px; }
 .battle-board::before { position: absolute; content: ""; inset: auto 0 0; height: 45%; background: linear-gradient(transparent, rgba(255,251,232,.78)); pointer-events: none; }
 .battle-player, .battle-enemy { position: relative; z-index: 1; display: flex; align-items: center; flex-direction: column; gap: 7px; text-align: center; }
 .avatar { display: grid; place-items: center; width: 112px; height: 112px; border-radius: 50%; background: radial-gradient(circle at 50% 36%, #fffdf2, #e4e8c8); border: 5px solid rgba(255,255,245,.78); box-shadow: 0 4px 18px #b6cbb5; color: #71956d; font: 700 2.3rem var(--serif); }
-.avatar.player { width: 112px; height: 150px; border: 0; border-radius: 0; background: none; box-shadow: none; }
-.avatar.player picture, .avatar.player img { display: block; width: 100%; height: 100%; }
+.avatar.player { display: flex; align-items: center; justify-content: center; width: 112px; height: 150px; overflow: hidden; border: 0; border-radius: 0; background: none; box-shadow: none; }
+.avatar.player picture { display: block; flex: 0 1 100%; width: 100%; height: 100%; min-width: 0; min-height: 0; max-width: 100%; max-height: 100%; overflow: hidden; }
+.avatar.player img { display: block; width: 100%; height: 100%; max-width: 100%; max-height: 100%; }
 .avatar.player img { object-fit: contain; filter: drop-shadow(0 3px 3px rgba(75, 91, 65, .25)); }
 .avatar.enemy { width: 150px; height: 150px; border: 0; border-radius: 0; background: url('/art/adventure/guardian.webp') center / contain no-repeat; box-shadow: none; color: #a7793e; }
 .avatar.enemy::after { content: "灯"; display: grid; place-items: center; width: 92px; height: 92px; border: 3px solid #e8cc91; border-radius: 50%; background: #fff5d7; font: 700 2.2rem var(--serif); z-index: -1; }
@@ -145,6 +146,15 @@ details > :not(summary) { margin-top: 12px; }
 .health-bar i { display: block; height: 100%; background: linear-gradient(90deg, #77a77a, #a2c98c); border-radius: inherit; }
 .intent { min-width: 125px; max-width: 190px; padding: 11px 13px; border: 1px solid #eed4a1; border-radius: 13px; color: #785e35; background: rgba(255,248,226,.95); box-shadow: 0 5px 16px #99ae8d24; text-align: center; }
 .intent small { display: block; color: #a18450; margin-bottom: 3px; }
+.intent-plan-button { width: 100%; min-height: 44px; margin-top: 4px; padding: 5px 6px; border: 1px solid #dec79b; border-radius: 9px; color: #72542a; background: #fffdf3; font-size: .7rem; font-weight: 700; cursor: pointer; }
+.intent-plan-button:hover { background: #fff1cb; }
+.enemy-plan { display: grid; gap: 12px; }
+.enemy-plan-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.enemy-plan-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 13px; border: 1px solid #e5e6d5; border-radius: 11px; background: #f8fbf1; }
+.enemy-plan-list strong, .enemy-plan-list span { display: block; }
+.enemy-plan-list strong { color: #4f6e52; font-size: .85rem; }
+.enemy-plan-list span { margin-top: 3px; color: #788677; font-size: .7rem; }
+.enemy-plan-list b { color: #8d6932; font-size: .88rem; text-align: right; }
 .battle-status { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .battle-stat { padding: 12px; border: 1px solid #e2e8d7; border-radius: 13px; background: #f8fbf2; text-align: center; }
 .battle-stat span { display: block; color: #899682; font-size: .69rem; }
@@ -173,6 +183,10 @@ details > :not(summary) { margin-top: 12px; }
 .route-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .route-card { display: flex; flex-direction: column; gap: 9px; padding: 18px; border: 1px solid #dfe7d4; border-radius: 16px; background: linear-gradient(145deg, #f7faed, #fffdf5); }
 .route-card h3 { color: #4e7253; }
+.route-enemy-summary { padding: 9px 11px; border: 1px solid #e1e9d8; border-radius: 10px; background: #f4f8ee; }
+.route-enemy-summary p { color: #566f58; font-size: .76rem; line-height: 1.5; }
+.route-enemy-summary p + p { margin-top: 3px; }
+.route-enemy-summary strong { color: #466b4d; }
 .route-card .button { margin-top: auto; }
 .route-symbol { color: #be9a61; font: 700 1.4rem var(--serif); }
 .metric-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
@@ -295,7 +309,7 @@ details > :not(summary) { margin-top: 12px; }
   .battle-active .combat-label { font-size: .61rem; padding: 4px 5px; }
   .battle-active .combat-label strong { font-size: .72rem; }
   .battle-active .health-bar { width: 72px; height: 5px; }
-  .battle-active .intent { min-width: 80px; max-width: 104px; padding: 6px; font-size: .72rem; }
+  .battle-active .intent { flex: 0 0 90px; min-width: 80px; max-width: 90px; padding: 6px; font-size: .72rem; }
   .battle-active .intent small { font-size: .6rem; }
   .battle-active .combat-feedback { min-height: 29px; padding: 6px 9px; font-size: .72rem; }
   .battle-active .battle-status { gap: 5px; }

@@ -3,6 +3,7 @@ import "./battle-preview.css";
 import "./ui-piles.css";
 import { availableActions, canPlayCard } from "./engine";
 import { battleZones, turnEnergySummary } from "./battle-information";
+import { intentText, routeEnemySummary } from "./ui-enemy";
 import { describeCardPlayPreview, describeCompactCardPlayPreview, previewCardPlay } from "./card-preview";
 import { CARDS, ENEMIES, PRICES, ROUTES } from "./content";
 import type { MarketInitialCase } from "./market";
@@ -36,6 +37,7 @@ export interface GameViewContext {
   openReport: () => void;
   openTask: (task: "d1" | "d2") => void;
   openPile: (pile: PileKind) => void;
+  openEnemyPlan: () => void;
   archiveShown: (caseId: string) => void;
   nextTutorial: () => void;
   skipTutorial: () => void;
@@ -87,7 +89,7 @@ function battleView(ctx: GameViewContext): HTMLElement {
     }
     return face;
   };
-  const intent = enemy.intent.kind === "attack" ? `攻击 ${enemy.intent.amount}` : `获得 ${enemy.intent.amount} 护盾`;
+  const intent = intentText(enemy.intent);
   const art = enemy.id === "moss" ? "moss" : enemy.id === "clock" ? "clock" : "guardian";
   const playable = hand.filter((card) => canPlayCard(run, card.instanceId).enabled);
   const hasAttack = playable.some((card) => CARDS[card.cardId].attack);
@@ -106,9 +108,9 @@ function battleView(ctx: GameViewContext): HTMLElement {
   const retainSelect = (mobile = false): HTMLElement | null => isRetain && otherCards.length ? h("label", { class: "field retain-field" }, "保留另一张牌一回合", h("select", { value: retained?.instanceId, "data-focus-key": mobile ? "retain-select-mobile" : "retain-select-desktop", onchange: (event: Event) => ctx.selectRetain((event.currentTarget as HTMLSelectElement).value) }, otherCards.map((card) => h("option", { value: card.instanceId, selected: card.instanceId === retained?.instanceId }, `${CARDS[card.cardId].name}${card.upgraded ? "+" : ""}`)))) : null;
   const previewBlock = (mobile = false): HTMLElement | null => preview ? h("div", { class: `card-play-preview${mobile ? " compact" : ""}`, role: "note", "aria-label": "出牌效果预览", ...(mobile ? { tabindex: "0" } : {}) }, h("strong", null, "打出后预览"), h("ul", null, (mobile ? describeCompactCardPlayPreview(preview) : describeCardPlayPreview(preview)).map((line) => h("li", null, line)))) : null;
   const box = h("div", { class: "stack" },
-    h("section", { class: "battle-board", "aria-label": `第 ${b.turn} 回合，${def.name}准备${intent}` },
+    h("section", { class: "battle-board", "aria-label": `第 ${b.turn} 回合，${def.name}本回合结束时准备${intent}` },
       h("div", { class: "battle-player" }, h("div", { class: "avatar player", "aria-hidden": "true" }, h("picture", null, h("source", { srcset: `${import.meta.env.BASE_URL}art/adventure/traveler.webp`, type: "image/webp" }), h("img", { src: `${import.meta.env.BASE_URL}art/adventure/traveler.png`, alt: "", width: "1024", height: "1536" }))), h("div", { class: "combat-label" }, h("strong", null, "旅行者"), `生命 ${run.hp} / ${run.maxHp} · 护盾 ${b.shield}`), h("div", { class: "health-bar" }, h("i", { style: `width:${Math.max(0, run.hp / run.maxHp * 100)}%` }))),
-      h("div", { class: "intent" }, h("small", null, "对方下一步"), h("strong", null, intent), enemy.attackBonus ? h("div", { class: "tiny" }, `攻击加成 +${enemy.attackBonus}`) : null),
+      h("div", { class: "intent" }, h("small", null, "本回合结束"), h("strong", null, intent), enemy.attackBonus ? h("div", { class: "tiny" }, `攻击加成 +${enemy.attackBonus}`) : null, h("button", { type: "button", class: "intent-plan-button", "data-focus-key": "enemy-plan", "aria-label": `查看${def.name}的行动节奏`, onclick: ctx.openEnemyPlan }, "查看节奏")),
       h("div", { class: "battle-enemy" }, h("div", { class: "avatar enemy", "aria-hidden": "true", style: `background-image:url('${import.meta.env.BASE_URL}art/adventure/${art}.webp')` }), h("div", { class: "combat-label" }, h("strong", null, def.name), `生命 ${enemy.hp} / ${enemy.maxHp} · 护盾 ${enemy.shield}`), h("div", { class: "health-bar" }, h("i", { style: `width:${Math.max(0, enemy.hp / enemy.maxHp * 100)}%` })))),
     h("div", { class: `combat-feedback${ctx.battleFeedback ? " flash" : ""}` },
       lesson ? h("div", { class: "tutorial-guide" }, h("div", { class: "tutorial-copy", "aria-live": "polite" }, h("strong", null, `${ctx.tutorialStep + 1} / 4 · ${lesson[0]}`), h("span", null, lesson[1])), h("div", { class: "tutorial-actions" }, button("跳过提示", ctx.skipTutorial, "small ghost", false, "tutorial-skip"), button(ctx.tutorialStep === 3 ? "知道了" : "下一条", ctx.nextTutorial, "small secondary", false, "tutorial-next"))) : null,
@@ -124,7 +126,7 @@ function battleView(ctx: GameViewContext): HTMLElement {
         previewBlock(),
         h("div", { class: "button-row", style: "margin-top:10px" }, button("打出这张牌", play, "small", !!reason, "play-card"), button("收起", () => ctx.selectCard(null), "small ghost"))) : null,
       h("div", { class: "combat-actions" }, h("span", { class: "hint" }, `第 ${b.turn} 回合 · ${def.blurb}`), button("结束回合", () => ctx.action({ type: "end-turn" }), "gold", false, "end-turn")),
-      details("战斗规则与最近动作", h("p", { class: "hint" }, "护盾在下一玩家回合开始时清除。敌人在第 10 次行动起每次攻击加成再增加 2，城门教学战除外。完成击败后，未结算过载会清除。"), h("div", { class: "timeline" }, b.log.slice(-6).reverse().map((line) => h("div", { class: "timeline-item" }, h("p", null, line)))))),
+      details("战斗规则与最近动作", h("p", { class: "hint" }, "护盾在下一玩家回合开始时清除。敌人从第 10 个敌方阶段起，每经过一个阶段，攻击加成增加 2；护盾数值不增加，城门教学战除外。完成击败后，未结算过载会清除。"), h("div", { class: "timeline" }, b.log.slice(-6).reverse().map((line) => h("div", { class: "timeline-item" }, h("p", null, line)))))),
     h("div", { class: "battle-dock", "aria-label": "战斗操作" }, h("div", { class: "dock-info" }, h("strong", null, selected ? `已选 ${CARDS[selected.cardId].name}${selected.upgraded ? "+" : ""}` : "选择一张手牌"), selected ? previewBlock(true) : h("span", null, "查看效果后打出，也可结束回合")), retainSelect(true), h("div", { class: "dock-buttons" }, button("打出", play, "small", !selected || !!reason, "play-card-mobile"), button("结束回合", () => ctx.action({ type: "end-turn" }), "small gold", false, "end-turn-mobile"))));
   return box;
 }
@@ -211,7 +213,7 @@ function campView(ctx: GameViewContext): HTMLElement {
 }
 function routeView(ctx: GameViewContext): HTMLElement {
   const { run } = ctx; const routes = ROUTES[run.node as "N3" | "N5"];
-  return h("div", { class: "stack" }, shop(ctx, true), panel("选择接下来的路", "两条路消耗相同的旅程时间；选择最想挑战的对手。", h("div", { class: "route-grid" }, routes.map((route, index) => h("article", { class: "route-card" }, h("div", { class: "route-symbol" }, index === 0 ? "Ⅰ" : "Ⅱ"), h("h3", null, route.name), h("p", { class: "hint" }, route.description), pill(`胜利奖励 ${coins(route.rewardCents)} 金币`, "gold"), button("选择这条路", () => ctx.action({ type: "choose-route", enemyId: route.enemyId }), "secondary", !can(run, "choose-route"), `route-${route.enemyId}`))))));
+  return h("div", { class: "stack" }, shop(ctx, true), panel("选择接下来的路", "两条路消耗相同的旅程时间；选择最想挑战的对手。", h("div", { class: "route-grid" }, routes.map((route, index) => h("article", { class: "route-card" }, h("div", { class: "route-symbol" }, index === 0 ? "Ⅰ" : "Ⅱ"), h("h3", null, route.name), h("p", { class: "hint" }, route.description), routeEnemySummary(route.enemyId), pill(`胜利奖励 ${coins(route.rewardCents)} 金币`, "gold"), button("选择这条路", () => ctx.action({ type: "choose-route", enemyId: route.enemyId }), "secondary", !can(run, "choose-route"), `route-${route.enemyId}`))))));
 }
 function marketView(ctx: GameViewContext): HTMLElement {
   return panel(ctx.marketError ? "这段旅程暂时停在这里" : "翻到旅程的下一页", ctx.marketError ? "报价未加载成功。已提交的选择和当前进度都保留着。" : "正在按旅程顺序加载这一阶段的报价……", ctx.marketError ? note(ctx.marketError, true) : h("div", { class: "notice", role: "status" }, "稍等片刻，已经锁定的订单不会重复提交。"), ctx.marketError ? button("重新加载", ctx.retryMarket, "", ctx.marketLoading, "retry-market") : null);

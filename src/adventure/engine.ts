@@ -89,11 +89,24 @@ function draw(run: Run, count: number): void {
   }
 }
 
-function intentFor(enemyId: EnemyId, turn: number): Intent {
+const ATTACK_GROWTH = { fromTurn: 10, perTurn: 2 } as const;
+
+/** Public rule metadata; shield actions never receive this attack bonus. */
+export function enemyAttackGrowth(enemyId: EnemyId): { fromTurn: number; perTurn: number } | null {
+  return enemyId === 'gatekeeper' ? null : { ...ATTACK_GROWTH };
+}
+
+function enemyAttackBonus(enemyId: EnemyId, turn: number): number {
+  const growth = enemyAttackGrowth(enemyId);
+  return growth && turn >= growth.fromTurn ? (turn - growth.fromTurn + 1) * growth.perTurn : 0;
+}
+
+/** Fixed intent for a battle turn; does not draw cards or advance state. */
+export function intentFor(enemyId: EnemyId, turn: number): Intent {
   const definition = ENEMIES[enemyId];
   const base = definition.cycle[(turn - 1) % definition.cycle.length];
   if (!base) throw new Error('敌人行动配置缺失。');
-  const attackBonus = enemyId !== 'gatekeeper' && turn >= 10 ? (turn - 9) * 2 : 0;
+  const attackBonus = enemyAttackBonus(enemyId, turn);
   return { kind: base.kind, amount: base.amount + (base.kind === 'attack' ? attackBonus : 0) };
 }
 
@@ -351,7 +364,7 @@ function endTurn(run: Run): void {
   battle.energy = Math.max(0, battle.capacity - locked);
   battle.overloadNext = 0; battle.attackBonus = 0;
   draw(run, 5);
-  battle.enemy.attackBonus = battle.enemy.id !== 'gatekeeper' && battle.turn >= 10 ? (battle.turn - 9) * 2 : 0;
+  battle.enemy.attackBonus = enemyAttackBonus(battle.enemy.id, battle.turn);
   battle.enemy.intent = intentFor(battle.enemy.id, battle.turn);
   battle.log.push(`回合 ${battle.turn} 开始：容量 ${battle.capacity}，锁定 ${locked}，可用 ${battle.energy}。`);
   event(run, 'battle', 'turn-start', '新回合开始。', { turn: battle.turn, capacity: battle.capacity, locked, energy: battle.energy });
