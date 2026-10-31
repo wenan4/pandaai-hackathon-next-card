@@ -9,7 +9,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from pd_common.metrics import compare_to_benchmark, max_drawdown, normalize, period_return  # noqa: E402
 
-CASES = json.loads((ROOT / "src/engine/fixtures/metrics_cases.json").read_text())["cases"]
+CASES = json.loads((ROOT / "src/engine/fixtures/metrics_cases.json").read_text(encoding="utf-8"))["cases"]
 
 
 class SharedMetricsCases(unittest.TestCase):
