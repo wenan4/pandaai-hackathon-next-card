@@ -4,7 +4,7 @@
   "provenance": {
     "kind": "simulated_path",
     "path_id": "甲",
-    "event_count": 15
+    "event_count": 17
   },
   "profile": {
     "rules_version": "v0.3",
@@ -21,8 +21,8 @@
             "outcome": "unchecked",
             "assisted": false,
             "event_ids": [
-              "R1:flip:elephant",
               "R1:flip:leopard",
+              "R1:flip:elephant",
               "R1:final"
             ]
           }
@@ -41,8 +41,8 @@
             "outcome": "unchecked",
             "assisted": false,
             "event_ids": [
-              "R2:flip:fox",
               "R2:flip:leopard",
+              "R2:flip:fox",
               "R2:final"
             ]
           }
@@ -53,20 +53,20 @@
         "id": "O3",
         "status": "uncertain",
         "aggregation": "partial",
-        "summary": "尚待确认；还没有第二个情境可以对照",
+        "summary": "理解待确认；还没有第二个情境可以对照",
         "instances": [
           {
             "context": "R3",
-            "rule": "O3-b",
+            "rule": "O3-c",
             "outcome": "uncertain",
             "assisted": false,
             "event_ids": [
-              "R3:flip:fox",
+              "R3:flip:leopard",
               "R3:final"
             ]
           }
         ],
-        "understanding_unclear": false
+        "understanding_unclear": true
       },
       "O4": {
         "id": "O4",
@@ -83,34 +83,34 @@
       "O5": []
     },
     "style": {
-      "species": "fox",
+      "species": "leopard",
       "first_flips": [
         {
           "round_id": "R1",
-          "card": "elephant",
+          "card": "leopard",
           "counted": true
         },
         {
           "round_id": "R2",
-          "card": "fox",
+          "card": "leopard",
           "counted": true
         },
         {
           "round_id": "R3",
-          "card": "fox",
+          "card": "leopard",
           "counted": true
         }
       ],
       "counts": {
-        "fox": 2,
-        "elephant": 1,
-        "leopard": 0
+        "fox": 0,
+        "elephant": 0,
+        "leopard": 3
       }
     },
     "help_preference": {
-      "level": "hint",
-      "source": "explain_count",
-      "explain_count": 0
+      "level": "guide",
+      "source": "understanding",
+      "explain_count": 2
     },
     "flags": {
       "o3d": false
@@ -141,9 +141,9 @@
     },
     "backed_families": [
       {
-        "family": "steady_trend",
+        "family": "relative_strength",
         "rounds": [
-          "R2"
+          "R1"
         ],
         "frequent": false
       }
@@ -152,37 +152,41 @@
       {
         "round_id": "R1",
         "flips": [
-          "elephant",
+          "leopard",
+          "elephant"
+        ],
+        "explained": [
           "leopard"
         ],
-        "explained": [],
         "initial": "supports",
-        "final": "refutes",
-        "action": "pass",
-        "followup": null
-      },
-      {
-        "round_id": "R2",
-        "flips": [
-          "fox",
-          "leopard"
-        ],
-        "explained": [],
-        "initial": "unsure",
         "final": "supports",
         "action": "follow",
         "followup": null
       },
       {
-        "round_id": "R3",
+        "round_id": "R2",
         "flips": [
+          "leopard",
           "fox"
         ],
+        "explained": [
+          "leopard"
+        ],
+        "initial": "refutes",
+        "final": "refutes",
+        "action": "pass",
+        "followup": null
+      },
+      {
+        "round_id": "R3",
+        "flips": [
+          "leopard"
+        ],
         "explained": [],
-        "initial": "supports",
+        "initial": "unsure",
         "final": "insufficient",
         "action": "wait",
-        "followup": "之后的走势"
+        "followup": "图没看懂"
       }
     ],
     "counts": {
@@ -202,7 +206,7 @@
     "topic_source": null,
     "topic_sources": [],
     "topic_conflict": false,
-    "assist": "hint",
+    "assist": "guide",
     "guess_first": true,
     "reason": "这几轮还没看到你用同期对照判断，这关专门练这一步；这几轮还没看到你拉长窗口判断，这关专门练这一步。"
   },

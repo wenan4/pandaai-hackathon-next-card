@@ -4,6 +4,7 @@ import { AVAILABLE_TOPICS, ENGINE_CONFIG } from "../config/engine";
 import { PRESETS } from "../panel/presets";
 import { evaluate, roundJudgement } from "./evaluate";
 import { eventFactory, eventsFromSpecs, type RoundSpec } from "./paths";
+import { actionHabits, betTopic } from "./habits";
 import { recommend } from "./recommend";
 import { followupFor } from "./rounds";
 import { flipOutcomes, settle, settleRound, START_TOKENS } from "./settle";
@@ -15,45 +16,99 @@ const preset = (id: string) => PRESETS.find((p) => p.id === id)!.specs;
 const run = (specs: RoundSpec[], extra: GameEvent[] = []) => evaluate([...eventsFromSpecs(specs, ROUNDS), ...extra], ENGINE_CONFIG);
 const edit = (specs: RoundSpec[], round: string, patch: Partial<RoundSpec>) => specs.map((s) => (s.round_id === round ? { ...s, ...patch } : s));
 
-describe("路径乙", () => {
+const ACT1 = new Set(["R1", "R2", "R3"]);
+const act1 = (specs: RoundSpec[]) => specs.filter((s) => ACT1.has(s.round_id));
+const plan = (specs: RoundSpec[]) => {
+  const events = eventsFromSpecs(specs, ROUNDS);
+  const { profile, progress } = evaluate(events, ENGINE_CONFIG);
+  return recommend(profile, progress, AVAILABLE_TOPICS, { betTopic: betTopic(actionHabits(events, ROUNDS)) });
+};
+
+describe("路径乙（PRD v0.3 §9，两幕六轮）", () => {
   const { profile, progress } = run(preset("yi"));
 
-  it("画像", () => {
-    expect(profile.observations.O1).toMatchObject({ status: "observed", aggregation: "partial" });
-    expect(profile.observations.O2).toMatchObject({ status: "observed", aggregation: "partial" });
-    expect(profile.observations.O3.status).toBe("not_observed");
+  it("画像：O1–O3 两个情境都观察到，O4 两次可比较机会都调整了，物种大象", () => {
+    for (const id of ["O1", "O2", "O3"] as const) expect(profile.observations[id], id).toMatchObject({ status: "observed", aggregation: "repeated", summary: "两次一致" });
+    expect(profile.observations.O1.instances.map((i) => [i.context, i.rule])).toEqual([["R1", "O1-a"], ["R4", "O1-a"]]);
+    expect(profile.observations.O3.instances.map((i) => [i.context, i.rule])).toEqual([["R3", "O3-a"], ["R6", "O3-a"]]);
     expect(profile.observations.O4).toMatchObject({ status: "observed", summary: "本局 2 次可比较情境中调整 2 次（独立 2，有帮助 0）" });
-    expect(profile.style.species).toBe("elephant");
-    expect(progress).toMatchObject({ K: 0, S1: false, S2: false, ready_for_B: false, rounds_completed: 3 });
+    expect(profile.observations.O4.instances.map((i) => i.context)).toEqual(["R2", "R5"]);
+    expect(profile.style).toMatchObject({ species: "elephant", counts: { fox: 0, elephant: 2, leopard: 0 } });
+    expect(progress).toMatchObject({ K: 2, S1: true, S2: true, ready_for_B: true, rounds_completed: 6 });
   });
 
-  it("第一幕每项只见一次，仍推荐 A 的两个新情境", () => {
-    expect(recommend(profile, progress, AVAILABLE_TOPICS)).toMatchObject({ route: "R-A2", task: "A", steps: [1, 2] });
+  it("推荐：直接任务 B 大象题，来源是常押形态和物种，建议“我自己来”，不先猜", () => {
+    expect(plan(preset("yi"))).toMatchObject({ route: "R-B", task: "B", topic: "elephant", topic_source: "bet", topic_sources: ["bet", "style_default"], topic_conflict: false, assist: "self", guess_first: false });
   });
 
-  it("R1 最终判断改成支持：O1 变 O1-b，第一幕仍需 A 两步，并触发“主要依据什么”，O4 保留 R2 证据", () => {
+  it("只玩第一幕：每项只见一次（partial），仍推荐 A 的两个新情境", () => {
+    const first = run(act1(preset("yi")));
+    for (const id of ["O1", "O2", "O3"] as const) expect(first.profile.observations[id].aggregation, id).toBe("partial");
+    expect(first.progress).toMatchObject({ K: 0, S1: false, S2: false, rounds_completed: 3 });
+    expect(plan(act1(preset("yi")))).toMatchObject({ route: "R-A2", task: "A", steps: [1, 2] });
+  });
+
+  it("现场用例：R1 保留对照卡、最终判断改成支持 → O1-b，O1 由两次一致变成表现不同，改推任务 A 步骤 1；O4 的 R2、R5 证据保留", () => {
     const specs = edit(preset("yi"), "R1", { final: "supports" });
     const after = run(specs);
-    expect(after.profile.observations.O1.status).toBe("uncertain");
+    expect(after.profile.observations.O1).toMatchObject({ status: "uncertain", aggregation: "mixed" });
     expect(after.profile.observations.O1.instances[0]!.rule).toBe("O1-b");
-    expect(after.progress.K).toBe(0);
-    expect(recommend(after.profile, after.progress, AVAILABLE_TOPICS)).toMatchObject({ route: "R-A2", task: "A", steps: [1, 2] });
-    expect(followupFor({ final: "supports", flips: ["elephant", "fox"], action: "pass" }, R("R1"))).toBe("basis");
-    expect(after.profile.observations.O4.instances.some((i) => i.context === "R2" && i.outcome === "consistent")).toBe(true);
+    expect(after.progress.S1).toBe(false);
+    const p = plan(specs);
+    expect(p).toMatchObject({ route: "R-A1", task: "A", steps: [1] });
+    expect(p.reason).toContain("两个情境里表现不同，先在新情境里试一次");
+    expect(followupFor({ final: "supports", flips: ["fox"], action: "follow" }, R("R1"))).toBe("basis");
+    expect(after.profile.observations.O4.instances.filter((i) => i.outcome === "consistent").map((i) => i.context)).toEqual(["R2", "R5"]);
   });
 
-  it("R3 追问改成“图没看懂”：O3 理解待确认，建议带我做，仍进 A，O4 不变", () => {
-    const after = run(edit(preset("yi"), "R3", { followupAnswer: "图没看懂" }));
-    expect(after.profile.observations.O3).toMatchObject({ status: "uncertain", understanding_unclear: true });
+  it("乙′：R3 追问改成“图没看懂” → O3 只见一次（R6 仍观察到），建议“带我做”，仍是任务 B 大象题，O4 不变", () => {
+    const after = run(preset("yi1"));
+    expect(after.profile.observations.O3).toMatchObject({ status: "observed", aggregation: "single", understanding_unclear: true });
     expect(after.profile.help_preference.level).toBe("guide");
-    expect(recommend(after.profile, after.progress, AVAILABLE_TOPICS).task).toBe("A");
+    expect(plan(preset("yi1"))).toMatchObject({ task: "B", topic: "elephant", assist: "guide" });
     expect(after.profile.observations.O4).toEqual(profile.observations.O4);
   });
 
-  it("R1 不看对照、改翻历史和量价，结论仍对：O1 未观察到，第一幕仍推荐 A 两步", () => {
-    const after = run(edit(preset("yi"), "R1", { flips: ["elephant", "leopard"] }));
-    expect(after.profile.observations.O1.status).toBe("not_observed");
-    expect(recommend(after.profile, after.progress, AVAILABLE_TOPICS)).toMatchObject({ task: "A", steps: [1, 2] });
+  it("乙″：R1 不看对照、改翻历史和量价，结论仍对 → O1-g，O1 只见一次，S1 不成立，任务 A 步骤 1，建议“给我提示”", () => {
+    const after = run(preset("yi2"));
+    expect(after.profile.observations.O1.instances[0]!.rule).toBe("O1-g");
+    expect(after.profile.observations.O1.aggregation).toBe("single");
+    expect(after.progress.S1).toBe(false);
+    expect(plan(preset("yi2"))).toMatchObject({ route: "R-A1", task: "A", steps: [1], assist: "hint" });
+  });
+
+  it("现场用例：只把 R2 的下一步从跟改成先不跟 → 稳步上行只跟 1 次，默认主题仍是大象题，但来源从常押形态变成物种", () => {
+    const specs = edit(preset("yi"), "R2", { action: "pass" });
+    expect(run(specs).profile).toEqual(profile);
+    expect(plan(specs)).toMatchObject({ route: "R-B", topic: "elephant", topic_source: "style_default", topic_sources: ["style_default"] });
+  });
+
+  it("丙：R3 两张牌只互换首翻顺序 → 物种变混合（1∶1 不强行分类），主题仍是大象题，来源只剩常押形态；能力不变", () => {
+    const after = run(preset("bing"));
+    expect(after.profile.style.species).toBe("mixed");
+    // 事件编号的先后随翻牌顺序变化，比较规则命中与状态
+    const abilities = (o: typeof profile.observations) => Object.values(o).map((x) => [x.status, x.aggregation, x.instances.map((i) => [i.context, i.rule, i.outcome, i.assisted])]);
+    expect(abilities(after.profile.observations)).toEqual(abilities(profile.observations));
+    expect(plan(preset("bing"))).toMatchObject({ task: "B", topic: "elephant", topic_source: "bet", topic_sources: ["bet"], topic_conflict: false });
+  });
+
+  it("甲（只玩第一幕）：先翻量价 3 次 → 猎豹；O1、O2 未观察到，O3 理解待确认，O4 没有可比较机会；A 两步，带我做，先猜后验", () => {
+    const { profile: p } = run(preset("jia"));
+    expect(p.style.species).toBe("leopard");
+    expect(p.observations.O1).toMatchObject({ status: "not_observed", aggregation: "partial" });
+    expect(p.observations.O2).toMatchObject({ status: "not_observed", aggregation: "partial" });
+    expect(p.observations.O3).toMatchObject({ status: "uncertain", understanding_unclear: true });
+    expect(p.observations.O4).toMatchObject({ status: "uncertain", summary: "这局没有可比较的改判机会" });
+    expect(plan(preset("jia"))).toMatchObject({ route: "R-A2", steps: [1, 2], assist: "guide", guess_first: true });
+  });
+
+  it("恒答“不支持”的机械策略在第二幕暴露：第一幕 O1 看起来观察到，第二幕后变成两个情境表现不同", () => {
+    const always = (ids: string[]) => ids.map((id): RoundSpec => ({ round_id: id, flips: [R(id).key_card!], final: "refutes", action: "pass", followupAnswer: null }));
+    const first = run(always(["R1", "R2", "R3"]));
+    const both = run(always(ROUNDS.map((r) => r.round_id)));
+    expect(first.profile.observations.O1).toMatchObject({ status: "observed", aggregation: "partial" });
+    expect(both.profile.observations.O1).toMatchObject({ status: "uncertain", aggregation: "mixed" });
+    expect(both.progress.K).toBeLessThan(2);
   });
 });
 
@@ -143,8 +198,10 @@ describe("事件预处理", () => {
 
   it("物种：说法点名的牌不计入；平局给混合；样本太少给尚未显形", () => {
     const spec = (id: string, flips: RoundSpec["flips"]): RoundSpec => ({ round_id: id, flips, final: "insufficient", action: "pass" });
-    // 甲的首翻：R1 大象、R2 狐狸、R3 狐狸，都不是点名牌 → 狐狸 2 次
-    expect(run(preset("jia")).profile.style.species).toBe("fox");
+    // 甲的首翻：R1、R2、R3 都先翻量价，都不是点名牌 → 猎豹 3 次
+    expect(run(preset("jia")).profile.style.species).toBe("leopard");
+    // R6 点名放量上涨：首翻量价不计
+    expect(run([spec("R3", ["leopard"]), spec("R6", ["leopard"])]).profile.style).toMatchObject({ species: "unknown", counts: { leopard: 1 } });
     // R1 首翻狐狸（R1 点名狐狸，不计）、R2 首翻大象（R2 点名大象，不计）、R3 猎豹 → 只计 1 次
     expect(run([spec("R1", ["fox"]), spec("R2", ["elephant"]), spec("R3", ["leopard"])]).profile.style.species).toBe("unknown");
     // 1:1 → 混合，不按“第三轮优先”打破平局
@@ -167,12 +224,13 @@ describe("追问触发", () => {
 
 describe("判断线", () => {
   const events = eventsFromSpecs(preset("yi"), ROUNDS);
-  it("R1 依据与结论一致，R3 未查看关键牌", () => {
+  it("R1 依据与结论一致；R3 保留对未来的结论；R6 样本太少时保留结论", () => {
     expect(roundJudgement(events, R("R1"), ENGINE_CONFIG)).toBe("consistent");
-    expect(roundJudgement(events, R("R3"), ENGINE_CONFIG)).toBe("unchecked");
+    expect(roundJudgement(events, R("R3"), ENGINE_CONFIG)).toBe("future_reserved");
+    expect(roundJudgement(events, R("R6"), ENGINE_CONFIG)).toBe("sample_reserved");
   });
   it("没翻关键牌：未查看本轮关键证据", () => {
-    expect(roundJudgement(eventsFromSpecs(preset("bing"), ROUNDS), R("R1"), ENGINE_CONFIG)).toBe("unchecked");
+    expect(roundJudgement(eventsFromSpecs(preset("yi2"), ROUNDS), R("R1"), ENGINE_CONFIG)).toBe("unchecked");
   });
 });
 

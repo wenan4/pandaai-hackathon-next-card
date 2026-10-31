@@ -1,5 +1,5 @@
-// 评委面板的预设路径（模拟，非真实玩家）。全部通过同一个 evaluate / recommend 重放，不硬编码画像。
-// 暂定版：PRD v0.3 §9 的路径表到位后按表对齐。
+// 评委面板的预设路径（模拟，非真实玩家），按 PRD v0.3 §9 的演示路径表。
+// 全部通过同一个 evaluate / recommend 重放，不硬编码画像；甲只玩第一幕，乙系列与丙玩完两幕六轮。
 import type { RoundSpec } from "../engine/paths";
 
 export interface PresetPath {
@@ -12,38 +12,28 @@ export interface PresetPath {
 }
 
 const YI: RoundSpec[] = [
-  { round_id: "R1", initial: "supports", flips: ["elephant", "fox"], final: "refutes", action: "pass" },
+  { round_id: "R1", initial: "refutes", flips: ["fox"], final: "refutes", action: "follow" },
   { round_id: "R2", initial: "refutes", flips: ["elephant"], final: "supports", action: "follow" },
-  { round_id: "R3", initial: "supports", flips: ["elephant", "fox"], final: "supports", action: "wait", followupAnswer: "等未来走势" },
+  { round_id: "R3", initial: "unsure", flips: ["elephant", "leopard"], final: "insufficient", action: "wait", followupAnswer: "之后的走势" },
+  { round_id: "R4", initial: "supports", flips: ["fox"], final: "supports", action: "pass" },
+  { round_id: "R5", initial: "supports", flips: ["elephant"], final: "refutes", action: "follow" },
+  { round_id: "R6", initial: "unsure", flips: ["elephant", "leopard"], final: "insufficient", action: "wait", followupAnswer: null },
 ];
+const withRound = (id: string, patch: Partial<RoundSpec>) => YI.map((s) => (s.round_id === id ? { ...s, ...patch } : s));
 
 export const PRESETS: PresetPath[] = [
   {
     id: "jia",
     name: "甲",
-    desc: "翻了牌，但没翻关键牌，结论碰巧对",
+    desc: "只玩第一幕：每轮先翻量价，没翻关键牌；第 3 轮追问“图没看懂”",
     specs: [
-      { round_id: "R1", initial: "supports", flips: ["elephant", "leopard"], final: "refutes", action: "pass" },
-      { round_id: "R2", initial: "unsure", flips: ["fox", "leopard"], final: "supports", action: "follow" },
-      { round_id: "R3", initial: "supports", flips: ["fox"], final: "insufficient", action: "wait", followupAnswer: "之后的走势" },
+      { round_id: "R1", initial: "supports", flips: ["leopard", "elephant"], explains: [{ card: "leopard", kind: "neutral" }], final: "supports", action: "follow" },
+      { round_id: "R2", initial: "refutes", flips: ["leopard", "fox"], explains: [{ card: "leopard", kind: "neutral" }], final: "refutes", action: "pass" },
+      { round_id: "R3", initial: "unsure", flips: ["leopard"], final: "insufficient", action: "wait", followupAnswer: "图没看懂" },
     ],
   },
-  { id: "yi", name: "乙", desc: "关键牌都看了，第 3 轮对未来下了判断", specs: YI },
-  { id: "yi1", name: "乙′", desc: "同乙，只把三轮的事后走势全部翻转", specs: YI, flipOutcomes: ["R1", "R2", "R3"] },
-  {
-    id: "yi2",
-    name: "乙″",
-    desc: "同乙，只把第 1 轮行动从不跟改成跟",
-    specs: YI.map((s) => (s.round_id === "R1" ? { ...s, action: "follow" as const } : s)),
-  },
-  {
-    id: "bing",
-    name: "丙",
-    desc: "一张不翻，直接判断",
-    specs: [
-      { round_id: "R1", initial: "supports", flips: [], final: "supports", action: "follow" },
-      { round_id: "R2", initial: "supports", flips: [], final: "supports", action: "follow" },
-      { round_id: "R3", initial: "supports", flips: [], final: "supports", action: "follow" },
-    ],
-  },
+  { id: "yi", name: "乙", desc: "两幕六轮：关键牌都看了，第 2、5 轮看完证据改了第一判断；反复跟稳步上行", specs: YI },
+  { id: "yi1", name: "乙′", desc: "同乙，只把第 3 轮追问改成“图没看懂”", specs: withRound("R3", { followupAnswer: "图没看懂" }) },
+  { id: "yi2", name: "乙″", desc: "同乙，只把第 1 轮翻牌改成“历史＋量价”，没看对照", specs: withRound("R1", { flips: ["elephant", "leopard"] }) },
+  { id: "bing", name: "丙", desc: "同乙，只把第 3 轮两张牌的顺序改成“量价 → 历史”", specs: withRound("R3", { flips: ["leopard", "elephant"] }) },
 ];

@@ -74,6 +74,23 @@ function stat(k: string, v: string, color?: string): HTMLElement {
 }
 
 /** 牌面。explain 为该牌的解释文案；onExplain 在第一次展开时调用（记录 explain_open，不消耗翻牌次数）。 */
+/** R6：本标的过去一年里每次同类放量上涨，以及之后 N 个交易日收盘比当天高还是低。只给相对日期。 */
+function signalHistory(sig: NonNullable<VisibleRound["cards"]["leopard"]["signals"]>): HTMLElement {
+  return h(
+    "div",
+    { class: "stack", style: "gap:4px;padding-top:8px;border-top:1px dashed var(--paper-2)" },
+    h("span", { class: "xs bold", style: "color:var(--ink)" }, `过去一年的同类放量上涨（共 ${sig.items.length} 次）`),
+    h("span", { class: "xs", style: "color:var(--ink-2)" }, `${sig.definition}；每次之后 ${sig.horizon} 个交易日的观察都已在今天之前结束。`),
+    h(
+      "table",
+      { class: "btable" },
+      h("thead", null, h("tr", null, h("th", null, "出现在"), h("th", null, "量比"), h("th", null, "当天"), h("th", null, `之后 ${sig.horizon} 日`))),
+      h("tbody", null, sig.items.map((x) =>
+        h("tr", null, h("td", null, `约 ${-x.offset} 个交易日前`), h("td", { class: "mono" }, `${x.vol_ratio.toFixed(1)} 倍`), h("td", { class: "mono" }, fmtPct(x.day_return)), h("td", { class: "mono" }, fmtPct(x.forward_return))))),
+    ),
+  );
+}
+
 export function cardFace(card: Card, data: VisibleRound, opts: { label: string; explain: string; explained: boolean; onExplain?: () => void; note?: string }): HTMLElement {
   const c = CARD_COPY[card];
   const title = h("div", { class: "face-title" }, icon(card, 18), `${c.title}`);
@@ -108,6 +125,7 @@ export function cardFace(card: Card, data: VisibleRound, opts: { label: string; 
       lineChart({ series: [{ values: l.close, color: "var(--ink)" }], height: 56, label: `${opts.label}近 20 个交易日收盘走势` }),
       volumeBars(l.volume_ratio, `${opts.label}近 20 个交易日量比，最近一天 ${last?.toFixed(2) ?? "无"} 倍`),
       h("div", { class: "grid2" }, stat("最近一天量比", last != null ? `${last.toFixed(2)} 倍` : "停牌"), stat("最近一天涨跌", lastRet != null ? fmtPct(lastRet) : "—")),
+      l.signals ? signalHistory(l.signals) : null,
     ];
   }
   return h(

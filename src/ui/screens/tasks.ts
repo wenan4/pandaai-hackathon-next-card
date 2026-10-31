@@ -134,11 +134,11 @@ export function taskAScreen(s: State, d: TaskAData): HTMLElement {
   if (step === 1) {
     const lines = t.aligned ? d.step1.aligned : d.step1.unaligned;
     body = [
-      h("p", { class: "small text-2" }, `这 60 个交易日，D 跑赢${d.step1.benchmark_name}了吗？`),
+      h("p", { class: "small text-2" }, `这 60 个交易日，${d.label} 跑赢${d.step1.benchmark_name}了吗？`),
       h(
         "section",
         { class: "paper stack" },
-        h("div", { class: "legend" }, h("span", null, h("i", { style: "background:var(--ink)" }), "D"), h("span", { style: "color:var(--fox-ink)" }, h("i", { style: "background:var(--fox-ink)" }), d.step1.benchmark_name)),
+        h("div", { class: "legend" }, h("span", null, h("i", { style: "background:var(--ink)" }), d.label), h("span", { style: "color:var(--fox-ink)" }, h("i", { style: "background:var(--fox-ink)" }), d.step1.benchmark_name)),
         lineChart({
           series: [
             { values: lines.benchmark, color: "var(--fox-ink)" },
@@ -146,11 +146,11 @@ export function taskAScreen(s: State, d: TaskAData): HTMLElement {
           ],
           baseline: t.aligned ? 100 : undefined,
           height: 150,
-          label: t.aligned ? `D 与${d.step1.benchmark_name}对齐到同一起点` : `D 与${d.step1.benchmark_name}，起点不同的两条线`,
+          label: t.aligned ? `${d.label} 与${d.step1.benchmark_name}对齐到同一起点` : `${d.label} 与${d.step1.benchmark_name}，起点不同的两条线`,
         }),
         t.aligned
           ? h("p", { class: "xs muted" }, "两条线都从 100 出发。")
-          : h("p", { class: "xs muted" }, `起点不同：D 从 ${lines.asset[0]!.toFixed(1)} 开始，${d.step1.benchmark_name}从 ${lines.benchmark[0]!.toFixed(1)} 开始。`),
+          : h("p", { class: "xs muted" }, `起点不同：${d.label} 从 ${lines.asset[0]!.toFixed(1)} 开始，${d.step1.benchmark_name}从 ${lines.benchmark[0]!.toFixed(1)} 开始。`),
         needGuess
           ? null
           : h("button", { class: "btn-line", style: "border-color:var(--ink);color:var(--ink)", disabled: !!fb, onclick: () => set((x) => (x.aligned = !x.aligned)) }, t.aligned ? "恢复原来的起点" : "把两条线放到同一起点"),
@@ -164,8 +164,8 @@ export function taskAScreen(s: State, d: TaskAData): HTMLElement {
       needGuess || !t.windowExtended ? h("button", { class: "btn-line", disabled: needGuess, onclick: () => set((x) => (x.windowExtended = true)) }, needGuess ? "先猜一下，再打开长窗口" : "把窗口拉长到近 3 年") : h(
         "section",
         { class: "paper stack" },
-        h("span", { class: "xs muted" }, "D 近 3 年，起点 = 100"),
-        lineChart({ series: [{ values: d.step2.series, color: "var(--ele-ink)" }], baseline: 100, height: 150, label: "D 近 3 年走势" }),
+        h("span", { class: "xs muted" }, `${d.label} 近 3 年，起点 = 100`),
+        lineChart({ series: [{ values: d.step2.series, color: "var(--ele-ink)" }], baseline: 100, height: 150, label: `${d.label} 近 3 年走势` }),
         h("div", { class: "grid2" }, h("div", null, h("div", { class: "xs muted" }, "累计涨跌"), h("div", { class: "mono bold" }, fmtPct(r))), h("div", null, h("div", { class: "xs muted" }, "最大回撤"), h("div", { class: "mono bold" }, `${(m * 100).toFixed(1)}%`))),
         h("p", { class: "xs muted" }, "累计涨跌是最后一天相对起点的变化；最大回撤是从此前最高点往下跌的最大比例。数字是题目数据，查看它们不算使用答案提示。"),
       ),
@@ -176,7 +176,7 @@ export function taskAScreen(s: State, d: TaskAData): HTMLElement {
   const canSubmit = !!t.answer && (step === 1 ? t.aligned : t.windowExtended) && !fb && !needGuess;
   const explain =
     step === 1
-      ? `对齐后看最后一天：D ${fmtPct(d.step1.asset_return)}，${d.step1.benchmark_name} ${fmtPct(d.step1.benchmark_return)}。`
+      ? `对齐后看最后一天：${d.label} ${fmtPct(d.step1.asset_return)}，${d.step1.benchmark_name} ${fmtPct(d.step1.benchmark_return)}。`
       : `3 年累计 ${fmtPct(periodReturn(d.step2.series)!)}，最大回撤 ${(maxDrawdown(d.step2.series)! * 100).toFixed(1)}%。`;
 
   return h(

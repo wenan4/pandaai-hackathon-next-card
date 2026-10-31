@@ -1,19 +1,39 @@
 // 人物卡、依据页、分享卡：全部由引擎输出渲染，组件里不做规则判断。
 import { ACTION_COPY, ASSIST_COPY, BET_FAMILY_COPY, CARD_COPY, OBS_COPY, REACTION_COPY, SPECIES_COPY, STATUS_COPY, TOPIC_COPY, TOPIC_SOURCE_COPY, TRADING_VIEW, UNKNOWN_YET, VERDICT_COPY } from "../../config/copy";
 import { AVAILABLE_TOPICS, ENGINE_CONFIG } from "../../config/engine";
-import { ROUNDS } from "../../config/rounds";
+import { ACT2_ROUNDS, ROUNDS } from "../../config/rounds";
 import { evaluate } from "../../engine/evaluate";
 import { actionHabits, betTopic, FREQUENT_BET_THRESHOLD, type DecisionChain } from "../../engine/habits";
 import { recommend, selectedTopic, STYLE_TOPIC } from "../../engine/recommend";
 import { structuredResult } from "../../engine/result";
 import { collectRound } from "../../engine/rounds";
-import type { ObsId, ObsInstance, Plan, Profile, TopicId } from "../../engine/types";
-import { emit, go, update, type State } from "../../state/store";
+import type { ObsId, ObsInstance, ObsStatus, Observation, Plan, Profile, TopicId } from "../../engine/types";
+import { ACT_SIZE, emit, go, startAct2, update, type State } from "../../state/store";
 import { footer, label, statusPill, topbar } from "../components";
 import { downloadJson, h } from "../dom";
 import { icon } from "../icons";
 
 const OBS: ObsId[] = ["O1", "O2", "O3", "O4"];
+const ACT2_IDS = new Set(ACT2_ROUNDS.map((r) => r.round_id));
+
+/** 第二幕已开始的三轮都锁定了 */
+const act2Done = (s: State) => s.rounds.length > ACT_SIZE && s.rounds.every((r) => r.locked);
+
+/** 一条情境证据对应的状态：独立一致 / 在帮助下一致 / 尚不确定 / 未查看，帮助与独立分开显示 */
+function instanceStatus(i: ObsInstance): ObsStatus {
+  if (i.outcome === "consistent") return i.assisted ? "assisted" : "observed";
+  return i.outcome === "unchecked" ? "not_observed" : "uncertain";
+}
+
+/** 每条观察下面的小徽标：R1 ✓ · R4 ✓（两次一致）。点进依据页看对应情境与事件。 */
+function situationBadges(o: Observation): HTMLElement | null {
+  if (o.id === "O4" || !o.instances.length) return null;
+  return h(
+    "span",
+    { class: "row wrap", style: "gap:4px;margin-top:2px" },
+    o.instances.map((i) => h("span", { class: `status ${instanceStatus(i)}`, style: "font-size:11px;padding:1px 6px" }, icon(instanceStatus(i), 11, 2), h("span", { class: "mono" }, i.context))),
+  );
+}
 
 export function currentProfile(s: State) {
   const { profile, progress } = evaluate(s.events, ENGINE_CONFIG);
@@ -70,7 +90,7 @@ export function startTask(s: State, plan: Plan, profile: Profile): void {
     if (!plan.topic) return;
     s.taskB = { topic: plan.topic, reason: plan.reason, guessFirst: plan.guess_first, locked: false, testOpened: false, submitted: false, assist: plan.assist, exposures: [] };
     // 记下这次任务实际用的主题和来源；只有来源为 user 的记录会被当作用户明确选题
-    emit(s, "taskB", "in_task", "topic_select", { topic: plan.topic, source: plan.topic_source ?? "user" });
+    if (plan.topic_source && plan.topic_source !== "user") emit(s, "taskB", "in_task", "topic_select", { topic: plan.topic, source: plan.topic_source });
     s.back = s.screen;
     s.screen = "taskB";
   }
@@ -119,7 +139,39 @@ export function planCard(plan: Plan, profile: Profile, s: State): HTMLElement {
       plan.guess_first ? " · 先猜后验" : "",
     ),
     plan.task === "B" && !s.taskB && AVAILABLE_TOPICS.length > 1 ? topicChooser(plan, profile) : null,
-    h("button", { class: "btn", style: "background:var(--ink);color:var(--paper)", disabled: plan.task === "B" && !s.taskB && !plan.topic, onclick: () => update((st) => startTask(st, plan, profile)) }, resume, icon("arrow", 18, 2)),
+    h(
+      "div",
+      { class: s.rounds.length === ACT_SIZE ? "grid2" : "stack", style: "gap:8px" },
+      h("button", { class: "btn", style: "background:var(--ink);color:var(--paper)", disabled: plan.task === "B" && !s.taskB && !plan.topic, onclick: () => update((st) => startTask(st, plan, profile)) }, resume, icon("arrow", 18, 2)),
+      // 第二幕可选：任何时候都不强制，跳过时画像按第一幕出
+      s.rounds.length === ACT_SIZE ? h("button", { class: "btn-line", style: "color:var(--ink);border-color:var(--ink)", onclick: () => update(startAct2) }, "再玩三轮，让观察更扎实") : null,
+    ),
+  );
+}
+
+/** 第二幕结束后：同一份记录截掉第二幕重算出的初步卡，与现在逐项并列。只展示变化，不覆盖任何一条情境记录。 */
+function act2Changes(s: State, profile: Profile, plan: Plan): HTMLElement | null {
+  if (!act2Done(s)) return null;
+  const act1 = s.events.filter((e) => !ACT2_IDS.has(e.round_id));
+  const before = evaluate(act1, ENGINE_CONFIG);
+  const beforePlan = recommend(before.profile, before.progress, AVAILABLE_TOPICS, { betTopic: betTopic(actionHabits(act1, ROUNDS)), userTopic: selectedTopic(act1) });
+  const obsText = (o: Observation) => `${STATUS_COPY[o.status]}（${o.summary.split("；")[0]!.replace(/（[^）]*）$/, "")}）`;
+  const planText = (p: Plan) => (p.task === "A" ? `任务 A 步骤 ${p.steps.join("、")}` : `任务 B${p.topic ? ` · ${TOPIC_COPY[p.topic].name}` : ""}`);
+  const row = (name: string, a: string, b: string) =>
+    h("li", null, h("b", null, name), "：", a === b ? h("span", { class: "muted" }, `${b}（没变）`) : [a, " → ", h("b", null, b)]);
+  return h(
+    "section",
+    { class: "panel stack" },
+    h("h2", null, "第二幕带来的变化"),
+    h("p", { class: "xs muted" }, "左边是只算第一幕的初步卡，右边是两幕合起来的结果。依据页里每个情境的原始状态都保留。"),
+    h(
+      "ul",
+      { class: "small", style: "margin:0;padding-left:18px" },
+      OBS.map((id) => row(`${id} ${OBS_COPY[id]}`, obsText(before.profile.observations[id]), obsText(profile.observations[id]))),
+      row("本局物种", SPECIES_COPY[before.profile.style.species].name, SPECIES_COPY[profile.style.species].name),
+      row("下一关", planText(beforePlan), planText(plan)),
+    ),
+    h("p", { class: "xs muted" }, "多一幕证据会改变推荐，这是设计意图；两个情境都观察到，仍只是本局观察。"),
   );
 }
 
@@ -127,12 +179,14 @@ export function profileScreen(s: State): HTMLElement {
   const { profile, plan } = currentProfile(s);
   const sp = SPECIES_COPY[profile.style.species];
   const c = profile.style.counts;
-  const preliminary = !s.taskA?.done && !s.taskB?.submitted;
+  const both = act2Done(s);
   return h(
     "main",
     { class: "screen" },
     topbar({ title: "本局的你", onBack: () => go("start"), right: h("button", { class: "icon-btn", "aria-label": "分享卡", onclick: () => go("share") }, icon("share", 22, 2)) }),
-    preliminary ? h("p", { class: "xs muted" }, "初步卡片：第一幕 3 轮。只出现过一次的观察会标出来，多玩几关会更准。") : null,
+    h("p", { class: "xs muted" }, both
+      ? "更新卡片：两幕 6 轮。每项能力有两个情境可以对照；第一幕的记录没有被覆盖。"
+      : "初步卡片：第一幕 3 轮。每项能力只观察到一次，会标“只见一次”；再玩三轮可以多一个情境对照。"),
     h(
       "section",
       { class: "paper row", style: "gap:16px;padding:18px" },
@@ -148,6 +202,7 @@ export function profileScreen(s: State): HTMLElement {
         h("span", { class: "display", style: "font-size:30px;line-height:1.1" }, sp.name),
         h("span", { class: "bold" }, sp.method),
         h("span", { class: "xs", style: "color:var(--ink-2)" }, `可计入的首翻：狐狸 ${c.fox} · 大象 ${c.elephant} · 猎豹 ${c.leopard}`),
+        h("span", { class: "xs muted" }, `统计 ${s.rounds.filter((r) => r.locked).length} 轮里说法没点名的牌：${profile.style.first_flips.filter((f) => f.counted).map((f) => f.round_id).join("、") || "暂无"}`),
         h("span", { class: "xs muted" }, "倾向是习惯，不分高低"),
       ),
     ),
@@ -167,9 +222,16 @@ export function profileScreen(s: State): HTMLElement {
           const o = profile.observations[id];
           return h(
             "li",
-            { class: "row" },
+            { class: "row", style: "cursor:pointer", onclick: () => go("basis") },
             h("span", { class: "xs muted bold", style: "width:24px" }, id),
-            h("div", { class: "grow stack", style: "gap:0" }, h("span", null, OBS_COPY[id]), h("span", { class: "xs muted" }, o.summary)),
+            h(
+              "div",
+              { class: "grow stack", style: "gap:0" },
+              h("span", null, OBS_COPY[id]),
+              h("span", { class: "xs muted" }, o.summary),
+              situationBadges(o),
+              o.aggregation === "mixed" ? h("span", { class: "xs", style: "color:var(--leo)" }, `${o.instances.map((i) => i.context).join(" 与 ")} 表现不同：新情境仍待确认，不取平均。`) : null,
+            ),
             statusPill(o.status),
           );
         }),
@@ -184,6 +246,7 @@ export function profileScreen(s: State): HTMLElement {
     ),
     h("section", { class: "panel stack" }, h("h2", null, "还不知道"), h("ul", { class: "small text-2", style: "margin:0;padding-left:18px" }, UNKNOWN_YET.map((x) => h("li", null, x)))),
     tradingView(s, profile),
+    act2Changes(s, profile, plan),
     planCard(plan, profile, s),
     h("button", { class: "btn-line", onclick: () => go("basis") }, "看每条观察的依据"),
     h("button", { class: "btn-text", onclick: () => exportResult(s) }, "导出结构化结果（JSON）"),
@@ -244,6 +307,14 @@ function alternative(inst: ObsInstance): string {
   return O3_ALT[inst.rule] ?? O4_ALT[inst.rule] ?? ALTERNATIVES[inst.rule.slice(-1)] ?? "";
 }
 
+/** 每一幕的整段用时：只用于试玩汇总，不在事件记录里，也不参与任何规则。 */
+function durationLine(s: State): HTMLElement | null {
+  const secs = (t?: number[]) => (t && t.length === 2 ? Math.max(0, Math.round((t[1]! - t[0]!) / 1000)) : null);
+  const fmt = (n: number) => (n >= 60 ? `${Math.floor(n / 60)} 分 ${n % 60} 秒` : `${n} 秒`);
+  const parts = ([["第一幕", s.timing?.act1], ["第二幕", s.timing?.act2]] as const).flatMap(([name, t]) => { const n = secs(t); return n === null ? [] : [`${name} ${fmt(n)}`]; });
+  return parts.length ? h("p", { class: "xs muted" }, `整段用时：${parts.join("；")}。只用于试玩汇总，不进事件记录，也不参与画像。`) : null;
+}
+
 export function basisScreen(s: State): HTMLElement {
   const { profile } = currentProfile(s);
   return h(
@@ -268,6 +339,7 @@ export function basisScreen(s: State): HTMLElement {
               ),
             ),
         o.understanding_unclear ? h("p", { class: "xs", style: "color:var(--leo)" }, "追问里你选了“图没看懂”：这项先记为理解待确认，不算没查证。") : null,
+        o.aggregation === "mixed" ? h("p", { class: "xs", style: "color:var(--leo)" }, "两个情境的表现不同：两条证据并列保留，不取平均，新情境仍待确认。") : null,
         id === "O1" || id === "O2" ? profile.task_observations[id].map((inst) => h("p", { class: "small text-2" }, taskLine(s, inst))) : null,
       );
     }),
@@ -299,6 +371,7 @@ export function basisScreen(s: State): HTMLElement {
       ),
       h("p", { class: "xs", style: "color:var(--ink-2)" }, "按每轮第一张翻的牌统计。说法直接点名的那张牌不计入，因为那是说法引导你去翻的。某种牌至少 2 次且最多才算物种；平局记为混合倾向。"),
     ),
+    durationLine(s),
     footer(),
   );
 }

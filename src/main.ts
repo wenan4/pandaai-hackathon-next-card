@@ -2,7 +2,7 @@ import "@fontsource/zcool-qingke-huangyou/chinese-simplified-400.css";
 import "@fontsource/ibm-plex-mono/500.css";
 import "./style.css";
 import { AVAILABLE_TOPICS } from "./config/engine";
-import { loadTaskA, loadTaskB, loadVisible, type TaskAData, type TaskBData, type VisibleRound } from "./data/cases";
+import { loadTaskA, loadTaskB, loadVisible, loadVisibleAct2, type TaskAData, type TaskBData, type VisibleRound } from "./data/cases";
 import type { TopicId } from "./engine/types";
 import { isJudgeMode, mountPanel } from "./panel";
 import { getState, go, NOTICE_VERSION, subscribe, type State } from "./state/store";
@@ -22,6 +22,29 @@ const taskBLoad: Partial<Record<TopicId, "loading" | "failed">> = {};
 let render: () => void = () => {};
 
 const taskBTopic = (s: State): TopicId => s.taskB?.topic ?? "cheetah";
+
+// 第二幕的可见数据只在玩家选了“再玩三轮”之后请求
+let act2: VisibleRound[] | null = null;
+let act2Load: "idle" | "loading" | "failed" = "idle";
+function ensureAct2(s: State): void {
+  if (act2 || act2Load !== "idle" || s.rounds.length <= 3) return;
+  act2Load = "loading";
+  loadVisibleAct2().then(
+    (d) => ((act2 = d), (act2Load = "idle"), render()),
+    () => ((act2Load = "failed"), render()),
+  );
+}
+function act2Pending(): HTMLElement {
+  const failed = act2Load === "failed";
+  return h(
+    "main",
+    { class: "screen" },
+    h("p", { style: "margin-top:40px" }, failed ? "第二幕的数据加载失败，请检查网络。" : "正在加载第二幕……"),
+    failed ? h("button", { class: "btn", onclick: () => ((act2Load = "idle"), render()) }, "重新加载") : null,
+    h("button", { class: "btn-line", onclick: () => go("profile") }, "回到人物卡"),
+    footer(),
+  );
+}
 
 function ensureTaskB(s: State): void {
   if (!s.rounds.every((r) => r.locked)) return;
@@ -54,6 +77,7 @@ function screenFor(s: State, visible: VisibleRound[], taskA: TaskAData): HTMLEle
   const roundsDone = s.rounds.every((r) => r.locked);
   switch (s.screen) {
     case "round":
+      if (s.round >= 3) return act2 ? roundScreen(s, [...visible, ...act2]) : act2Pending();
       return roundScreen(s, visible);
     case "profile":
       return roundsDone ? profileScreen(s) : startScreen(s);
@@ -98,6 +122,7 @@ async function main(): Promise<void> {
   render = () => {
     const s = getState();
     ensureTaskB(s);
+    ensureAct2(s);
     app.replaceChildren(screenFor(s, visible, taskA));
   };
   subscribe(render);

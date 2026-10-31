@@ -20,7 +20,8 @@ const Windows = z.record(z.string(), z.number().int().positive());
 /** 揭晓前可加载的文件头：刻意只有这几项，不带标的、真实日期、筛选条件。 */
 export const VisibleHeaderSchema = z.strictObject({
   schema: SchemaMarker,
-  file: z.literal("cases_visible"),
+  /** 第一幕 cases_visible，第二幕 cases_act2_visible（第二幕开始时才加载）。 */
+  file: z.enum(["cases_visible", "cases_act2_visible"]),
   script_version: z.string().min(1),
   rules_version: z.string().min(1),
   note: z.string().min(1),
@@ -53,8 +54,8 @@ const FullHeaderShape = {
 
 export const CasesRevealHeaderSchema = z.looseObject({
   ...FullHeaderShape,
-  /** 整份 cases_reveal，或按轮拆分的 cases_reveal_R1 等（只请求已锁定的那一轮）。 */
-  file: z.string().regex(/^cases_reveal(_R[1-6])?$/),
+  /** 整份 cases_reveal / cases_act2_reveal，或按轮拆分的 cases_reveal_R1 等（只请求已锁定的那一轮）。 */
+  file: z.string().regex(/^cases(_act2)?_reveal(_R[1-6])?$/),
   pool: z.string().min(1),
   volume: z.string().min(1),
   /** 信号 / 执行 / 退出时间：决策日收盘后，T+1 开盘进，T+20 收盘出。 */
@@ -117,6 +118,24 @@ export const VisibleElephantCardSchema = z.strictObject({
   max_drawdown: z.number().min(0).max(1),
 });
 
+/**
+ * R6：本标的过去一年里同类放量上涨的历史样本。只有相对日期；每次信号之后的观察窗口
+ * （offset + horizon）必须在 T 日收盘前结束，所以仍然只含决策时可见的信息。
+ */
+export const VisibleSignalHistorySchema = z
+  .strictObject({
+    lookback: z.number().int().positive(),
+    horizon: z.number().int().positive(),
+    definition: z.string().min(1),
+    items: z.array(z.strictObject({ offset: z.number().int().negative(), vol_ratio: z.number().positive(), day_return: z.number(), forward_return: z.number() })).min(1),
+  })
+  .superRefine((s, ctx) => {
+    s.items.forEach((x, i) => {
+      if (x.offset + s.horizon > 0) ctx.addIssue({ code: "custom", path: ["items", i, "offset"], message: "信号之后的观察窗口必须在 T 日收盘前结束" });
+      if (x.offset < -s.lookback) ctx.addIssue({ code: "custom", path: ["items", i, "offset"], message: "信号早于回看窗口" });
+    });
+  });
+
 export const VisibleLeopardCardSchema = z.strictObject({
   title: z.string().min(1),
   offsets: VisibleOffsets,
@@ -124,6 +143,7 @@ export const VisibleLeopardCardSchema = z.strictObject({
   /** 第一天没有前收，为 null。 */
   day_return: z.array(nullableNumber),
   volume_ratio: z.array(nullableNumber),
+  signals: VisibleSignalHistorySchema.optional(),
 });
 
 export const VisibleRoundSchema = z

@@ -46,7 +46,8 @@ export interface RoundConfig {
   key_card: Card | null;
   /** 说法直接点名的那张牌，物种统计时排除它的首翻 */
   named_card: Card | null;
-  horizon: "past" | "future";
+  /** past：可由已给数据核对；future：说的是还没发生的价格；sample：已有一小撮历史样本，但不够下结论（R6） */
+  horizon: "past" | "future" | "sample";
   bet_family: "relative_strength" | "steady_trend" | "volume_surge";
   method_card: { id: string; name: string; line: string };
   explain: Record<Card, { content_id: string; text: string; kind: ExplainKind }>;

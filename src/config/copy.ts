@@ -40,6 +40,7 @@ export const JUDGEMENT_COPY: Record<JudgementId, string> = {
   unchecked: "未查看本轮关键证据",
   mismatch: "结论与已见证据尚未对应",
   future_reserved: "保留了对未来的结论",
+  sample_reserved: "样本太少时保留了结论",
   assisted: "在提示下完成",
   understanding: "还需要确认理解",
 };

@@ -12,17 +12,29 @@ import { recommend } from "./recommend";
 const specs = (id: string) => PRESETS.find((p) => p.id === id)!.specs;
 
 describe("行动习惯（YOU-165）：只计数，不进入能力观察", () => {
-  it("路径乙：R1、R2 判断与下一步同向，R3 支持但先看看；只在 R2 跟过，不算常押", () => {
+  it("路径乙（六轮）：3 轮同向、3 轮不同向；稳步上行跟了 2 次（R2、R5），算常押并指向大象题", () => {
     const h = actionHabits(eventsFromSpecs(specs("yi"), ROUNDS), ROUNDS);
-    expect(h.aligned).toEqual(["R1", "R2"]);
-    expect(h.diverged).toEqual(["R3"]);
-    expect(h.backed_families).toEqual([{ family: "steady_trend", rounds: ["R2"], frequent: false }]);
-    expect(betTopic(h)).toBeUndefined();
-    expect(h.decision_chains.map((c) => [c.round_id, c.flips, c.final, c.action])).toEqual([
-      ["R1", ["elephant", "fox"], "refutes", "pass"],
-      ["R2", ["elephant"], "supports", "follow"],
-      ["R3", ["elephant", "fox"], "supports", "wait"],
+    expect(h.aligned).toEqual(["R2", "R3", "R6"]);
+    expect(h.diverged).toEqual(["R1", "R4", "R5"]);
+    expect(h.backed_families).toEqual([
+      { family: "relative_strength", rounds: ["R1"], frequent: false },
+      { family: "steady_trend", rounds: ["R2", "R5"], frequent: true },
     ]);
+    expect(betTopic(h)).toBe("elephant");
+    expect(h.decision_chains.map((c) => [c.round_id, c.flips, c.final, c.action])).toEqual([
+      ["R1", ["fox"], "refutes", "follow"],
+      ["R2", ["elephant"], "supports", "follow"],
+      ["R3", ["elephant", "leopard"], "insufficient", "wait"],
+      ["R4", ["fox"], "supports", "pass"],
+      ["R5", ["elephant"], "refutes", "follow"],
+      ["R6", ["elephant", "leopard"], "insufficient", "wait"],
+    ]);
+  });
+
+  it("只玩第一幕时每种形态最多一次，押注推题不会触发", () => {
+    const h = actionHabits(eventsFromSpecs(specs("yi").filter((s) => ["R1", "R2", "R3"].includes(s.round_id)), ROUNDS), ROUNDS);
+    expect(h.backed_families.every((b) => !b.frequent)).toBe(true);
+    expect(betTopic(h)).toBeUndefined();
   });
 
   it("同一形态跟满 2 次才算常押，并映射到对应主题", () => {
@@ -42,7 +54,8 @@ describe("行动习惯（YOU-165）：只计数，不进入能力观察", () => 
     expect(b.profile).toEqual(a.profile);
     const pa = recommend(a.profile, a.progress, AVAILABLE_TOPICS);
     const pb = recommend(b.profile, b.progress, AVAILABLE_TOPICS, { betTopic: "cheetah" });
-    expect({ ...pb, topic: null, topic_source: null }).toEqual({ ...pa, topic: null, topic_source: null });
+    const core = (p: typeof pa) => ({ route: p.route, task: p.task, steps: p.steps, assist: p.assist, guess_first: p.guess_first });
+    expect(core(pb)).toEqual(core(pa));
   });
 
   it("evaluate / recommend 不导入行动习惯；文案不出现风险偏好用词", () => {

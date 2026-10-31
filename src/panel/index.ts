@@ -1,15 +1,16 @@
 // 评委面板（?judge=1）：预设路径或当前体验记录 → 字段编辑 → 分叉重算 → 前后差异并列。
 // 所有结果都来自同一套 evaluate / recommend / settle，面板里没有规则的第二份实现。
-import { ACTION_COPY, CARD_COPY, FOLLOWUP_COPY, OBS_COPY, STATUS_COPY, UNKNOWN_YET, VERDICT_COPY } from "../config/copy";
+import { ACTION_COPY, CARD_COPY, FOLLOWUP_COPY, OBS_COPY, STATUS_COPY, TOPIC_COPY, TOPIC_SOURCE_COPY, UNKNOWN_YET, VERDICT_COPY } from "../config/copy";
 import { AVAILABLE_TOPICS, ENGINE_CONFIG } from "../config/engine";
 import { ROUNDS } from "../config/rounds";
 import { evaluate } from "../engine/evaluate";
 import { eventsFromSpecs, type RoundSpec } from "../engine/paths";
-import { recommend } from "../engine/recommend";
+import { actionHabits, betTopic } from "../engine/habits";
+import { recommend, selectedTopic } from "../engine/recommend";
 import { structuredResult, type Provenance } from "../engine/result";
 import { collectRound, followupFor } from "../engine/rounds";
 import { flipOutcomes, settle } from "../engine/settle";
-import type { Action, Card, GameEvent, ObsId, Verdict } from "../engine/types";
+import type { Action, Card, GameEvent, ObsId, Plan, Verdict } from "../engine/types";
 import { getState } from "../state/store";
 import { label } from "../ui/components";
 import { downloadJson, h } from "../ui/dom";
@@ -65,13 +66,19 @@ function compute(specs: RoundSpec[], flip: string[], fork = false) {
     ? fork ? forkEvents(getState().events, specs, ROUNDS) : getState().events
     : eventsFromSpecs(specs, ROUNDS, "judge");
   const { profile, progress } = evaluate(events, ENGINE_CONFIG);
-  const plan = recommend(profile, progress, AVAILABLE_TOPICS);
+  // 与游戏同一套输入：常押形态和用户选题只影响任务 B 的默认主题
+  const plan = recommend(profile, progress, AVAILABLE_TOPICS, { betTopic: betTopic(actionHabits(events, ROUNDS)), userTopic: selectedTopic(events) });
   const chips = settle(
     specs.map((s) => ({ round_id: s.round_id, action: s.action })),
     flipOutcomes(outcomes, flip),
   );
   return { events, profile, progress, plan, chips };
 }
+
+const planLabel = (p: Plan) => `${p.route} · 任务 ${p.task}${p.task === "A" ? ` 步骤 ${p.steps.join("、")}` : ""}${p.guess_first ? " · 先猜后验" : ""}`;
+/** 主题与来源：只改下一步时，常押形态的变化可能让来源从 bet 变成 style（PRD §9 现场用例） */
+const topicLabel = (p: Plan) =>
+  p.task !== "B" ? "—" : `${p.topic ? TOPIC_COPY[p.topic].name : "选题入口"}${p.topic_sources.length ? `（来源 ${p.topic_sources.map((x) => TOPIC_SOURCE_COPY[x]).join("、")}${p.topic_conflict ? "，两个来源不一致" : ""}）` : ""}`;
 
 function select(name: string, value: string, opts: [string, string][], onChange: (v: string) => void): HTMLElement {
   return h(
@@ -117,7 +124,7 @@ function editor(specs: RoundSpec[]): HTMLElement {
   return h(
     "div",
     { class: "stack" },
-    h("div", { class: "row wrap" }, ROUNDS.map((r) => h("button", { class: "opt", style: "min-height:40px;font-size:14px", "aria-pressed": String(ps.editRound === r.round_id), onclick: () => ((ps.editRound = r.round_id), (ps.draft = null), rerender()) }, r.round_id))),
+    h("div", { class: "row wrap" }, ROUNDS.filter((r) => (ps.fork ?? specs).some((s) => s.round_id === r.round_id)).map((r) => h("button", { class: "opt", style: "min-height:40px;font-size:14px", "aria-pressed": String(ps.editRound === r.round_id), onclick: () => ((ps.editRound = r.round_id), (ps.draft = null), rerender()) }, r.round_id))),
     h(
       "div",
       { class: "grid2" },
@@ -145,7 +152,8 @@ function diffRows(a: Result, b: Result | null): HTMLElement {
     ...OBS.map((id) => [`${id} ${OBS_COPY[id]}`, `${STATUS_COPY[a.profile.observations[id].status]} · ${a.profile.observations[id].summary}`, b ? `${STATUS_COPY[b.profile.observations[id].status]} · ${b.profile.observations[id].summary}` : ""] as [string, string, string]),
     ["物种", a.profile.style.species, b?.profile.style.species ?? ""],
     ["K / ready_for_B", `${a.progress.K} / ${a.progress.ready_for_B}`, b ? `${b.progress.K} / ${b.progress.ready_for_B}` : ""],
-    ["推荐", `${a.plan.route} · 任务 ${a.plan.task}${a.plan.task === "A" ? ` 步骤 ${a.plan.steps.join("、")}` : ""}${a.plan.guess_first ? " · 先猜后验" : ""}`, b ? `${b.plan.route} · 任务 ${b.plan.task}${b.plan.task === "A" ? ` 步骤 ${b.plan.steps.join("、")}` : ""}${b.plan.guess_first ? " · 先猜后验" : ""}` : ""],
+    ["推荐", planLabel(a.plan), b ? planLabel(b.plan) : ""],
+    ["任务 B 主题", topicLabel(a.plan), b ? topicLabel(b.plan) : ""],
     ["代币余额", a.chips.balance.toFixed(2), b ? b.chips.balance.toFixed(2) : ""],
   ];
   return h(
@@ -172,7 +180,10 @@ function whyUnchanged(a: Result, b: Result, base: RoundSpec[], fork: RoundSpec[]
     const f = fork[i]!;
     return JSON.stringify({ ...s, action: null, followupAnswer: null }) === JSON.stringify({ ...f, action: null, followupAnswer: null });
   });
-  return onlyAction ? "画像没有变化：交易行动不参与能力推断，代币结算与画像隔离。" : "画像没有变化：这次改动没有触及影响任何一项观察的事件。";
+  const topicMoved = topicLabel(a.plan) !== topicLabel(b.plan);
+  const why = onlyAction ? "画像没有变化：交易行动不参与能力推断，代币结算与画像隔离。" : "画像没有变化：这次改动没有触及影响任何一项观察的事件。";
+  // 只改下一步时，常押形态的次数可能变化：这只影响任务 B 默认主题的来源，路线与能力不变
+  return topicMoved ? `${why}常押形态的次数变了，所以任务 B 默认主题的来源跟着变；A/B 路线不变。` : why;
 }
 
 export function renderPanel(): HTMLElement {

@@ -26,7 +26,7 @@ from pd_common import data  # noqa: E402
 from pd_common.client import REPO_ROOT  # noqa: E402
 from pd_common.metrics import compare_to_benchmark, max_drawdown, normalize, period_return  # noqa: E402
 
-SCRIPT_VERSION = "taskA-0.1.2"
+SCRIPT_VERSION = "taskA-0.1.3"
 STEP2_CLAIM = "过去三年，D 总体上涨，而且从阶段高点往下最多跌了不到 15%。"
 STEP2_MAX_MDD = 0.15
 MIN_GAP_DAYS = 120  # D 的决策日与 A/B/C 至少相隔的交易日数，避免基准走势与第一幕重合到能凭记忆作答
@@ -156,7 +156,7 @@ def build():
             "selection": "从 R1 / R2 条件的候选中，排除已发布 cases_reveal.json 中 A/B/C 的代码、申万一级行业，且决策日与它们相隔至少 120 个交易日；行业未知或任务窗口不完整的候选不采用；按 T 日前 60 日平均成交额最高者自动选取，不按后续收益选案",
             "public_scope": "尚未获得 PandaAI 公开展示许可的明确答复，暂按最保守方式处理：只发布归一化曲线与派生统计",
         },
-        "label": "D",
+        "label": "G",  # 局内六轮用 A–F，任务 A 的新标的记为 G（PRD v0.3 §5.1）
         "step1": {
             "observation": "O1",
             "offsets": [-bc.WIN_SHORT, 0],

@@ -78,7 +78,7 @@
         },
         "file": {
           "type": "string",
-          "pattern": "^cases_reveal(_R[1-6])?$"
+          "pattern": "^cases(_act2)?_reveal(_R[1-6])?$"
         },
         "pool": {
           "type": "string",

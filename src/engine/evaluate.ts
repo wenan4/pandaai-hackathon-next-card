@@ -7,7 +7,7 @@ export interface EngineConfig {
   rounds: RoundConfig[];
   understanding_answers: string[];
 }
-export type JudgementId = "consistent" | "unchecked" | "mismatch" | "future_reserved" | "assisted" | "understanding";
+export type JudgementId = "consistent" | "unchecked" | "mismatch" | "future_reserved" | "sample_reserved" | "assisted" | "understanding";
 
 function understandingUnclear(rec: RoundRecord, cfg: EngineConfig): boolean {
   return rec.followup?.answer != null && cfg.understanding_answers.includes(rec.followup.answer);
@@ -22,7 +22,7 @@ export function roundJudgement(events: readonly GameEvent[], round: RoundConfig,
   if (!round.key_card || !rec.flips.includes(round.key_card)) return "unchecked";
   if (rec.final !== round.verdict) return "mismatch";
   if (directionalOn(rec, round.key_card)) return "assisted";
-  return round.horizon === "future" ? "future_reserved" : "consistent";
+  return round.horizon === "future" ? "future_reserved" : round.horizon === "sample" ? "sample_reserved" : "consistent";
 }
 function instance(rec: RoundRecord, rule: string, outcome: ObsInstance["outcome"], assisted = false): ObsInstance {
   return { context: rec.round_id, rule, outcome, assisted, event_ids: [...rec.event_ids.flips, rec.event_ids.final!].filter(Boolean) };
@@ -85,7 +85,7 @@ function aggregate(id: ObsId, instances: ObsInstance[]): Observation {
   else if (helped.length) { aggregation = "assisted"; status = "assisted"; }
   else if (!instances.length || instances.every((i) => i.outcome === "unchecked")) { aggregation = "none"; status = "not_observed"; }
   else { aggregation = "uncertain"; status = "uncertain"; }
-  const summaries = { repeated: "两次一致", mixed: "两个情境表现不同", single: "只见一次", assisted: "在提示下完成", none: "未观察到", uncertain: understanding ? "理解待确认" : "尚待确认", partial: "" };
+  const summaries = { repeated: "两次一致", mixed: "两个情境表现不同，新情境仍待确认", single: "只见一次", assisted: "在提示下完成", none: "未观察到", uncertain: understanding ? "理解待确认" : "尚待确认", partial: "" };
   let summary = summaries[aggregation];
   if (instances.length === 1) { aggregation = "partial"; summary += "；还没有第二个情境可以对照"; }
   return { id, status, aggregation, summary, instances, understanding_unclear: understanding };
@@ -136,7 +136,8 @@ export function evaluate(events: readonly GameEvent[], cfg: EngineConfig): { pro
     anyUnderstanding ||= unclear;
     if (round.key_card === "fox") o1.push(keyCardInstance("O1", rec, round, unclear));
     if (round.key_card === "elephant") o2.push(keyCardInstance("O2", rec, round, unclear));
-    if (round.horizon === "future") {
+    // O3 的情境：R3（未来还没发生）与 R6（历史样本太少）；两者都不算“可判定情境”
+    if (round.horizon !== "past") {
       const seen = rec.flips.includes("leopard");
       if (unclear) o3.push(instance(rec, "O3-c", "uncertain"));
       else if (seen && rec.final === "insufficient") o3.push(instance(rec, "O3-a", decisive ? "consistent" : "uncertain", directionalOn(rec, "leopard")));

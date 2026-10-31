@@ -31,11 +31,11 @@ npm run build      # 类型检查 → 构建到 dist/ → 扫描 dist/ 里有没
 
 ### 流程
 
-开局告知 → 开场 → 三轮（第一判断 → 翻牌 ≤ 2 张 → 最终判断 + 你的下一步 → 追问 → 锁定 → 揭晓）→ 人物卡 / 依据页 / 分享卡 → 推荐的下一关（任务 A 或任务 B）→ 画像更新。
+开局告知 → 开场 → 第一幕三轮（第一判断 → 翻牌 ≤ 2 张 → 最终判断 + 你的下一步 → 追问 → 锁定 → 揭晓）→ 初步人物卡 / 依据页 / 分享卡 → 推荐的下一关（任务 A 或任务 B），或者“再玩三轮”进入第二幕 R4–R6 → 更新后的人物卡（两个情境对照、变化前后并列）→ 画像更新。
 
 ### 数据隔离
 
-揭晓前只加载 `public/data/cases_visible.json`（只有 T 日及以前、相对日期、无代码和名称）。第 n 轮锁定后才请求 `cases_reveal_Rn.json`，且只请求这一轮；`src/data/cases.test.ts` 覆盖了这条规则。
+揭晓前只加载 `public/data/cases_visible.json`（只有 T 日及以前、相对日期、无代码和名称）；第二幕的 `cases_act2_visible.json` 在玩家选了“再玩三轮”之后才请求。第 n 轮锁定后才请求 `cases_reveal_Rn.json`，且只请求这一轮；`src/data/cases.test.ts` 覆盖了这条规则。
 
 任务 B 的三个主题（`taskB_cheetah.json` / `taskB_elephant.json` / `taskB_fox.json`）都是多只股票的汇总统计，等已开始的轮次全部锁定后才按需请求；加载失败只影响任务 B 相关页面。可用主题由 `src/config/taskB_topics.json` 决定，这份清单由 `check_taskB.py --write-manifest` 生成，检查不通过的主题不会出现在界面里。
 
@@ -45,7 +45,7 @@ npm run build      # 类型检查 → 构建到 dist/ → 扫描 dist/ 里有没
 
 ### 当前范围
 
-第一幕三轮、揭晓、人物卡 / 依据页 / 分享卡、行动习惯、任务 A、任务 B 三个主题（猎豹 / 大象 / 狐狸，可换题）、画像更新、评委面板（含 9 项反例检查）和结构化结果导出都可用。未实现：第二幕、自我预期校准、分享卡导出图片、引擎输出改用契约类型。完整对照见 [docs/PROJECT.md](docs/PROJECT.md) 第 9 节。
+两幕六轮（第二幕可选）、揭晓、人物卡 / 依据页 / 分享卡（含跨情境聚合与第二幕前后对照）、行动习惯、任务 A、任务 B 三个主题（猎豹 / 大象 / 狐狸，可换题）、画像更新、评委面板（含 9 项反例检查）和结构化结果导出都可用。未实现：自我预期校准、分享卡导出图片、引擎输出改用契约类型。完整对照见 [docs/PROJECT.md](docs/PROJECT.md) 第 9 节。
 
 ## 离线取数
 
@@ -55,7 +55,8 @@ uv pip install -r scripts/requirements.txt
 cp .env.example .env   # 填 PANDA_USER / PANDA_PASS
 .venv/bin/python scripts/pd_probe.py            # 接口可行性
 .venv/bin/python scripts/build_cases.py         # 第一幕 R1–R3
-.venv/bin/python scripts/build_taskA.py         # 任务 A 标的 D
+.venv/bin/python scripts/build_cases_act2.py    # 第二幕 R4–R6（方向翻转，排除第一幕与任务 A 的标的）
+.venv/bin/python scripts/build_taskA.py         # 任务 A 标的 G
 .venv/bin/python scripts/build_taskB.py --topic cheetah   # 任务 B 猎豹题（elephant / fox 同理）
 .venv/bin/python scripts/check_taskB.py --topic cheetah   # 任务 B 逐条口径检查
 .venv/bin/python scripts/check_taskB.py --write-manifest  # 检查全部主题，只把通过的写进可用主题清单

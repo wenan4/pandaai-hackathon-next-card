@@ -1,0 +1,30 @@
+{
+  "_comment": "第二幕命题定稿，由 scripts/build_cases_act2.py 生成，与 public/data/cases_act2_*.json 对齐",
+  "rules_version": "v0.3",
+  "rounds": [
+    {
+      "round_id": "R4",
+      "act": 2,
+      "label": "D",
+      "claim": "过去这 60 个交易日，D 的涨幅高于这张卡指定的市场基准（沪深300）。",
+      "evidence_verdict": "supports",
+      "benchmark_name": "沪深300"
+    },
+    {
+      "round_id": "R5",
+      "act": 2,
+      "label": "E",
+      "claim": "过去三年，E 总体上涨，而且从阶段高点往下最多跌了不到 15%。",
+      "evidence_verdict": "refutes",
+      "benchmark_name": "沪深300"
+    },
+    {
+      "round_id": "R6",
+      "act": 2,
+      "label": "F",
+      "claim": "在这类放量上涨出现之后的 20 个交易日，F 的收盘价通常会更高。",
+      "evidence_verdict": "insufficient",
+      "benchmark_name": "沪深300"
+    }
+  ]
+}

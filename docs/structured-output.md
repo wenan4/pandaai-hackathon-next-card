@@ -16,9 +16,9 @@ GEN_EXAMPLES=1 npx vitest run src/engine/result.test.ts
 
 | 文件 | 路径 | 首次推荐 |
 |---|---|---|
-| `docs/examples/result.yi.json` | 乙：关键牌都看了，第 3 轮对未来下了判断 | 任务 A 两步，不先猜 |
-| `docs/examples/result.jia.json` | 甲：翻了牌，但没翻关键牌，结论碰巧对 | 任务 A 两步，先猜后验 |
-| `docs/examples/result.bing.json` | 丙：一张不翻，直接判断 | 任务 A 两步，先猜后验 |
+| `docs/examples/result.yi.json` | 乙：两幕六轮，关键牌都看了，第 2、5 轮看完证据改了第一判断 | 任务 B 大象题（来源：常押形态、物种），我自己来 |
+| `docs/examples/result.jia.json` | 甲：只玩第一幕，每轮先翻量价，没翻关键牌，第 3 轮“图没看懂” | 任务 A 两步，带我做，先猜后验 |
+| `docs/examples/result.bing.json` | 丙：同乙，只把第 3 轮两张牌换个顺序 | 任务 B 大象题（来源只剩常押形态），物种为混合倾向 |
 
 ## 字段
 

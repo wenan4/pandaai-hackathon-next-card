@@ -3,7 +3,8 @@ import { CONTENT_VERSION } from "../config/constants";
 import type { Action, AssistLevel, Card, FollowupId, GameEvent, Profile, Reaction, Stage, TopicId, Verdict } from "../engine/types";
 
 export const STORAGE_KEY = "nextcard:v1";
-export const NOTICE_VERSION = "notice-v1";
+// 告知内容改动时升版本，已经确认过旧版的玩家会重新看到告知
+export const NOTICE_VERSION = "notice-v2";
 
 export type Screen = "notice" | "start" | "round" | "profile" | "basis" | "share" | "taskA" | "updated" | "taskB" | "privacy" | "data";
 export type RoundPhase = "claim" | "flip" | "judge" | "followup" | "revealed";
@@ -69,6 +70,11 @@ export interface State {
   taskB: TaskBUI | null;
   /** 进入任务前的画像，用于“画像更新”页对比 */
   profileBeforeTask?: Profile;
+  /**
+   * 每一幕从第一判断到最后一轮锁定的起止时间（毫秒），只用于试玩汇总：不进事件记录，不参与画像。
+   * act1 / act2 为 [开始, 结束]。
+   */
+  timing?: { act1?: number[]; act2?: number[] };
 }
 
 const newRound = (): RoundUI => ({ phase: "claim", flips: [], explained: [], note: "", locked: false });
@@ -136,6 +142,28 @@ export function subscribe(fn: () => void): () => void {
 }
 
 type PayloadOf<T extends GameEvent["type"]> = Extract<GameEvent, { type: T }>["payload"];
+
+/** 第一幕三轮、第二幕三轮；第二幕是可选的复核，选了才追加。 */
+export const ACT_SIZE = 3;
+export const actOf = (roundIndex: number): 1 | 2 => (roundIndex < ACT_SIZE ? 1 : 2);
+
+/** 进入第二幕：追加 R4–R6 三轮。任何时候都不强制，第一幕的画像和任务资格照常可用。 */
+export function startAct2(s: State): void {
+  if (s.rounds.length > ACT_SIZE) return;
+  s.rounds.push(newRound(), newRound(), newRound());
+  s.round = ACT_SIZE;
+  s.back = s.screen;
+  s.screen = "round";
+  window.scrollTo(0, 0);
+}
+
+/** 一幕的整段用时：第一轮第一判断时开始，最后一轮锁定时结束。 */
+export function markActTime(s: State, roundIndex: number, edge: "start" | "end"): void {
+  const key = actOf(roundIndex) === 1 ? "act1" : "act2";
+  const t = (s.timing ??= {});
+  if (edge === "start" && !t[key]) t[key] = [Date.now()];
+  if (edge === "end" && t[key] && t[key]!.length === 1) t[key]!.push(Date.now());
+}
 
 /** 产生一个事件并写入状态（调用方负责在 update 里调用）。 */
 export function emit<T extends GameEvent["type"]>(s: State, round_id: string, stage: Stage, type: T, payload: PayloadOf<T>): void {

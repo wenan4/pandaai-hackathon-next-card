@@ -6,8 +6,8 @@ import { CasesRevealSchema, CasesVisibleSchema, DATA_SCHEMA_ID, TaskADataSchema,
 const dir = new URL("../../public/data/", import.meta.url);
 const load = (name: string) => JSON.parse(readFileSync(new URL(name, dir), "utf8"));
 const SCHEMAS: [RegExp, { safeParse: (v: unknown) => { success: boolean; error?: { issues: unknown[] } } }][] = [
-  [/^cases_visible\.json$/, CasesVisibleSchema],
-  [/^cases_reveal(_R\d)?\.json$/, CasesRevealSchema],
+  [/^cases(_act2)?_visible\.json$/, CasesVisibleSchema],
+  [/^cases(_act2)?_reveal(_R\d)?\.json$/, CasesRevealSchema],
   [/^taskA\.json$/, TaskADataSchema],
   [/^taskB_\w+\.json$/, TaskBDataSchema],
 ];

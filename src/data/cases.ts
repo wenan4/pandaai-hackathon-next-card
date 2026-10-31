@@ -13,7 +13,13 @@ export interface VisibleRound {
   cards: {
     fox: { asset: number[]; benchmark: number[]; benchmark_name: string; asset_return: number; benchmark_return: number };
     elephant: { series: number[]; cum_return: number; max_drawdown: number };
-    leopard: { close: number[]; day_return: (number | null)[]; volume_ratio: (number | null)[] };
+    leopard: {
+      close: number[];
+      day_return: (number | null)[];
+      volume_ratio: (number | null)[];
+      /** 只有 R6：过去一年里同类放量上涨的历史样本，相对日期，观察窗口都在 T 日之前结束 */
+      signals?: { lookback: number; horizon: number; definition: string; items: { offset: number; vol_ratio: number; day_return: number; forward_return: number }[] };
+    };
   };
 }
 
@@ -83,11 +89,20 @@ const fetchJson = async <T>(path: string): Promise<T> => {
 };
 
 let visible: Promise<VisibleRound[]> | null = null;
+let visibleAct2: Promise<VisibleRound[]> | null = null;
 const reveals = new Map<string, Promise<{ header: DataHeader; round: RevealRound }>>();
 
 export function loadVisible(): Promise<VisibleRound[]> {
   visible ??= fetchJson<{ rounds: VisibleRound[] }>("cases_visible.json").then((d) => d.rounds);
   return visible;
+}
+
+/** 第二幕的可见数据：玩家选择“再玩三轮”之后才请求；同样只含 T 日及以前。 */
+export function loadVisibleAct2(): Promise<VisibleRound[]> {
+  visibleAct2 ??= fetchJson<{ rounds: VisibleRound[] }>("cases_act2_visible.json")
+    .then((d) => d.rounds)
+    .catch((error: unknown) => { visibleAct2 = null; throw error; });
+  return visibleAct2;
 }
 
 export class RevealLockedError extends Error {}
@@ -121,5 +136,6 @@ export function loadTaskB(topic: TopicId = "cheetah"): Promise<TaskBData> {
 
 export function _resetForTest(): void {
   visible = null;
+  visibleAct2 = null;
   reveals.clear();
 }

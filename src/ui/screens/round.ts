@@ -7,7 +7,7 @@ import { roundJudgement } from "../../engine/evaluate";
 import { followupFor, MAX_FLIPS } from "../../engine/rounds";
 import { settle, settleRound, START_TOKENS } from "../../engine/settle";
 import type { Action, Card, Reaction, RoundConfig, Verdict } from "../../engine/types";
-import { emit, getState, go, update, type RoundUI, type State } from "../../state/store";
+import { ACT_SIZE, actOf, emit, getState, go, markActTime, update, type RoundUI, type State } from "../../state/store";
 import { cardFace, cardTile, footer, mainChart, parrotSays, topbar } from "../components";
 import { fmtDate, fmtNum, fmtPct, h } from "../dom";
 import { icon } from "../icons";
@@ -45,6 +45,11 @@ function evidenceSentence(cfg: RoundConfig, d: VisibleRound): string {
     const e = d.cards.elephant;
     return `${d.label} 近 3 年累计 ${fmtPct(e.cum_return)}，最大回撤 ${(e.max_drawdown * 100).toFixed(1)}%。`;
   }
+  const sig = d.cards.leopard.signals;
+  if (sig) {
+    const up = sig.items.filter((x) => x.forward_return > 0).length;
+    return `过去一年只有 ${sig.items.length} 次同类放量上涨，之后 ${sig.horizon} 个交易日 ${up} 次收得更高、${sig.items.length - up} 次更低。样本这么少、结果又不一致，既不能支持“通常会更高”，也不能否定它。`;
+  }
   return "这句话说的是 20 个交易日后的价格。揭晓前能看到的牌，既不能支持它，也不能否定它。";
 }
 
@@ -53,6 +58,7 @@ function reactionSection(ui: RoundUI, rid: string): HTMLElement {
     update((s) => {
       const u = s.rounds[s.round]!;
       if (u.initial) return;
+      markActTime(s, s.round, "start");
       u.initial = r;
       u.phase = "flip";
       emit(s, rid, "pre_reveal", "initial_reaction", { reaction: r });
@@ -163,6 +169,7 @@ function commit(s: State, u: RoundUI, cfg: RoundConfig, answer: string | null): 
   if (u.note.trim()) emit(s, rid, "pre_reveal", "self_note", { text: u.note.trim() });
   u.locked = true;
   u.phase = "revealed";
+  if (s.round === s.rounds.length - 1 || s.round === ACT_SIZE - 1) markActTime(s, s.round, "end");
 }
 
 function followupSheet(ui: RoundUI, cfg: RoundConfig): HTMLElement {
@@ -197,12 +204,12 @@ function revealSection(s: State, ui: RoundUI, cfg: RoundConfig, d: VisibleRound)
   const judgement = roundJudgement(s.events, cfg, ENGINE_CONFIG)!;
   const ret = data.round.after.return_open_t1_to_close_t20;
   const mine = settleRound(cfg.round_id, ui.action ?? null, ret);
-  const lockedRounds = ROUNDS.map((r, i) => ({ r, u: s.rounds[i]! })).filter(({ u }) => u.locked);
+  const lockedRounds = ROUNDS.slice(0, s.rounds.length).map((r, i) => ({ r, u: s.rounds[i]! })).filter(({ u }) => u.locked);
   const balance = settle(
     lockedRounds.map(({ r, u }) => ({ round_id: r.round_id, action: u.action ?? null })),
     Object.fromEntries(lockedRounds.map(({ r }) => [r.round_id, revealCache.get(r.round_id)?.round.after.return_open_t1_to_close_t20 ?? null])),
   ).balance;
-  const good = judgement === "consistent" || judgement === "future_reserved";
+  const good = judgement === "consistent" || judgement === "future_reserved" || judgement === "sample_reserved";
   const crossNote =
     mine.delta > 0 && !good
       ? "这笔代币赚了，但这一轮的判断还缺少对应的依据。"
@@ -211,7 +218,8 @@ function revealSection(s: State, ui: RoundUI, cfg: RoundConfig, d: VisibleRound)
         : null;
   const unflipped = CARDS.filter((c) => !ui.flips.includes(c));
   const src = data.round.source;
-  const last = s.round === ROUNDS.length - 1;
+  // 每一幕的最后一轮之后回到人物卡：第一幕后出初步卡，第二幕后出更新卡
+  const last = s.round === s.rounds.length - 1;
 
   return h(
     "section",
@@ -266,7 +274,7 @@ function revealSection(s: State, ui: RoundUI, cfg: RoundConfig, d: VisibleRound)
       "div",
       { class: "paper row", style: "gap:12px" },
       h("div", { style: "flex:none;width:44px;height:44px;border-radius:12px;background:var(--fox-tint);color:var(--fox-ink);display:flex;align-items:center;justify-content:center" }, icon("bookmark", 22)),
-      h("div", { class: "grow stack", style: "gap:2px" }, h("span", { class: "xs bold", style: "color:var(--fox-ink)" }, `获得方法卡 · ${cfg.method_card.name}`), h("span", { class: "small" }, cfg.method_card.line), h("span", { class: "xs muted" }, "方法卡是下一关的工具，局内不能使用。")),
+      h("div", { class: "grow stack", style: "gap:2px" }, h("span", { class: "xs bold", style: "color:var(--fox-ink)" }, cfg.act === 2 ? `复用方法卡 · ${cfg.method_card.name}` : `获得方法卡 · ${cfg.method_card.name}`), h("span", { class: "small" }, cfg.method_card.line), h("span", { class: "xs muted" }, cfg.act === 2 ? "第二幕不发新卡，用的还是第一幕拿到的那张。" : "方法卡是下一关的工具，局内不能使用。")),
     ),
     h(
       "details",
@@ -293,7 +301,7 @@ function revealSection(s: State, ui: RoundUI, cfg: RoundConfig, d: VisibleRound)
                 window.scrollTo(0, 0);
               }),
       },
-      last ? "看本局的人物卡" : "下一轮",
+      last ? (actOf(s.round) === 2 ? "看更新后的人物卡" : "看本局的人物卡") : "下一轮",
       icon("arrow", 18, 2),
     ),
   );
@@ -303,10 +311,14 @@ export function roundScreen(s: State, visible: VisibleRound[]): HTMLElement {
   const cfg = ROUNDS[s.round]!;
   const ui = s.rounds[s.round]!;
   const d = visible.find((v) => v.round_id === cfg.round_id)!;
+  const act = actOf(s.round);
   return h(
     "main",
     { class: "screen" },
-    topbar({ title: `第 ${s.round + 1} 轮 / ${ROUNDS.length}`, progress: s.round, onBack: () => go("start") }),
+    topbar({ title: `${act === 2 ? "第二幕 · " : ""}第 ${s.round + 1} 轮 / ${s.rounds.length}`, progress: s.round % ACT_SIZE, onBack: () => go("start") }),
+    act === 2 && s.round === ACT_SIZE && ui.phase === "claim"
+      ? h("p", { class: "panel small text-2" }, "第二幕：换个标的、换个时段，再来三轮。玩法不变；这是固定的第二套情境，不会因为你前面的选择调整题目。")
+      : null,
     parrotSays(cfg.claim),
     ui.phase !== "revealed"
       ? h("div", { class: "panel sunken on-dark stack" }, h("span", { class: "xs muted" }, `主图：${d.label} 决策前 60 个交易日（起点 = 100）`), mainChart(d))

@@ -11,7 +11,7 @@ import { icon } from "../icons";
 import { revealedSources } from "./round";
 
 const NOTICE_ITEMS: [string, string][] = [
-  ["记录什么", "只记录这一局里的选择：第一判断、翻牌、最终判断、你的下一步、追问、任务步骤和帮助使用。不记录停留时长和鼠标轨迹，不采集姓名、手机号等个人信息。"],
+  ["记录什么", "只记录这一局里的选择：第一判断、翻牌、最终判断、你的下一步、追问、任务步骤和帮助使用。不记录每一步的停留时长和鼠标轨迹，只记每一幕从开始到结束的总用时（试玩汇总用，不进画像）；不采集姓名、手机号等个人信息。"],
   ["用来做什么", "生成本局的人物卡和下一关推荐。演示和评审时可能被评委查看；如果你同意，试玩记录会用于改进游戏。"],
   ["存在哪里", "只保存在这台设备的浏览器本地存储里，不上传服务器（这个项目没有服务端）。"],
   ["怎么清除", "开场页和隐私说明页都有“清除本局记录”按钮，点一下就全部删掉。"],
@@ -60,6 +60,7 @@ function clearButton(): HTMLElement {
 export function startScreen(s: State): HTMLElement {
   const started = s.events.some((e) => e.type === "initial_reaction");
   const resume = () => {
+    if (!s.rounds.every((r) => r.locked)) return go("round");
     if (s.taskB) return go("taskB");
     if (s.taskA) return go(s.taskA.done ? "updated" : "taskA");
     if (s.rounds.every((r) => r.locked)) return go("profile");
@@ -196,7 +197,7 @@ export function dataScreen(s: State, taskA: TaskAData | null, taskB: Partial<Rec
       "section",
       { class: "panel stack" },
       h("h2", null, "本局的案例"),
-      ROUNDS.map((r) => {
+      ROUNDS.slice(0, s.rounds.length).map((r) => {
         const hit = revealed.find((x) => x.round_id === r.round_id);
         if (!hit) return h("p", { class: "small muted" }, `${r.round_id} · 标的 ${r.label}：揭晓后显示`);
         const src = hit.round.source;
@@ -214,7 +215,7 @@ export function dataScreen(s: State, taskA: TaskAData | null, taskB: Partial<Rec
       ? h(
           "section",
           { class: "panel stack" },
-          h("h2", null, "任务 A 的标的 D"),
+          h("h2", null, `任务 A 的标的 ${taskA.label}`),
           h("p", { class: "small text-2" }, `${taskA.source.symbol} ${taskA.source.name}，决策日 ${fmtDate(taskA.source.decision_date)}。`),
           h("p", { class: "xs muted" }, String(taskA.header.selection ?? "")),
         )

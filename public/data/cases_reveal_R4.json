@@ -1,0 +1,176 @@
+{
+ "header": {
+  "schema": "next-card/data@v0.3",
+  "script": "scripts/build_cases_act2.py",
+  "script_version": "cases-act2-0.1.0",
+  "rules_version": "v0.3",
+  "generated_at": "2026-10-31T14:54:24Z",
+  "data_as_of": "20261030",
+  "source": "Panda Data（panda_data 1.0.5）",
+  "apis": [
+   "get_stock_daily_pre",
+   "get_index_daily",
+   "get_index_weights",
+   "get_adj_factor",
+   "get_trade_cal"
+  ],
+  "pool": "000300.SH + 000905.SH 在决策日 T 的点时成分",
+  "benchmark": "000300.SH 沪深300（筛选前固定）",
+  "adjustment": "前复权，以数据截止日为锚回算；区间收益不受锚点影响，但绝对价位不是当时的成交价",
+  "dividends": "前复权价已包含分红送转的影响（相当于分红再投资）",
+  "volume": "原始成交量（股），未复权；量比 = 当日量 ÷ 之前 20 个非停牌交易日均量（不含当日）",
+  "normalization": "每张卡的价格序列以窗口首日 = 100 归一化；揭晓走势以 T 日收盘 = 100",
+  "timing": {
+   "decision": "T 日收盘后",
+   "reveal_entry": "T+1 开盘",
+   "reveal_exit": "T+20 收盘"
+  },
+  "windows": {
+   "short": 60,
+   "long": 729,
+   "volume": 20,
+   "after": 20
+  },
+  "candidate_decision_days": {
+   "from": "20231101",
+   "to": "20260924",
+   "every_n_trading_days": 5,
+   "count": 142
+  },
+  "filters": {
+   "R4": {
+    "min_r60": 0.1,
+    "min_margin_over_bench": 0.03
+   },
+   "R5": {
+    "min_r3y": 0.1,
+    "min_mdd3y": 0.2,
+    "min_r60": 0.1
+   },
+   "R6": {
+    "vol_mult": 3.0,
+    "min_day_ret": 0.05,
+    "lookback": 243,
+    "horizon": 20,
+    "min_signals": 3,
+    "max_signals": 6,
+    "positive_share": [
+     0.333333,
+     0.666667
+    ],
+    "split_factor": 1.1
+   },
+   "min_gap_trading_days": 120
+  },
+  "exclusions": [
+   "决策日停牌（trade_status ≠ 0）",
+   "按交易日历对齐；历史不足 729 日、标的或基准窗口缺失，或揭晓窗口不足 20 日",
+   "T+1 停牌、无成交量，或开盘价缺失／非正；排除数量见 sample.excluded_records",
+   "第一幕三轮与任务 A 用过的标的；与它们的决策日相隔不足 120 个交易日的候选决策日",
+   "R6：量比回看窗口内有送转除权（ex_factor ≥ 1.1）的信号不计；相邻信号的 20 日观察窗口不重叠"
+  ],
+  "sample": {
+   "R4": {
+    "evaluated": 23777,
+    "passed": 4171
+   },
+   "R5": {
+    "evaluated": 23777,
+    "passed": 2280
+   },
+   "R6": {
+    "evaluated": 23777,
+    "passed": 638
+   },
+   "excluded_records": {
+    "incomplete_history": 1684,
+    "entry_suspended_or_missing": 3,
+    "near_used_decision_date": 110
+   },
+   "excluded_symbols": [
+    "000063.SZ",
+    "300059.SZ",
+    "600900.SH",
+    "601988.SH"
+   ]
+  },
+  "selection": "每轮在通过条件的候选中按 T 日前 60 日平均成交额最高者自动选取；未参考 T 之后数据",
+  "public_scope": "尚未获得 PandaAI 公开展示许可的明确答复，暂按最保守方式处理：只发布归一化曲线与派生统计，不发布原始行情",
+  "act": 2,
+  "file": "cases_reveal_R4"
+ },
+ "rounds": [
+  {
+   "round_id": "R4",
+   "after": {
+    "offsets": [
+     0,
+     20
+    ],
+    "close": [
+     100.0,
+     99.4116,
+     99.1935,
+     96.7791,
+     96.6777,
+     96.3378,
+     96.1704,
+     97.9964,
+     100.6746,
+     106.3302,
+     105.2832,
+     107.5593,
+     107.5073,
+     105.6106,
+     108.8169,
+     105.7509,
+     103.5943,
+     103.4176,
+     102.8356,
+     103.7606,
+     105.491
+    ],
+    "open_t1": 99.087,
+    "close_t20": 105.491,
+    "return_close_t_to_close_t20": 0.05491,
+    "return_open_t1_to_close_t20": 0.064631,
+    "t1_open_at_limit_up": false
+   },
+   "source": {
+    "symbol": "300750.SZ",
+    "name": "宁德时代",
+    "decision_date": "20240416",
+    "windows": {
+     "fox": [
+      "20240111",
+      "20240416"
+     ],
+     "elephant": [
+      "20210413",
+      "20240416"
+     ],
+     "leopard": [
+      "20240315",
+      "20240416"
+     ],
+     "after": [
+      "20240417",
+      "20240517"
+     ]
+    },
+    "benchmark": "000300.SH 沪深300",
+    "claim": "过去这 60 个交易日，D 的涨幅高于这张卡指定的市场基准（沪深300）。",
+    "evidence_verdict": "supports",
+    "checks": {
+     "r60": 0.273414,
+     "bench_r60": 0.065371,
+     "pass_r60_ge_10pct": true,
+     "pass_asset_higher_by_3pp": true,
+     "pass": true
+    },
+    "selection": "在通过全部条件的候选中，按 T 日前 60 个交易日平均成交额最高者自动选取；第二幕三轮标的互不相同，也不同于第一幕和任务 A，决策日与它们至少相隔 120 个交易日。",
+    "hindsight_disclosure": "选取只用 T 日及以前的数据，未参考 T 之后的走势。"
+   }
+  }
+ ]
+}
