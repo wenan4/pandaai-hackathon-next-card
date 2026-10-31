@@ -1,0 +1,581 @@
+{
+  "rules_version": "v0.3",
+  "content_version": "v0.3",
+  "rounds": [
+    {
+      "round_id": "R1",
+      "act": 1,
+      "label": "A",
+      "claim": "过去这 60 个交易日，A 的涨幅高于这张卡指定的市场基准（沪深300）。",
+      "claim_direction": "fails",
+      "horizon": "past",
+      "evidence_verdict": "refutes",
+      "key_card": "fox",
+      "named_card": "fox",
+      "bet_family": "relative_strength",
+      "cards": {
+        "fox": {
+          "ref": "R1.cards.fox",
+          "title": "同期对照"
+        },
+        "elephant": {
+          "ref": "R1.cards.elephant",
+          "title": "更长历史"
+        },
+        "leopard": {
+          "ref": "R1.cards.leopard",
+          "title": "近期量价"
+        }
+      },
+      "explain": {
+        "fox": {
+          "content_id": "R1-fox-explain-v1",
+          "version": "v1",
+          "kind": "neutral"
+        },
+        "elephant": {
+          "content_id": "R1-elephant-explain-v1",
+          "version": "v1",
+          "kind": "neutral"
+        },
+        "leopard": {
+          "content_id": "R1-leopard-explain-v1",
+          "version": "v1",
+          "kind": "neutral"
+        }
+      },
+      "followups": [
+        {
+          "order": 1,
+          "question": "missing",
+          "trigger": "final_insufficient",
+          "options": [
+            "longer_history",
+            "comparison",
+            "future_trend",
+            "chart_unclear",
+            "other"
+          ],
+          "understanding_answers": [
+            "chart_unclear"
+          ]
+        },
+        {
+          "order": 2,
+          "question": "basis",
+          "trigger": "key_card_flipped_and_verdict_differs",
+          "options": [
+            "main_chart",
+            "opened_cards",
+            "claim_itself",
+            "intuition",
+            "chart_unclear"
+          ],
+          "understanding_answers": [
+            "chart_unclear"
+          ]
+        },
+        {
+          "order": 3,
+          "question": "waiting",
+          "trigger": "action_wait",
+          "options": [
+            "future_trend",
+            "signal_validation",
+            "more_opinions",
+            "chart_unclear",
+            "other"
+          ],
+          "understanding_answers": [
+            "chart_unclear"
+          ]
+        }
+      ],
+      "method_card": {
+        "id": "ruler",
+        "name": "对照尺",
+        "granted": true
+      }
+    },
+    {
+      "round_id": "R2",
+      "act": 1,
+      "label": "B",
+      "claim": "过去三年，B 总体上涨，而且从阶段高点往下最多跌了不到 15%。",
+      "claim_direction": "holds",
+      "horizon": "past",
+      "evidence_verdict": "supports",
+      "key_card": "elephant",
+      "named_card": "elephant",
+      "bet_family": "steady_trend",
+      "cards": {
+        "fox": {
+          "ref": "R2.cards.fox",
+          "title": "同期对照"
+        },
+        "elephant": {
+          "ref": "R2.cards.elephant",
+          "title": "更长历史"
+        },
+        "leopard": {
+          "ref": "R2.cards.leopard",
+          "title": "近期量价"
+        }
+      },
+      "explain": {
+        "fox": {
+          "content_id": "R2-fox-explain-v1",
+          "version": "v1",
+          "kind": "neutral"
+        },
+        "elephant": {
+          "content_id": "R2-elephant-explain-v1",
+          "version": "v1",
+          "kind": "neutral"
+        },
+        "leopard": {
+          "content_id": "R2-leopard-explain-v1",
+          "version": "v1",
+          "kind": "neutral"
+        }
+      },
+      "followups": [
+        {
+          "order": 1,
+          "question": "missing",
+          "trigger": "final_insufficient",
+          "options": [
+            "longer_history",
+            "comparison",
+            "future_trend",
+            "chart_unclear",
+            "other"
+          ],
+          "understanding_answers": [
+            "chart_unclear"
+          ]
+        },
+        {
+          "order": 2,
+          "question": "basis",
+          "trigger": "key_card_flipped_and_verdict_differs",
+          "options": [
+            "main_chart",
+            "opened_cards",
+            "claim_itself",
+            "intuition",
+            "chart_unclear"
+          ],
+          "understanding_answers": [
+            "chart_unclear"
+          ]
+        },
+        {
+          "order": 3,
+          "question": "waiting",
+          "trigger": "action_wait",
+          "options": [
+            "future_trend",
+            "signal_validation",
+            "more_opinions",
+            "chart_unclear",
+            "other"
+          ],
+          "understanding_answers": [
+            "chart_unclear"
+          ]
+        }
+      ],
+      "method_card": {
+        "id": "long_lens",
+        "name": "长镜头",
+        "granted": true
+      }
+    },
+    {
+      "round_id": "R3",
+      "act": 1,
+      "label": "C",
+      "claim": "20 个交易日后，C 的收盘价会高于今天。",
+      "claim_direction": "unverifiable",
+      "horizon": "future",
+      "evidence_verdict": "insufficient",
+      "key_card": "leopard",
+      "named_card": null,
+      "bet_family": "volume_surge",
+      "cards": {
+        "fox": {
+          "ref": "R3.cards.fox",
+          "title": "同期对照"
+        },
+        "elephant": {
+          "ref": "R3.cards.elephant",
+          "title": "更长历史"
+        },
+        "leopard": {
+          "ref": "R3.cards.leopard",
+          "title": "近期量价"
+        }
+      },
+      "explain": {
+        "fox": {
+          "content_id": "R3-fox-explain-v1",
+          "version": "v1",
+          "kind": "neutral"
+        },
+        "elephant": {
+          "content_id": "R3-elephant-explain-v1",
+          "version": "v1",
+          "kind": "neutral"
+        },
+        "leopard": {
+          "content_id": "R3-leopard-explain-v1",
+          "version": "v1",
+          "kind": "neutral"
+        }
+      },
+      "followups": [
+        {
+          "order": 1,
+          "question": "missing",
+          "trigger": "final_insufficient",
+          "options": [
+            "longer_history",
+            "comparison",
+            "future_trend",
+            "chart_unclear",
+            "other"
+          ],
+          "understanding_answers": [
+            "chart_unclear"
+          ]
+        },
+        {
+          "order": 2,
+          "question": "basis",
+          "trigger": "key_card_flipped_and_verdict_differs",
+          "options": [
+            "main_chart",
+            "opened_cards",
+            "claim_itself",
+            "intuition",
+            "chart_unclear"
+          ],
+          "understanding_answers": [
+            "chart_unclear"
+          ]
+        },
+        {
+          "order": 3,
+          "question": "waiting",
+          "trigger": "action_wait",
+          "options": [
+            "future_trend",
+            "signal_validation",
+            "more_opinions",
+            "chart_unclear",
+            "other"
+          ],
+          "understanding_answers": [
+            "chart_unclear"
+          ]
+        }
+      ],
+      "method_card": {
+        "id": "another_segment",
+        "name": "换一段",
+        "granted": true
+      }
+    },
+    {
+      "round_id": "R4",
+      "act": 2,
+      "label": "D",
+      "claim": "过去这 60 个交易日，D 的涨幅高于这张卡指定的市场基准（沪深300）。",
+      "claim_direction": "holds",
+      "horizon": "past",
+      "evidence_verdict": "supports",
+      "key_card": "fox",
+      "named_card": "fox",
+      "bet_family": "relative_strength",
+      "cards": {
+        "fox": {
+          "ref": "R4.cards.fox",
+          "title": "同期对照"
+        },
+        "elephant": {
+          "ref": "R4.cards.elephant",
+          "title": "更长历史"
+        },
+        "leopard": {
+          "ref": "R4.cards.leopard",
+          "title": "近期量价"
+        }
+      },
+      "explain": {
+        "fox": {
+          "content_id": "R4-fox-explain-v1",
+          "version": "v1",
+          "kind": "neutral"
+        },
+        "elephant": {
+          "content_id": "R4-elephant-explain-v1",
+          "version": "v1",
+          "kind": "neutral"
+        },
+        "leopard": {
+          "content_id": "R4-leopard-explain-v1",
+          "version": "v1",
+          "kind": "neutral"
+        }
+      },
+      "followups": [
+        {
+          "order": 1,
+          "question": "missing",
+          "trigger": "final_insufficient",
+          "options": [
+            "longer_history",
+            "comparison",
+            "future_trend",
+            "chart_unclear",
+            "other"
+          ],
+          "understanding_answers": [
+            "chart_unclear"
+          ]
+        },
+        {
+          "order": 2,
+          "question": "basis",
+          "trigger": "key_card_flipped_and_verdict_differs",
+          "options": [
+            "main_chart",
+            "opened_cards",
+            "claim_itself",
+            "intuition",
+            "chart_unclear"
+          ],
+          "understanding_answers": [
+            "chart_unclear"
+          ]
+        },
+        {
+          "order": 3,
+          "question": "waiting",
+          "trigger": "action_wait",
+          "options": [
+            "future_trend",
+            "signal_validation",
+            "more_opinions",
+            "chart_unclear",
+            "other"
+          ],
+          "understanding_answers": [
+            "chart_unclear"
+          ]
+        }
+      ],
+      "method_card": {
+        "id": "ruler",
+        "name": "对照尺",
+        "granted": false
+      }
+    },
+    {
+      "round_id": "R5",
+      "act": 2,
+      "label": "E",
+      "claim": "过去三年，E 总体上涨，而且从阶段高点往下最多跌了不到 15%。",
+      "claim_direction": "fails",
+      "horizon": "past",
+      "evidence_verdict": "refutes",
+      "key_card": "elephant",
+      "named_card": "elephant",
+      "bet_family": "steady_trend",
+      "cards": {
+        "fox": {
+          "ref": "R5.cards.fox",
+          "title": "同期对照"
+        },
+        "elephant": {
+          "ref": "R5.cards.elephant",
+          "title": "更长历史"
+        },
+        "leopard": {
+          "ref": "R5.cards.leopard",
+          "title": "近期量价"
+        }
+      },
+      "explain": {
+        "fox": {
+          "content_id": "R5-fox-explain-v1",
+          "version": "v1",
+          "kind": "neutral"
+        },
+        "elephant": {
+          "content_id": "R5-elephant-explain-v1",
+          "version": "v1",
+          "kind": "neutral"
+        },
+        "leopard": {
+          "content_id": "R5-leopard-explain-v1",
+          "version": "v1",
+          "kind": "neutral"
+        }
+      },
+      "followups": [
+        {
+          "order": 1,
+          "question": "missing",
+          "trigger": "final_insufficient",
+          "options": [
+            "longer_history",
+            "comparison",
+            "future_trend",
+            "chart_unclear",
+            "other"
+          ],
+          "understanding_answers": [
+            "chart_unclear"
+          ]
+        },
+        {
+          "order": 2,
+          "question": "basis",
+          "trigger": "key_card_flipped_and_verdict_differs",
+          "options": [
+            "main_chart",
+            "opened_cards",
+            "claim_itself",
+            "intuition",
+            "chart_unclear"
+          ],
+          "understanding_answers": [
+            "chart_unclear"
+          ]
+        },
+        {
+          "order": 3,
+          "question": "waiting",
+          "trigger": "action_wait",
+          "options": [
+            "future_trend",
+            "signal_validation",
+            "more_opinions",
+            "chart_unclear",
+            "other"
+          ],
+          "understanding_answers": [
+            "chart_unclear"
+          ]
+        }
+      ],
+      "method_card": {
+        "id": "long_lens",
+        "name": "长镜头",
+        "granted": false
+      }
+    },
+    {
+      "round_id": "R6",
+      "act": 2,
+      "label": "F",
+      "claim": "在这类放量上涨出现之后的 20 个交易日，F 的收盘价通常会更高。",
+      "claim_direction": "unverifiable",
+      "horizon": "past",
+      "evidence_verdict": "insufficient",
+      "key_card": "leopard",
+      "named_card": "leopard",
+      "bet_family": "volume_surge",
+      "cards": {
+        "fox": {
+          "ref": "R6.cards.fox",
+          "title": "同期对照"
+        },
+        "elephant": {
+          "ref": "R6.cards.elephant",
+          "title": "更长历史"
+        },
+        "leopard": {
+          "ref": "R6.cards.leopard",
+          "title": "近期量价"
+        }
+      },
+      "explain": {
+        "fox": {
+          "content_id": "R6-fox-explain-v1",
+          "version": "v1",
+          "kind": "neutral"
+        },
+        "elephant": {
+          "content_id": "R6-elephant-explain-v1",
+          "version": "v1",
+          "kind": "neutral"
+        },
+        "leopard": {
+          "content_id": "R6-leopard-explain-v1",
+          "version": "v1",
+          "kind": "neutral"
+        }
+      },
+      "followups": [
+        {
+          "order": 1,
+          "question": "missing",
+          "trigger": "final_insufficient",
+          "options": [
+            "longer_history",
+            "comparison",
+            "future_trend",
+            "chart_unclear",
+            "other"
+          ],
+          "understanding_answers": [
+            "chart_unclear"
+          ]
+        },
+        {
+          "order": 2,
+          "question": "basis",
+          "trigger": "key_card_flipped_and_verdict_differs",
+          "options": [
+            "main_chart",
+            "opened_cards",
+            "claim_itself",
+            "intuition",
+            "chart_unclear"
+          ],
+          "understanding_answers": [
+            "chart_unclear"
+          ]
+        },
+        {
+          "order": 3,
+          "question": "waiting",
+          "trigger": "action_wait",
+          "options": [
+            "future_trend",
+            "signal_validation",
+            "more_opinions",
+            "chart_unclear",
+            "other"
+          ],
+          "understanding_answers": [
+            "chart_unclear"
+          ]
+        }
+      ],
+      "method_card": {
+        "id": "another_segment",
+        "name": "换一段",
+        "granted": false
+      }
+    }
+  ],
+  "bet_family_coverage": {
+    "relative_strength": 2,
+    "steady_trend": 2,
+    "volume_surge": 2
+  }
+}
