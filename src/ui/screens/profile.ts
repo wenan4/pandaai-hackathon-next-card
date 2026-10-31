@@ -1,14 +1,16 @@
 // 人物卡、依据页、分享卡：全部由引擎输出渲染，组件里不做规则判断。
-import { ASSIST_COPY, CARD_COPY, OBS_COPY, REACTION_COPY, SPECIES_COPY, UNKNOWN_YET, VERDICT_COPY } from "../../config/copy";
+import { ACTION_COPY, ASSIST_COPY, BET_FAMILY_COPY, CARD_COPY, OBS_COPY, REACTION_COPY, SPECIES_COPY, STATUS_COPY, TRADING_VIEW, UNKNOWN_YET, VERDICT_COPY } from "../../config/copy";
 import { AVAILABLE_TOPICS, ENGINE_CONFIG } from "../../config/engine";
 import { ROUNDS } from "../../config/rounds";
 import { evaluate } from "../../engine/evaluate";
+import { actionHabits, betTopic, FREQUENT_BET_THRESHOLD, type DecisionChain } from "../../engine/habits";
 import { recommend } from "../../engine/recommend";
+import { structuredResult } from "../../engine/result";
 import { collectRound } from "../../engine/rounds";
 import type { ObsId, ObsInstance, Plan, Profile } from "../../engine/types";
 import { go, update, type State } from "../../state/store";
 import { footer, label, statusPill, topbar } from "../components";
-import { h } from "../dom";
+import { downloadJson, h } from "../dom";
 import { icon } from "../icons";
 
 const OBS: ObsId[] = ["O1", "O2", "O3", "O4"];
@@ -16,24 +18,65 @@ const TOPIC_NAME = { cheetah: "猎豹题：放量上涨之后", elephant: "大�
 
 export function currentProfile(s: State) {
   const { profile, progress } = evaluate(s.events, ENGINE_CONFIG);
-  return { profile, progress, plan: recommend(profile, progress, AVAILABLE_TOPICS) };
+  // 行动习惯只用来给任务 B 选默认主题，不进入能力观察
+  const habits = actionHabits(s.events, ROUNDS);
+  return { profile, progress, habits, plan: recommend(profile, progress, AVAILABLE_TOPICS, { betTopic: betTopic(habits) }) };
+}
+
+function exportResult(s: State): void {
+  if (!confirm("导出的文件包含你这一局的选择记录（不含姓名等个人信息），请自行保管。继续导出吗？")) return;
+  downloadJson("next-card-result", structuredResult(s.events, ENGINE_CONFIG, AVAILABLE_TOPICS, { kind: "user_session" }, UNKNOWN_YET));
+}
+
+/** 换成交易语言来看 + 你的下一步习惯。只描述本局，不评高低，不影响能力观察。 */
+function tradingView(s: State, profile: Profile): HTMLElement {
+  const habits = actionHabits(s.events, ROUNDS);
+  const chain = (c: DecisionChain) => {
+    const looked = c.flips.length ? c.flips.map((x) => CARD_COPY[x].animal).join("、") : "没翻牌";
+    const first = c.initial ? `第一判断${REACTION_COPY[c.initial]} → ` : "";
+    return `${c.round_id}：看了${looked} → ${first}最终${VERDICT_COPY[c.final].label} → ${ACTION_COPY[c.action]}${c.followup ? `（${c.followup}）` : ""}`;
+  };
+  const backed = habits.backed_families.length
+    ? habits.backed_families.map((b) => `${BET_FAMILY_COPY[b.family]}（${b.rounds.join("、")}）${b.frequent ? "，算常押" : ""}`).join("；")
+    : "这一局没有选过“跟”";
+  return h(
+    "details",
+    { class: "panel" },
+    h("summary", { class: "small" }, "换成交易语言来看"),
+    h(
+      "div",
+      { class: "stack", style: "margin-top:8px;gap:10px" },
+      h("ul", { class: "small", style: "margin:0;padding-left:18px" }, (["O1", "O2", "O3", "O4"] as const).map((id) =>
+        h("li", null, TRADING_VIEW[id], h("span", { class: "xs muted" }, ` · 本局：${STATUS_COPY[profile.observations[id].status]}`)))),
+      h("h3", { class: "small bold", style: "margin:0" }, "你的下一步习惯"),
+      h("ul", { class: "xs text-2", style: "margin:0;padding-left:18px" }, habits.decision_chains.map((c) => h("li", null, chain(c)))),
+      h("p", { class: "xs text-2" }, `判断和下一步同向 ${habits.aligned.length} 轮，不同向 ${habits.diverged.length} 轮。选过“跟”的形态：${backed}。同一形态至少跟 ${FREQUENT_BET_THRESHOLD} 次才算常押。`),
+      h("p", { class: "xs muted" }, `这部分不影响能力观察，只用来给任务 B 选默认主题${AVAILABLE_TOPICS.length === 1 ? "；目前只开放猎豹题，其他主题尚未发布" : ""}。认可一个说法，不代表必须跟。`),
+    ),
+  );
 }
 
 export function startTask(s: State, plan: Plan, profile: Profile): void {
-  s.profileBeforeTask = profile;
+  // 回到已开始的任务 B 时保留原来的任务前画像
+  if (plan.task === "A" || !s.taskB) s.profileBeforeTask = profile;
   if (plan.task === "A") {
     s.taskA = { reason: plan.reason, guessFirst: plan.guess_first, steps: plan.steps, stepIndex: 0, assist: plan.assist, aligned: false, exposures: [], readings: false, windowExtended: false, done: false };
     s.back = s.screen;
     s.screen = "taskA";
+  } else if (s.taskB) {
+    // 任务 B 只有一道题：已开始的回到原进度，已完成的看结果，不重置锁定、打开和作答记录
+    s.back = s.screen;
+    s.screen = s.taskB.submitted ? "updated" : "taskB";
   } else {
-    s.taskB = { reason: plan.reason, guessFirst: plan.guess_first, locked: false, testOpened: false, submitted: false };
+    s.taskB = { reason: plan.reason, guessFirst: plan.guess_first, locked: false, testOpened: false, submitted: false, assist: plan.assist, exposures: [] };
     s.back = s.screen;
     s.screen = "taskB";
   }
   window.scrollTo(0, 0);
 }
 
-export function planCard(plan: Plan, profile: Profile): HTMLElement {
+export function planCard(plan: Plan, profile: Profile, s: State): HTMLElement {
+  const resume = plan.task === "B" && s.taskB ? (s.taskB.submitted ? "查看任务 B 结果" : "继续任务 B") : "开始下一关";
   const title = plan.task === "A" ? `任务 A · 同一起点，再比一次（步骤 ${plan.steps.join("、")}）` : `任务 B · ${plan.topic ? TOPIC_NAME[plan.topic] : "选一个主题"}`;
   return h(
     "section",
@@ -47,7 +90,7 @@ export function planCard(plan: Plan, profile: Profile): HTMLElement {
       `协助：${ASSIST_COPY[plan.assist].label}（${profile.help_preference.source === "user" ? "你选过的档位" : "按本局帮助使用推断，可随时改"}）`,
       plan.guess_first ? " · 先猜后验" : "",
     ),
-    h("button", { class: "btn", style: "background:var(--ink);color:var(--paper)", onclick: () => update((s) => startTask(s, plan, profile)) }, plan.task === "B" ? "查看任务 B（数据准备中）" : "开始下一关", icon("arrow", 18, 2)),
+    h("button", { class: "btn", style: "background:var(--ink);color:var(--paper)", onclick: () => update((st) => startTask(st, plan, profile)) }, resume, icon("arrow", 18, 2)),
   );
 }
 
@@ -101,6 +144,7 @@ export function profileScreen(s: State): HTMLElement {
             statusPill(o.status),
           );
         }),
+        o5Row(profile),
       ),
     ),
     h(
@@ -110,9 +154,10 @@ export function profileScreen(s: State): HTMLElement {
       h("div", { class: "stack", style: "gap:0" }, h("span", { class: "xs muted" }, "帮助偏好"), h("span", { class: "small" }, `${ASSIST_COPY[profile.help_preference.level].label}：本局展开解释 ${profile.help_preference.explain_count} 次`)),
     ),
     h("section", { class: "panel stack" }, h("h2", null, "还不知道"), h("ul", { class: "small text-2", style: "margin:0;padding-left:18px" }, UNKNOWN_YET.map((x) => h("li", null, x)))),
-    h("details", { class: "panel" }, h("summary", { class: "small" }, "换成交易语言来看"), h("p", { class: "small muted", style: "margin-top:6px" }, "更新中：第二幕会补上这一部分。")),
-    planCard(plan, profile),
+    tradingView(s, profile),
+    planCard(plan, profile, s),
     h("button", { class: "btn-line", onclick: () => go("basis") }, "看每条观察的依据"),
+    h("button", { class: "btn-text", onclick: () => exportResult(s) }, "导出结构化结果（JSON）"),
     footer(),
   );
 }
@@ -139,12 +184,31 @@ const O4_ALT: Record<string, string> = {
 
 function describe(s: State, inst: ObsInstance): string {
   if (inst.context.startsWith("taskA")) return `任务 A 步骤 ${inst.context.slice(-1)}：提交了答案`;
+  if (inst.context === "taskB") return "任务 B：锁定规则后看了展示段和检验段，选了结论和依据";
   const cfg = ROUNDS.find((r) => r.round_id === inst.context);
   if (!cfg) return inst.context;
   const rec = collectRound(s.events, cfg);
   const flips = rec.flips.length ? rec.flips.map((c) => `「${CARD_COPY[c].title}」`).join("、") : "没有翻牌";
   const initial = rec.initial ? `第一判断「${REACTION_COPY[rec.initial]}」→ ` : "";
   return `${initial}翻开 ${flips} → 最终「${rec.final ? VERDICT_COPY[rec.final].label : "—"}」`;
+}
+
+/** 任务 B 完成后才出现的 O5：只在任务这个新情境里记录。 */
+function o5Row(profile: Profile): HTMLElement | null {
+  const done = profile.task_observations.O5.find((i) => i.outcome === "consistent");
+  if (!done) return null;
+  return h(
+    "li",
+    { class: "row" },
+    h("span", { class: "xs muted bold", style: "width:24px" }, "O5"),
+    h("div", { class: "grow stack", style: "gap:0" }, h("span", null, "在给定规则下比较两段样本"), h("span", { class: "xs muted" }, "任务 B 中记录")),
+    statusPill(done.assisted ? "assisted" : "observed"),
+  );
+}
+
+function taskLine(s: State, inst: ObsInstance): string {
+  const result = inst.outcome === "consistent" ? (inst.assisted ? "在帮助下完成" : "独立完成") : "与数据尚未对应";
+  return `${describe(s, inst)} · ${result}。这是任务中的新情境，不改写局内观察。`;
 }
 
 function alternative(inst: ObsInstance): string {
@@ -175,9 +239,18 @@ export function basisScreen(s: State): HTMLElement {
               ),
             ),
         o.understanding_unclear ? h("p", { class: "xs", style: "color:var(--leo)" }, "追问里你选了“图没看懂”：这项先记为理解待确认，不算没查证。") : null,
-        id === "O1" || id === "O2" ? profile.task_observations[id].map((inst) => h("p", { class: "small text-2" }, `${describe(s, inst)} · ${inst.outcome === "consistent" ? inst.assisted ? "在帮助下完成" : "独立完成" : "与数据尚未对应"}。这是任务中的新情境，不改写局内观察。`)) : null,
+        id === "O1" || id === "O2" ? profile.task_observations[id].map((inst) => h("p", { class: "small text-2" }, taskLine(s, inst))) : null,
       );
     }),
+    profile.task_observations.O5.length
+      ? h(
+          "article",
+          { class: "panel stack", style: "gap:8px" },
+          h("div", { class: "row" }, h("span", { class: "xs muted bold" }, "O5"), h("span", { class: "grow bold" }, "在给定规则下比较两段样本")),
+          profile.task_observations.O5.map((inst) => h("p", { class: "small text-2" }, `规则 ${inst.rule} · ${taskLine(s, inst)}`)),
+          h("p", { class: "xs muted" }, "只说明能按给定规则读两段样本，不代表会自己设计回测。"),
+        )
+      : null,
     h(
       "article",
       { class: "paper stack" },

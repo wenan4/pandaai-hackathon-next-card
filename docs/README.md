@@ -2,10 +2,15 @@
 
 | 文件 | 内容 |
 |---|---|
+| `PROJECT.md` | 项目说明：目标用户、玩法、画像依据、推荐逻辑、数据使用、已知局限、实现状态 |
+| `CREDITS.md` | 第三方组件、开源项目、AI 工具与赛前成果 |
+| `structured-output.md`、`examples/` | 结构化结果字段说明与引擎生成的样例 |
+| `pandaai-integration.md` | 接入 PandaAI 的构想（未接入生产） |
 | `PRD.md` | 产品需求 PRD v0.3 |
 | `PRD-patch-self-calibration.md` | PRD v0.3 增量补丁：自我预期校准（M1.5） |
 | `data-feasibility.md` | Panda Data 可行性验证（YOU-147） |
 | `cases-report.md` | 第一幕案例检查，`scripts/build_cases.py` 自动生成（YOU-151） |
+| `taskB-cheetah.md` | 任务 B 猎豹题的样本处理与已知局限，`scripts/build_taskB.py` 自动生成 |
 | `audit-20261031/` | 赛题与主办方讲解的核对材料：官方要求文本、页面截图、讲解摘要与自动转写（转写有识别错误，不能当官方原话引用）。不含音频和模型缓存 |
 | `demo-video-script.md` | 演示视频脚本与镜头表（YOU-172，待补） |
 | `playtest-notes.md` | 真实试玩记录，与模拟路径分开标注（YOU-173，待补） |

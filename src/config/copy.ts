@@ -63,13 +63,26 @@ export const SPECIES_COPY: Record<Species, { name: string; method: string; helps
   elephant: { name: "大象", method: "先看长远", helps: "检查一段走势放到更长时间里是不是常态。", watch: "窗口太长会冲淡最近的变化。" },
   leopard: { name: "猎豹", method: "先看信号", helps: "检查最近有没有不寻常的量价变化。", watch: "一次信号不等于之后的走势。" },
   mixed: { name: "混合倾向", method: "查法还在变化", helps: "这几轮你先翻的牌不一样，说明你会换着角度看。", watch: "还看不出固定的查法，多玩几关会更清楚。" },
-  unknown: { name: "物种尚未显形", method: "样本还太少", helps: "说法点名的牌不计入，能计入的首翻还不够。", watch: "第二幕会补上更多情境。" },
+  unknown: { name: "物种尚未显形", method: "样本还太少", helps: "说法点名的牌不计入，能计入的首翻还不够。", watch: "这一局能计入的首翻太少，还看不出固定查法。" },
 };
 
 export const ASSIST_COPY: Record<AssistLevel, { label: string; desc: string }> = {
   guide: { label: "带我做", desc: "逐步提示，带着完成" },
   hint: { label: "给我提示", desc: "每步给一句提示" },
   self: { label: "我自己来", desc: "不主动给提示" },
+};
+
+/** “换成交易语言来看”：把能力观察改写成交易里对应的问题，保持“本局”限定，不做买卖建议。 */
+export const TRADING_VIEW: Record<"O1" | "O2" | "O3" | "O4", string> = {
+  O1: "会不会把绝对涨幅当成超额收益：看到“涨得多”，先问和谁比、同一段时间比",
+  O2: "看不看长期趋势和回撤：一段走势放到更长时间里是不是常态，中途最深跌过多少",
+  O3: "知不知道一次信号需要验证才有意义：放量上涨之后会怎样，要拿很多次样本去看",
+  O4: "看到相反证据时会不会调整：第一判断和证据冲突时，最后有没有跟着证据走",
+};
+export const BET_FAMILY_COPY: Record<"relative_strength" | "steady_trend" | "volume_surge", string> = {
+  relative_strength: "相对强弱",
+  steady_trend: "稳健趋势",
+  volume_surge: "放量异动",
 };
 
 export const UNKNOWN_YET = ["能不能自己设计验证方法", "希望得到多少帮助（只看了这几轮）", "长期的交易偏好"];

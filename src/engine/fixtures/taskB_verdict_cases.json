@@ -1,0 +1,66 @@
+{
+  "_comment": "任务 B 结论判定的共用用例：scripts/pd_common/taskb.py 与 src/engine/taskB.ts 必须对每一条给出相同结果。先检查数据，再检查阈值；刚好等于阈值算达到。 组写成 [n_records, primary_metric]；少写一项表示该字段不存在（不是 null）。",
+  "thresholds": { "min_samples": 30, "advantage_margin": 0.05 },
+  "cases": [
+    {
+      "name": "信号 0 次触发：指标为空，暂不判断",
+      "display": { "signal": [0, null], "baseline": [400, 0.5] },
+      "test": { "signal": [40, 0.6], "baseline": [400, 0.5] },
+      "expected": { "result": "insufficient_evidence" }
+    },
+    {
+      "name": "检验段信号组样本 29 条，少于 min_samples",
+      "display": { "signal": [40, 0.6], "baseline": [400, 0.5] },
+      "test": { "signal": [29, 0.9], "baseline": [400, 0.5] },
+      "expected": { "result": "insufficient_evidence" }
+    },
+    {
+      "name": "有样本但缺主指标（字段缺失）",
+      "display": { "signal": [40, 0.6], "baseline": [400, null] },
+      "test": { "signal": [40, 0.6], "baseline": [400, 0.5] },
+      "expected": { "result": "insufficient_evidence" }
+    },
+    {
+      "name": "主指标字段不存在（不是 null）：暂不判断",
+      "display": { "signal": [40, 0.6], "baseline": [400] },
+      "test": { "signal": [40, 0.6], "baseline": [400, 0.5] },
+      "expected": { "result": "insufficient_evidence" }
+    },
+    {
+      "name": "样本数与主指标字段都不存在：暂不判断",
+      "display": { "signal": [40, 0.6], "baseline": [400, 0.5] },
+      "test": { "signal": [], "baseline": [400, 0.5] },
+      "expected": { "result": "insufficient_evidence" }
+    },
+    {
+      "name": "样本刚好 30 条、差值刚好 5 个百分点：两段都达到",
+      "display": { "signal": [30, 0.55], "baseline": [30, 0.5] },
+      "test": { "signal": [30, 0.6], "baseline": [30, 0.55] },
+      "expected": { "result": "both_segments" }
+    },
+    {
+      "name": "只有展示段达到",
+      "display": { "signal": [120, 0.62], "baseline": [900, 0.5] },
+      "test": { "signal": [90, 0.51], "baseline": [800, 0.49] },
+      "expected": { "result": "segment_difference", "only_segment": "display" }
+    },
+    {
+      "name": "只有检验段达到",
+      "display": { "signal": [120, 0.52], "baseline": [900, 0.5] },
+      "test": { "signal": [90, 0.6], "baseline": [800, 0.49] },
+      "expected": { "result": "segment_difference", "only_segment": "test" }
+    },
+    {
+      "name": "差值 4.99 个百分点：两段都未达到",
+      "display": { "signal": [120, 0.5499], "baseline": [900, 0.5] },
+      "test": { "signal": [90, 0.5499], "baseline": [800, 0.5] },
+      "expected": { "result": "no_observed_advantage" }
+    },
+    {
+      "name": "信号组反而更低",
+      "display": { "signal": [120, 0.41], "baseline": [900, 0.5] },
+      "test": { "signal": [90, 0.45], "baseline": [800, 0.52] },
+      "expected": { "result": "no_observed_advantage" }
+    }
+  ]
+}

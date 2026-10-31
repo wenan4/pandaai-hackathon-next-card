@@ -1,0 +1,212 @@
+{
+  "format": "next-card/result@v0.3-native",
+  "rules_version": "v0.3",
+  "provenance": {
+    "kind": "simulated_path",
+    "path_id": "甲",
+    "event_count": 15
+  },
+  "profile": {
+    "rules_version": "v0.3",
+    "observations": {
+      "O1": {
+        "id": "O1",
+        "status": "not_observed",
+        "aggregation": "partial",
+        "summary": "未观察到；还没有第二个情境可以对照",
+        "instances": [
+          {
+            "context": "R1",
+            "rule": "O1-g",
+            "outcome": "unchecked",
+            "assisted": false,
+            "event_ids": [
+              "R1:flip:elephant",
+              "R1:flip:leopard",
+              "R1:final"
+            ]
+          }
+        ],
+        "understanding_unclear": false
+      },
+      "O2": {
+        "id": "O2",
+        "status": "not_observed",
+        "aggregation": "partial",
+        "summary": "未观察到；还没有第二个情境可以对照",
+        "instances": [
+          {
+            "context": "R2",
+            "rule": "O2-g",
+            "outcome": "unchecked",
+            "assisted": false,
+            "event_ids": [
+              "R2:flip:fox",
+              "R2:flip:leopard",
+              "R2:final"
+            ]
+          }
+        ],
+        "understanding_unclear": false
+      },
+      "O3": {
+        "id": "O3",
+        "status": "uncertain",
+        "aggregation": "partial",
+        "summary": "尚待确认；还没有第二个情境可以对照",
+        "instances": [
+          {
+            "context": "R3",
+            "rule": "O3-b",
+            "outcome": "uncertain",
+            "assisted": false,
+            "event_ids": [
+              "R3:flip:fox",
+              "R3:final"
+            ]
+          }
+        ],
+        "understanding_unclear": false
+      },
+      "O4": {
+        "id": "O4",
+        "status": "uncertain",
+        "aggregation": "uncertain",
+        "summary": "这局没有可比较的改判机会",
+        "instances": [],
+        "understanding_unclear": false
+      }
+    },
+    "task_observations": {
+      "O1": [],
+      "O2": [],
+      "O5": []
+    },
+    "style": {
+      "species": "fox",
+      "first_flips": [
+        {
+          "round_id": "R1",
+          "card": "elephant",
+          "counted": true
+        },
+        {
+          "round_id": "R2",
+          "card": "fox",
+          "counted": true
+        },
+        {
+          "round_id": "R3",
+          "card": "fox",
+          "counted": true
+        }
+      ],
+      "counts": {
+        "fox": 2,
+        "elephant": 1,
+        "leopard": 0
+      }
+    },
+    "help_preference": {
+      "level": "hint",
+      "source": "explain_count",
+      "explain_count": 0
+    },
+    "flags": {
+      "o3d": false
+    }
+  },
+  "progress": {
+    "K": 0,
+    "S1": false,
+    "S2": false,
+    "rounds_completed": 3,
+    "taskA_steps_done": [],
+    "taskB_done": false,
+    "ready_for_B": false
+  },
+  "habits": {
+    "aligned": [
+      "R1",
+      "R2",
+      "R3"
+    ],
+    "diverged": [],
+    "under_insufficient": {
+      "follow": [],
+      "pass": [],
+      "wait": [
+        "R3"
+      ]
+    },
+    "backed_families": [
+      {
+        "family": "steady_trend",
+        "rounds": [
+          "R2"
+        ],
+        "frequent": false
+      }
+    ],
+    "decision_chains": [
+      {
+        "round_id": "R1",
+        "flips": [
+          "elephant",
+          "leopard"
+        ],
+        "explained": [],
+        "initial": "supports",
+        "final": "refutes",
+        "action": "pass",
+        "followup": null
+      },
+      {
+        "round_id": "R2",
+        "flips": [
+          "fox",
+          "leopard"
+        ],
+        "explained": [],
+        "initial": "unsure",
+        "final": "supports",
+        "action": "follow",
+        "followup": null
+      },
+      {
+        "round_id": "R3",
+        "flips": [
+          "fox"
+        ],
+        "explained": [],
+        "initial": "supports",
+        "final": "insufficient",
+        "action": "wait",
+        "followup": "之后的走势"
+      }
+    ],
+    "counts": {
+      "follow": 1,
+      "pass": 1,
+      "wait": 1
+    }
+  },
+  "recommendation": {
+    "route": "R-A2",
+    "task": "A",
+    "steps": [
+      1,
+      2
+    ],
+    "topic": null,
+    "topic_source": null,
+    "assist": "hint",
+    "guess_first": true,
+    "reason": "这几轮还没看到你用同期对照判断，这关专门练这一步；这几轮还没看到你拉长窗口判断，这关专门练这一步。"
+  },
+  "unknowns": [
+    "能不能自己设计验证方法",
+    "希望得到多少帮助（只看了这几轮）",
+    "长期的交易偏好"
+  ]
+}

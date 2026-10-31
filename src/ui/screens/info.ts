@@ -1,7 +1,7 @@
 // 开局告知、开场、隐私说明、数据说明
 import { VERDICT_COPY } from "../../config/copy";
 import { ROUNDS } from "../../config/rounds";
-import type { DataHeader, TaskAData } from "../../data/cases";
+import type { DataHeader, TaskAData, TaskBData } from "../../data/cases";
 import type { Verdict } from "../../engine/types";
 import { clearAll, emit, go, NOTICE_VERSION, update, type State } from "../../state/store";
 import { footer, label, topbar } from "../components";
@@ -130,6 +130,31 @@ const LIMITS = [
   "收益是简化模拟，没有计入交易成本。",
 ];
 
+/** 任务 B 的口径直接由文件头渲染：股票池、快照日、分段、不重叠规则、基准组、样本数与剔除数、阈值。 */
+function taskBRows(d: TaskBData): [string, string][] {
+  const hd = d.header;
+  const seg = (k: "display" | "test") => {
+    const x = d[k];
+    const ex = (g: typeof x.signal_group) => Object.values(g.excluded).reduce((a, b) => a + b, 0);
+    return `${fmtDate(x.range.from)}–${fmtDate(x.range.to)}；信号组 ${x.signal_group.n_records} 条（剔除 ${ex(x.signal_group)}），基准组 ${x.baseline_group.n_records} 条（剔除 ${ex(x.baseline_group)}）`;
+  };
+  return [
+    ["接口", hd.apis.join("、")],
+    ["数据截至", fmtDate(hd.data_as_of)],
+    ["股票池", `${hd.pool.description}，${hd.pool.size} 只；${hd.pool.bias_note}`],
+    ["信号", hd.signal.definition],
+    ["执行", `${hd.execution.entry}进，${hd.execution.exit}出`],
+    ["主指标", hd.primary_metric.label],
+    ["展示段", seg("display")],
+    ["检验段", seg("test")],
+    ["基准组", hd.baseline_rule],
+    ["不重叠", hd.non_overlap_rule],
+    ["阈值", `min_samples = ${hd.thresholds.min_samples}，advantage_margin = ${(hd.thresholds.advantage_margin * 100).toFixed(0)} 个百分点（${hd.thresholds.frozen_at} 取数前冻结）；不是显著性门槛`],
+    ["公开展示", hd.public_scope],
+    ["脚本版本", hd.script_version],
+  ];
+}
+
 function headerRows(hd: DataHeader): [string, string][] {
   const rows: [string, unknown][] = [
     ["数据来源", hd["source"]],
@@ -149,7 +174,7 @@ function headerRows(hd: DataHeader): [string, string][] {
   return rows.filter(([, v]) => typeof v === "string" && v) as [string, string][];
 }
 
-export function dataScreen(s: State, taskA: TaskAData | null): HTMLElement {
+export function dataScreen(s: State, taskA: TaskAData | null, taskB: TaskBData | null): HTMLElement {
   const revealed = revealedSources().sort((a, b) => a.round_id.localeCompare(b.round_id));
   const header = revealed[0]?.header;
   return h(
@@ -193,7 +218,14 @@ export function dataScreen(s: State, taskA: TaskAData | null): HTMLElement {
           h("p", { class: "xs muted" }, String(taskA.header.selection ?? "")),
         )
       : null,
-    h("section", { class: "panel stack" }, h("div", { class: "row" }, h("h2", { class: "grow" }, "任务 B · 猎豹题"), label("todo")), h("p", { class: "small text-2" }, "股票池、展示段 / 检验段、样本数和阈值会在数据生成后由文件头渲染到这里。")),
+    h(
+      "section",
+      { class: "panel stack" },
+      h("div", { class: "row" }, h("h2", { class: "grow" }, "任务 B · 猎豹题"), label("real")),
+      taskB
+        ? h("dl", { class: "kv" }, taskBRows(taskB).map(([k, v]) => [h("dt", null, k), h("dd", null, v)]))
+        : h("p", { class: "small text-2" }, "第一幕三轮都揭晓后，这里会显示任务 B 的股票池、分段、样本数和阈值。"),
+    ),
     h(
       "section",
       { class: "panel stack" },

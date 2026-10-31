@@ -42,7 +42,14 @@ export interface TaskBUI {
   locked: boolean;
   guess?: string;
   testOpened: boolean;
+  /** 五个结论分支之一（engine/taskB.ts 的 TaskBAnswer） */
   answer?: string;
+  /** 与数字对应的理由 */
+  why?: string;
+  assist?: AssistLevel;
+  exposures?: string[];
+  feedback?: { answer: string; why: string; correct: boolean };
+  /** 提交并与数据一致后为 true */
   submitted: boolean;
 }
 
