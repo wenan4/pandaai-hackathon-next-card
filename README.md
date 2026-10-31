@@ -4,6 +4,9 @@
 
 此分支提供已通过本地完整流程验证的 v0.4.1 MVP。新版默认入口为首页；`?legacy=1` 保留 v0.3，旧版评委面板用 `?legacy=1&judge=1`。两个版本的存档独立。新评委面板在旅程中的顶部导航打开，包含两条模拟路径与合法分叉。
 
+- 在线试玩：[Cloudflare Pages 预览](https://codex-v04-mvp.pandaai-hackathon-next-card.pages.dev/)
+- 开发与审查：[PR #13](https://github.com/wenan4/pandaai-hackathon-next-card/pull/13)
+
 - 修订规格：[PRD v0.4.1](docs/PRD-v0.4.md)，§17 明确知识、研究过程、兴趣、学习需求和任务后画像更新。
 - 实际验证：[MVP 验证记录](docs/MVP-VERIFICATION.md)。未通过浏览器验证的能力不作为完成声明。
 - 美术与生成提示：[美术来源](docs/adventure-art.md)。本次生成原创插画，用户已指定明亮、亲切的大众视觉方向。

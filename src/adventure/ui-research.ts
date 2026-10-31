@@ -2,7 +2,7 @@ import { h, type Child } from "../ui/dom";
 import { loadMarketStage, loadResearchCase, type MarketManifest, type ResearchMarketCase } from "./market";
 import { attachFundingFinalQuote, compareSchedule, evaluateFundingPractice, evaluateHistoryPractice, fundingQuestionKey, fundingScenarioFromRun, mechanicalFundingExample, markFundingHelp, markHistoryHelp, recordCalibrationAction, recordCalibrationFeeling, saveForecast, showHistoryEvidence, simulateFundingPlan, startHistory, submitFunding, submitHistory, type BoundaryAnswer, type CalibrationContext, type ContractAction, type Direction, type Feeling, type FixedSchedule, type FundingPlan, type FundingScenario, type FundingTimeline, type HelpPreference, type HistoryComparison, type KnowledgeEvidence, type Percent, type ProfileChange, type ResearchProfile } from "./research";
 import type { Run, RunAction } from "./types";
-import { button, coins, dateText, details, metric, note, panel, percent, pill } from "./ui-components";
+import { button, coins, dateText, details, metric, note, panel, pill } from "./ui-components";
 
 interface Context { getRun: () => Run; getProfile: () => ResearchProfile; setProfile: (profile: ResearchProfile) => void; getManifest: () => MarketManifest | null; back: () => void; refresh: () => void; notify: (message: string) => void; uid: (prefix: string) => string; isCaseKnown?: (caseId: string) => boolean; wasCaseSeen?: (caseId: string) => boolean; markCaseSeen?: (caseId: string) => void }
 interface FundingState { scenario: FundingScenario; plan: FundingPlan; revised: FundingPlan; target: string; answer: boolean | null; help: HelpPreference; answerExposed: boolean; loading: boolean; error: string | null; result: { correct: boolean; actual: boolean; changes: ProfileChange[]; stoppedAt: string | null; reason: string; timeline: FundingTimeline; revised: FundingTimeline } | null }
@@ -152,7 +152,7 @@ export class ResearchUI {
       h("div", { class: "button-row" }, button("返回", this.ctx.back, "ghost")));
   }
   private comparisonCard(c: HistoryComparison): HTMLElement {
-    return h("div", { class: "stack" }, h("div", { class: "row" }, pill(c.title, "blue"), h("span", { class: "fineprint" }, `${dateText(c.dates[0])} 至 ${dateText(c.dates[1])}`)), h("div", { class: "metric-grid" }, metric("案例固定日程盈亏", `${coins(c.asset.gainCents)} 金币`), metric("同期基准盈亏", `${coins(c.benchmark.gainCents)} 金币`), metric("持有部分最大回撤", c.asset.heldPriceMaxDrawdown === null ? "无持有" : percent(c.asset.heldPriceMaxDrawdown))),
+    return h("div", { class: "stack" }, h("div", { class: "row" }, pill(c.title, "blue"), h("span", { class: "fineprint" }, `${dateText(c.dates[0])} 至 ${dateText(c.dates[1])}`)), h("div", { class: "metric-grid" }, metric("案例固定日程盈亏", `${coins(c.asset.gainCents)} 金币`), metric("同期基准盈亏", `${coins(c.benchmark.gainCents)} 金币`), metric("持有部分最大回撤", c.asset.heldPriceMaxDrawdown === null ? "无持有" : `${(c.asset.heldPriceMaxDrawdown * 100).toFixed(1)}%`)),
       h("p", { class: "fineprint" }, c.explanation), details("查看可用现金时间线", h("div", { class: "timeline" }, c.asset.timeline.map((row) => h("div", { class: "timeline-item" }, h("strong", null, `${dateText(row.date)} · ${row.step}`), h("p", null, `可用 ${coins(row.cashCents)} 金币 · 参考价值 ${coins(row.referenceValueCents)} 金币`))))));
   }
   private async lockHistory(): Promise<void> {

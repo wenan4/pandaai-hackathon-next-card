@@ -16,6 +16,7 @@ export interface GameViewContext {
   marketLoading: boolean;
   marketError: string | null;
   battleFeedback: string;
+  tutorialStep: number;
   action: (action: RunAction) => void;
   selectCard: (id: string | null) => void;
   selectRetain: (id: string) => void;
@@ -26,6 +27,8 @@ export interface GameViewContext {
   extraCamp: () => Child;
   openReport: () => void;
   openTask: (task: "d1" | "d2") => void;
+  nextTutorial: () => void;
+  skipTutorial: () => void;
 }
 
 const nodeNames: Record<Run["node"], string> = { N1: "城门初遇", N2: "第一处营地", N3: "岔路 · 第一站", N4: "林间营地", N5: "岔路 · 第二站", N6: "最后的营地", N7: "守灯者的挑战", N8: "归途" };
@@ -57,14 +60,29 @@ function battleView(ctx: GameViewContext): HTMLElement {
   const hand = b.hand.map((id) => run.deck.find((card) => card.instanceId === id)).filter((card): card is CardInstance => !!card);
   const intent = enemy.intent.kind === "attack" ? `攻击 ${enemy.intent.amount}` : `获得 ${enemy.intent.amount} 护盾`;
   const art = enemy.id === "moss" ? "moss" : enemy.id === "clock" ? "clock" : "guardian";
+  const playable = hand.filter((card) => canPlayCard(run, card.instanceId).enabled);
+  const hasAttack = playable.some((card) => CARDS[card.cardId].attack);
+  const drawNames = [...new Set(playable.filter((card) => card.cardId === "C03" || card.cardId === "C06").map((card) => CARDS[card.cardId].name))];
+  const canShield = playable.some((card) => card.cardId === "C02" || card.cardId === "C06");
+  const noAttackOptions = [drawNames.length ? `用${drawNames.join("或")}找牌` : "", canShield ? "先防护" : ""].filter(Boolean);
+  const noAttackTip = `眼下没有可打的攻击牌；${noAttackOptions.length ? `可以${noAttackOptions.join("，或")}` : "可以先打其他可用牌"}，也可以结束回合。`;
+  const lessons = [
+    ["先看意图", `中间会提前显示对方准备攻击还是获得护盾。${hasAttack ? "" : noAttackTip}`],
+    ["选择手牌", hasAttack ? "点一张牌查看效果；手机上可左右滑动手牌。" : noAttackTip],
+    ["确认打出", "再点“打出”，留意这张牌需要多少能量。"],
+    ["结束回合", "结束后对方行动；下回合恢复能量，未保留手牌进入弃牌堆，之后还能再抽到。"],
+  ] as const;
+  const lesson = run.source === "real" && run.node === "N1" ? lessons[ctx.tutorialStep] : undefined;
   const play = (): void => { if (selected) ctx.action({ type: "play-card", cardInstanceId: selected.instanceId, ...(isRetain && retained ? { retainCardId: retained.instanceId } : {}) }); };
   const retainSelect = (mobile = false): HTMLElement | null => isRetain && otherCards.length ? h("label", { class: "field retain-field" }, "保留另一张牌一回合", h("select", { value: retained?.instanceId, "data-focus-key": mobile ? "retain-select-mobile" : "retain-select-desktop", onchange: (event: Event) => ctx.selectRetain((event.currentTarget as HTMLSelectElement).value) }, otherCards.map((card) => h("option", { value: card.instanceId, selected: card.instanceId === retained?.instanceId }, `${CARDS[card.cardId].name}${card.upgraded ? "+" : ""}`)))) : null;
   const box = h("div", { class: "stack" },
     h("section", { class: "battle-board", "aria-label": `第 ${b.turn} 回合，${def.name}准备${intent}` },
-      h("div", { class: "battle-player" }, h("div", { class: "avatar", "aria-hidden": "true" }, "旅"), h("div", { class: "combat-label" }, h("strong", null, "旅行者"), `生命 ${run.hp} / ${run.maxHp} · 护盾 ${b.shield}`), h("div", { class: "health-bar" }, h("i", { style: `width:${Math.max(0, run.hp / run.maxHp * 100)}%` }))),
+      h("div", { class: "battle-player" }, h("div", { class: "avatar player", "aria-hidden": "true" }, h("picture", null, h("source", { srcset: `${import.meta.env.BASE_URL}art/adventure/traveler.webp`, type: "image/webp" }), h("img", { src: `${import.meta.env.BASE_URL}art/adventure/traveler.png`, alt: "", width: "1024", height: "1536" }))), h("div", { class: "combat-label" }, h("strong", null, "旅行者"), `生命 ${run.hp} / ${run.maxHp} · 护盾 ${b.shield}`), h("div", { class: "health-bar" }, h("i", { style: `width:${Math.max(0, run.hp / run.maxHp * 100)}%` }))),
       h("div", { class: "intent" }, h("small", null, "对方下一步"), h("strong", null, intent), enemy.attackBonus ? h("div", { class: "tiny" }, `攻击加成 +${enemy.attackBonus}`) : null),
-      h("div", { class: "battle-enemy" }, h("div", { class: "avatar enemy", "aria-hidden": "true", style: `background-image:url('${import.meta.env.BASE_URL}art/adventure/${art}.png')` }), h("div", { class: "combat-label" }, h("strong", null, def.name), `生命 ${enemy.hp} / ${enemy.maxHp} · 护盾 ${enemy.shield}`), h("div", { class: "health-bar" }, h("i", { style: `width:${Math.max(0, enemy.hp / enemy.maxHp * 100)}%` })))),
-    h("div", { class: `combat-feedback${ctx.battleFeedback ? " flash" : ""}`, role: "status", "aria-live": "polite" }, ctx.battleFeedback || `第 ${b.turn} 回合 · 看清意图，再选择手牌`),
+      h("div", { class: "battle-enemy" }, h("div", { class: "avatar enemy", "aria-hidden": "true", style: `background-image:url('${import.meta.env.BASE_URL}art/adventure/${art}.webp')` }), h("div", { class: "combat-label" }, h("strong", null, def.name), `生命 ${enemy.hp} / ${enemy.maxHp} · 护盾 ${enemy.shield}`), h("div", { class: "health-bar" }, h("i", { style: `width:${Math.max(0, enemy.hp / enemy.maxHp * 100)}%` })))),
+    h("div", { class: `combat-feedback${ctx.battleFeedback ? " flash" : ""}` },
+      lesson ? h("div", { class: "tutorial-guide" }, h("div", { class: "tutorial-copy", "aria-live": "polite" }, h("strong", null, `${ctx.tutorialStep + 1} / 4 · ${lesson[0]}`), h("span", null, lesson[1])), h("div", { class: "tutorial-actions" }, button("跳过提示", ctx.skipTutorial, "small ghost", false, "tutorial-skip"), button(ctx.tutorialStep === 3 ? "知道了" : "下一条", ctx.nextTutorial, "small secondary", false, "tutorial-next"))) : null,
+      h("p", { class: "combat-feedback-line", role: "status", "aria-live": "polite" }, ctx.battleFeedback || (lesson ? "" : `第 ${b.turn} 回合 · 看清意图，再选择手牌`))),
     h("div", { class: "battle-status" }, h("div", { class: "battle-stat" }, h("span", null, "现在可用能量"), h("b", null, b.energy)), h("div", { class: "battle-stat" }, h("span", null, "本场容量"), h("b", null, `${b.capacity} / 6`)), h("div", { class: "battle-stat" }, h("span", null, "下回合锁定"), h("b", null, b.overloadNext))),
     h("section", { class: "panel stack battle-hand-panel" }, h("div", { class: "panel-head" }, h("div", null, h("div", { class: "eyebrow" }, `TURN ${String(b.turn).padStart(2, "0")}`), h("h2", null, "选择一张手牌"), h("p", { class: "hint" }, "先看对方意图，再选择卡牌。点击卡牌查看效果。")), pill(`抽牌堆 ${b.drawPile.length} · 弃牌堆 ${b.discardPile.length}`, "blue")),
       h("p", { class: "hand-swipe-hint" }, "左右滑动查看全部手牌"),
@@ -82,7 +100,8 @@ function battleView(ctx: GameViewContext): HTMLElement {
 }
 function rewardView(ctx: GameViewContext): HTMLElement {
   const { run } = ctx; const reward = run.reward!;
-  return panel("把新牌带上旅程", `胜利获得 ${coins(reward.coinsCents)} 金币。选择一张加入牌组，或保持牌组精简。`, ctx.battleFeedback ? note(ctx.battleFeedback) : null, h("div", { class: "hand" }, reward.choices.map((id) => cardFace({ cardId: id, upgraded: false }, { label: "选择并加入牌组", onClick: () => ctx.action({ type: "choose-reward", cardId: id }), key: `reward-${id}` }))),
+  const ideas = run.node === "N1" ? h("div", { class: "reward-ideas" }, h("div", null, h("strong", null, "连刃 + 余烬"), h("p", null, "营地可用 25 金币买余烬。先打余烬再打连刃，三段伤害合计从 9 变成 15。")), h("div", null, h("strong", null, "培育 → 大牌"), h("p", null, "培育增加空容量；下回合容量达到 4，能量足够时可尝试营地里的参天一击。"))) : null;
+  return panel("把新牌带上旅程", `胜利获得 ${coins(reward.coinsCents)} 金币。选择一张加入牌组，或保持牌组精简。`, ctx.battleFeedback ? note(ctx.battleFeedback) : null, ideas, h("div", { class: "hand" }, reward.choices.map((id) => cardFace({ cardId: id, upgraded: false }, { label: "选择并加入牌组", onClick: () => ctx.action({ type: "choose-reward", cardId: id }), key: `reward-${id}` }))),
     note("新牌会立即加入你的牌组，下一场战斗就有机会抽到。"), h("div", { class: "button-row" }, button("这次不拿牌", () => ctx.action({ type: "choose-reward", cardId: null }), "secondary", false, "skip-reward")));
 }
 function selectUpgrade(ctx: GameViewContext, baseOnly = false): { field: HTMLElement; selected: CardInstance | undefined } {
@@ -177,6 +196,6 @@ export function gameView(ctx: GameViewContext): HTMLElement {
     case "market": main = marketView(ctx); break;
     case "ended": main = h("div"); break;
   }
-  return h("div", { class: "app-shell journey-shell" }, journeyHeader(run), h("div", { class: "page-grid" }, h("main", { class: "main-column", id: "main-content" }, main), sidebar(run)), h("footer", { class: "footer" }, "这是一段虚拟旅程。游戏结果不等于现实财务承受能力，历史也不能预测未来。"));
+  return h("div", { class: "app-shell journey-shell" }, journeyHeader(run), h("div", { class: "page-grid" }, h("main", { class: "main-column", id: "main-content" }, main), sidebar(run)));
 }
 export { nodeNames };

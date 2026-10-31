@@ -95,7 +95,7 @@ details > :not(summary) { margin-top: 12px; }
 
 /* The first page keeps the illustrated city visible and lets the invitation breathe. */
 .intro { max-width: 1200px; margin: 0 auto; padding: 0 28px 60px; }
-.intro-hero { position: relative; overflow: hidden; min-height: 560px; margin-top: 26px; border: 1px solid #dfe5cf; border-radius: 28px; background: #e9efd8 url('/art/adventure/morning-city.png') center 42% / cover no-repeat; box-shadow: 0 22px 55px rgba(99, 112, 79, .14); }
+.intro-hero { position: relative; overflow: hidden; min-height: 560px; margin-top: 26px; border: 1px solid #dfe5cf; border-radius: 28px; background: #e9efd8 url('/art/adventure/morning-city.webp') center 42% / cover no-repeat; box-shadow: 0 22px 55px rgba(99, 112, 79, .14); }
 .intro-hero::before { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, rgba(255,250,232,.97) 0%, rgba(255,250,232,.91) 32%, rgba(255,250,232,.45) 56%, rgba(255,250,232,0) 76%); }
 .intro-content { position: relative; max-width: 530px; padding: 72px 0 54px 64px; }
 .intro-kicker { display: inline-flex; align-items: center; gap: 10px; color: #9a7545; font-size: .75rem; font-weight: 700; letter-spacing: .13em; }
@@ -130,11 +130,14 @@ details > :not(summary) { margin-top: 12px; }
 .ledger-row strong { color: #415d48; font-family: "IBM Plex Mono", monospace; }
 
 /* Battle board and hand. */
-.battle-board { position: relative; overflow: hidden; min-height: 280px; display: flex; align-items: center; justify-content: space-around; gap: 20px; padding: 24px 30px; background: linear-gradient(180deg, rgba(224,242,240,.3), rgba(244,249,225,.8)), url('/art/adventure/morning-city.png') center 49% / cover, #e4f1dd; border: 1px solid #dce9d8; border-radius: 22px; }
+.battle-board { position: relative; overflow: hidden; min-height: 280px; display: flex; align-items: center; justify-content: space-around; gap: 20px; padding: 24px 30px; background: linear-gradient(180deg, rgba(224,242,240,.3), rgba(244,249,225,.8)), url('/art/adventure/morning-city.webp') center 49% / cover, #e4f1dd; border: 1px solid #dce9d8; border-radius: 22px; }
 .battle-board::before { position: absolute; content: ""; inset: auto 0 0; height: 45%; background: linear-gradient(transparent, rgba(255,251,232,.78)); pointer-events: none; }
 .battle-player, .battle-enemy { position: relative; z-index: 1; display: flex; align-items: center; flex-direction: column; gap: 7px; text-align: center; }
 .avatar { display: grid; place-items: center; width: 112px; height: 112px; border-radius: 50%; background: radial-gradient(circle at 50% 36%, #fffdf2, #e4e8c8); border: 5px solid rgba(255,255,245,.78); box-shadow: 0 4px 18px #b6cbb5; color: #71956d; font: 700 2.3rem var(--serif); }
-.avatar.enemy { width: 150px; height: 150px; border: 0; border-radius: 0; background: url('/art/adventure/guardian.png') center / contain no-repeat; box-shadow: none; color: #a7793e; }
+.avatar.player { width: 112px; height: 150px; border: 0; border-radius: 0; background: none; box-shadow: none; }
+.avatar.player picture, .avatar.player img { display: block; width: 100%; height: 100%; }
+.avatar.player img { object-fit: contain; filter: drop-shadow(0 3px 3px rgba(75, 91, 65, .25)); }
+.avatar.enemy { width: 150px; height: 150px; border: 0; border-radius: 0; background: url('/art/adventure/guardian.webp') center / contain no-repeat; box-shadow: none; color: #a7793e; }
 .avatar.enemy::after { content: "灯"; display: grid; place-items: center; width: 92px; height: 92px; border: 3px solid #e8cc91; border-radius: 50%; background: #fff5d7; font: 700 2.2rem var(--serif); z-index: -1; }
 .combat-label { display: inline-block; background: rgba(255,253,243,.92); border: 1px solid #e6e6cf; border-radius: 11px; padding: 7px 11px; box-shadow: 0 3px 12px #a6bc9b30; font-size: .77rem; }
 .combat-label strong { display: block; color: #37563d; font-size: .9rem; }
@@ -286,6 +289,7 @@ details > :not(summary) { margin-top: 12px; }
   .battle-active .battle-board { min-height: 144px; padding: 8px; }
   .battle-active .battle-player, .battle-active .battle-enemy { gap: 3px; }
   .battle-active .avatar { width: 61px; height: 61px; border-width: 3px; font-size: 1.2rem; }
+  .battle-active .avatar.player { width: 82px; height: 95px; border: 0; }
   .battle-active .avatar.enemy { width: 78px; height: 78px; }
   .battle-active .avatar.enemy::after { width: 56px; height: 56px; }
   .battle-active .combat-label { font-size: .61rem; padding: 4px 5px; }
@@ -320,4 +324,53 @@ details > :not(summary) { margin-top: 12px; }
   .battle-dock .retain-field { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; font-size: .68rem; }
   .battle-dock .retain-field select { min-height: 38px; padding: 5px 8px; }
   .battle-active .toast { z-index: 28; bottom: calc(130px + env(safe-area-inset-bottom)); }
+}
+
+/* Optional, non-blocking guidance and compact, evidence-led report. */
+.tutorial-guide { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.tutorial-copy { min-width: 0; display: grid; gap: 3px; font-weight: 400; }
+.tutorial-copy strong { color: #785c30; font-size: .78rem; }
+.tutorial-copy span { color: #786b4d; font-size: .75rem; line-height: 1.45; }
+.tutorial-actions { display: flex; flex: 0 0 auto; gap: 6px; }
+.tutorial-actions .button { white-space: nowrap; }
+.combat-feedback-line { margin: 0; line-height: 1.4; }
+.combat-feedback-line:empty { display: none; }
+.tutorial-guide + .combat-feedback-line:not(:empty) { margin-top: 7px; padding-top: 7px; border-top: 1px solid #eddfbd; }
+.reward-ideas { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.reward-ideas > div { padding: 11px 13px; border: 1px solid #e3e8d4; border-radius: 12px; background: #f6faed; }
+.reward-ideas strong { color: #58755a; font-family: var(--serif); font-size: .87rem; }
+.reward-ideas p { margin-top: 4px; color: #71816e; font-size: .74rem; line-height: 1.55; }
+.research-summary .panel-head { margin-bottom: 0; }
+.knowledge-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
+.knowledge-row { min-width: 0; padding: 12px; border: 1px solid #e0e9d8; border-radius: 12px; background: #f8fbf3; }
+.knowledge-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 5px; }
+.knowledge-heading strong { color: #496b50; font-size: .85rem; }
+.knowledge-status { color: #64856b; font-size: .7rem; font-weight: 700; }
+.knowledge-row.unobserved .knowledge-status { color: #8b9787; }
+.knowledge-row.needs_confirmation .knowledge-status, .knowledge-row.conflicting .knowledge-status { color: #9a7444; }
+.knowledge-row p { margin-top: 6px; color: #788675; font-size: .73rem; line-height: 1.55; }
+.knowledge-row .knowledge-help { color: #9a835b; font-size: .68rem; }
+.research-trace { border: 1px solid #e9dfc6; border-radius: 13px; background: #fffaf0; padding: 13px; }
+.trace-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 5px; }
+.trace-head strong { color: #6f694e; font-size: .85rem; }
+.trace-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 10px 0; }
+.trace-steps > div { min-width: 0; }
+.trace-steps small { display: block; margin-bottom: 4px; color: #a58d65; font-size: .68rem; }
+.trace-steps p { color: #596e59; font-size: .75rem; line-height: 1.5; }
+.research-empty { padding: 10px 12px; border-radius: 10px; background: #faf9ee; }
+@media (max-width: 540px) {
+  .tutorial-guide { align-items: flex-start; gap: 7px; }
+  .tutorial-copy strong { font-size: .7rem; }
+  .tutorial-copy span { font-size: .67rem; }
+  .tutorial-actions { gap: 4px; }
+  .tutorial-actions .button { min-height: 44px; padding: 6px 7px; font-size: .66rem; }
+  .reward-ideas { grid-template-columns: 1fr; gap: 6px; }
+  .reward-ideas > div { padding: 9px 11px; }
+  .reward-ideas p { font-size: .7rem; }
+  .knowledge-grid { grid-template-columns: 1fr; gap: 7px; }
+  .knowledge-row { padding: 10px 11px; }
+  .knowledge-row p { margin-top: 4px; }
+  .trace-steps { grid-template-columns: 1fr; gap: 7px; }
+  .trace-steps > div { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 8px; }
+  .trace-steps small { margin: 0; }
 }

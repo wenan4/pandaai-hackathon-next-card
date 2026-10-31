@@ -10,6 +10,7 @@ import { gameView, nodeNames } from "./ui-game";
 import { ResearchUI } from "./ui-research";
 import { makeDemoPath } from "./ui-demo";
 import { mergeFundingExposures, parseFundingExposureArchive, type FundingExposureArchive } from "./ui-exposure";
+import { researchSummary } from "./ui-report";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const SAVE_KEY = "nextcard:adventure:v0.4";
@@ -17,7 +18,7 @@ const SEEN_KEY = `${SAVE_KEY}:seen-cases`;
 const FUNDING_EXPOSURE_KEY = `${SAVE_KEY}:funding-exposure`;
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 type Screen = "intro" | "game" | "report" | "d1" | "d2" | "judge";
-interface Save { schema: "nextcard-adventure-save-v1"; savedAt: number; observationStartedAt: number; priorExposure?: boolean; run: Run; profile: ResearchProfile }
+interface Save { schema: "nextcard-adventure-save-v1"; savedAt: number; observationStartedAt: number; priorExposure?: boolean; tutorialStep?: number; run: Run; profile: ResearchProfile }
 let run: Run | null = null;
 let profile: ResearchProfile = emptyResearchProfile();
 let realSave: Save | null = null;
@@ -37,6 +38,7 @@ let selectedCard: string | null = null;
 let selectedRetain: string | null = null;
 let selectedUpgrade: string | null = null;
 let battleFeedback = "";
+let tutorialStep = 4;
 let entryCents = 0;
 let reserveCents = 0;
 let modal: HTMLElement | null = null;
@@ -48,7 +50,7 @@ let judgeStudy: { label: string; status: string; recommendation: string; help: s
 let requestVersion = 0;
 let idCounter = 0;
 const uid = (prefix: string): string => `${prefix}-${Date.now().toString(36)}-${++idCounter}`;
-const errorMessage = (error: unknown): string => error instanceof Error ? error.message : "加载未完成，请重试。";
+const errorMessage = (error: unknown): string => error instanceof TypeError && /fetch|network/i.test(error.message) ? "网络连接暂时不可用，请重试。" : error instanceof Error ? error.message : "加载未完成，请重试。";
 
 function readSave(): Save | null {
   try {
@@ -69,7 +71,7 @@ function readSave(): Save | null {
 }
 function save(): boolean {
   if (!run || run.source !== "real") return true;
-  const data: Save = { schema: "nextcard-adventure-save-v1", savedAt: Date.now(), observationStartedAt, priorExposure, run, profile };
+  const data: Save = { schema: "nextcard-adventure-save-v1", savedAt: Date.now(), observationStartedAt, priorExposure, tutorialStep, run, profile };
   realSave = data;
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(data)); return true; } catch { storageError = true; return false; }
 }
@@ -100,6 +102,13 @@ function showDialog(title: string, body: Child, actions: Child[]): void {
   render(); window.setTimeout(() => dialog.querySelector<HTMLButtonElement>("button")?.focus(), 0);
 }
 function closeDialog(): void { modal = null; render(); }
+function restoredTutorial(current: Run, saved?: number): number {
+  if (current.source !== "real" || current.node !== "N1" || current.phase !== "battle" || !current.battle) return 4;
+  if (typeof saved === "number" && Number.isInteger(saved) && saved >= 0 && saved <= 4) return saved;
+  if (current.battle.turn > 1) return 4;
+  return current.history.some((event) => event.action === "play-card") ? 3 : 0;
+}
+function setTutorialStep(step: number): void { tutorialStep = Math.max(0, Math.min(4, step)); save(); render(); }
 function askNewRun(enabled: boolean): void {
   if (realSave) {
     showDialog("开启新的旅程？", h("p", { class: "hint" }, "已保存的真实冒险进度会被新旅程替换。"), [button("开始新旅程", () => { modal = null; startRun(enabled); }, "gold"), button("保留已有旅程", closeDialog, "secondary")]);
@@ -122,7 +131,7 @@ function startRun(enabled: boolean): void {
   priorExposure = seenCases.has(caseId);
   run = createRun({ caseId, observationEnabled: enabled, source: "real", seed: Math.floor(Math.random() * 0x7fffffff) });
   if (Date.now() - fundingExposureArchive.createdAt >= RETENTION_MS && !clearFundingExposures()) fundingExposureArchive = { version: 1, createdAt: Date.now(), entries: [] };
-  profile = { ...emptyResearchProfile(enabled), funding_exposure: enabled ? structuredClone(fundingExposureArchive.entries) : [] }; observationStartedAt = Date.now(); selectedCard = null; selectedUpgrade = null; battleFeedback = ""; entryCents = 0; reserveCents = 0;
+  profile = { ...emptyResearchProfile(enabled), funding_exposure: enabled ? structuredClone(fundingExposureArchive.entries) : [] }; observationStartedAt = Date.now(); selectedCard = null; selectedUpgrade = null; battleFeedback = ""; tutorialStep = 0; entryCents = 0; reserveCents = 0;
   save(); changeScreen("game");
 }
 function action(next: RunAction): void {
@@ -131,6 +140,10 @@ function action(next: RunAction): void {
   const before = run;
   try {
     run = reduceRun(run, next);
+    if (before.node === "N1" && before.phase === "battle") {
+      if (next.type === "play-card" && tutorialStep < 3) tutorialStep = 3;
+      if (next.type === "end-turn" || run.phase !== "battle") tutorialStep = 4;
+    }
     if (next.type === "play-card" && before.battle) {
       const card = before.deck.find((item) => item.instanceId === next.cardInstanceId);
       const name = card ? CARDS[card.cardId].name : "卡牌";
@@ -183,7 +196,7 @@ function loadInitial(): void {
 function restoreReal(): void {
   if (!realSave) { flash("还没有真实旅程记录。"); return; }
   cancelMarketRequest();
-  run = structuredClone(realSave.run); profile = structuredClone(realSave.profile); if (profile.enabled) profile.funding_exposure = mergeFundingExposures(profile.funding_exposure, fundingExposureArchive.entries); observationStartedAt = realSave.observationStartedAt; priorExposure = realSave.priorExposure ?? false;
+  run = structuredClone(realSave.run); profile = structuredClone(realSave.profile); if (profile.enabled) profile.funding_exposure = mergeFundingExposures(profile.funding_exposure, fundingExposureArchive.entries); observationStartedAt = realSave.observationStartedAt; priorExposure = realSave.priorExposure ?? false; tutorialStep = restoredTutorial(run, realSave.tutorialStep);
   changeScreen(run.phase === "ended" ? "report" : "game"); queueMarket();
 }
 function settings(): void {
@@ -227,12 +240,12 @@ function report(): HTMLElement {
     profile.enabled ? h("section", { class: "panel stack" }, h("div", { class: "panel-head" }, h("div", null, h("h2", null, "本局观察"), h("p", { class: "hint" }, "只描述这次实际发生的选择，不给人贴标签。"))), observations.length ? observations.map((item) => h("div", { class: "observation" }, h("strong", null, item.text), h("p", null, item.limitations.join("；")))) : h("p", { class: "hint" }, "还没有足够的经营选择可供描述。你仍可自选研究起点。"),
       details("查看依据与边界", h("div", { class: "stack" }, profile.journey_observations.map((item) => h("p", { class: "hint" }, `${item.text} 依据：${item.evidence_ids.join("、")}。${item.limitations.join("；")}。`)), h("p", { class: "hint" }, "现实财务承受能力未评估；单次游戏不能建立稳定交易类型。"))), researchUI.calibrationReport(),
       reasonEvidence ? details("补充我的原因", h("p", { class: "hint" }, "你的补充会作为新记录保留，不改写原来发生的事。"), reasonSelect, button("保存补充", () => { const value = reasonSelect.value as Reason | ""; if (!value) { flash("请选择一个原因。"); return; } setProfile(addUserReason(profile, uid("reason"), reasonEvidence, value)); flash("已保存你的补充。"); }, "small secondary")) : null) : note("你选择了只玩游戏。旅程仍可回顾，也可以不保存观察地试试下面的练习。"),
+    profile.enabled ? researchSummary(profile) : null,
     profile.enabled ? preferencePanel() : null,
-    h("section", { class: "panel stack" }, h("div", { class: "eyebrow" }, "WHAT NEXT"), h("h2", null, "带着问题再走一步"), h("p", { class: "hint" }, profile.enabled ? rec.reason : "两个练习都可以尝试，过程不会保存为人物观察。"),
+    h("section", { class: "panel stack" }, h("div", { class: "eyebrow" }, "WHAT NEXT"), h("h2", null, "带着问题再走一步"), h("p", { class: "hint" }, profile.enabled ? rec.reason : "两个练习都可以尝试，过程不会保存为人物观察。"), profile.enabled ? h("p", { class: "fineprint" }, rec.help_reason) : null,
       h("div", { class: "route-grid" }, h("div", { class: "route-card" }, h("div", { class: "task-title" }, h("span", { class: "task-badge" }, "D1"), h("h3", null, "资金安排台")), h("p", { class: "hint" }, "调整参与金额和回收比例，看看途中哪些采购仍能支付。"), button(rec.task_id === "D1" && profile.enabled ? "从这里开始 · 推荐" : "打开资金安排台", () => changeScreen("d1"), "secondary")),
         h("div", { class: "route-card" }, h("div", { class: "task-title" }, h("span", { class: "task-badge" }, "D2"), h("h3", null, "历史对照台")), h("p", { class: "hint" }, "先固定日程，再比较同期基准与另一段历史。"), button(rec.task_id === "D2" && profile.enabled ? "从这里开始 · 推荐" : "打开历史对照台", () => changeScreen("d2"), "secondary")))),
-    profile.enabled ? details("知识与研究过程的依据", h("div", { class: "stack" }, profile.knowledge_observations.map((item) => h("p", { class: "hint" }, `${item.text}${item.evidence_ids.length ? ` 依据：${item.evidence_ids.join("、")}。` : ""}`)), h("p", { class: "fineprint" }, "本任务的一次观察不代表稳定能力；未观察不等于能力不足。"))) : null,
-    h("div", { class: "button-row" }, active ? button("返回营地", () => changeScreen("game"), "gold") : button("再来一局", () => askNewRun(profile.enabled), "gold"), active ? null : button("回到首页", () => changeScreen("intro"), "secondary"))), h("aside", { class: "side-column" }, h("section", { class: "panel stack" }, h("div", { class: "eyebrow" }, "YOUR JOURNEY"), h("h3", null, "留给自己的话"), h("p", { class: "hint" }, "输赢是游戏的一部分。不同安排对应不同机会，并不能判断一个人在现实中的财务能力。"), h("p", { class: "fineprint" }, "你可以修改目标、选择帮助方式，或直接开始新的冒险。")))), h("footer", { class: "footer" }, "历史只描述已经发生的片段，不预测未来。"));
+    h("div", { class: "button-row" }, active ? button("返回营地", () => changeScreen("game"), "gold") : button("再来一局", () => askNewRun(profile.enabled), "gold"), active ? null : button("回到首页", () => changeScreen("intro"), "secondary"))), h("aside", { class: "side-column" }, h("section", { class: "panel stack" }, h("div", { class: "eyebrow" }, "YOUR NEXT STEP"), h("h3", null, "探索由你选择"), h("p", { class: "hint" }, profile.enabled ? rec.reason : "两个练习都可以自由尝试。"), h("p", { class: "fineprint" }, "可以随时更改目标与帮助方式。")))));
 }
 function judge(): HTMLElement {
   const current = run!;
@@ -298,12 +311,12 @@ function render(preserve = true): void {
   else if (screen === "report") content = report();
   else if (screen === "judge") content = judge();
   else if (screen === "d1" || screen === "d2") content = h("div", { class: "app-shell" }, topbar(), screen === "d1" ? researchUI.renderFunding() : researchUI.renderHistory());
-  else content = h("div", null, h("div", { class: "app-shell" }, topbar()), gameView({ run, manifest, selectedCard, selectedRetain, selectedUpgrade, entryCents, reserveCents, marketLoading, marketError, battleFeedback, action, selectCard: (id) => { selectedCard = id; render(); }, selectRetain: (id) => { selectedRetain = id; render(); }, selectUpgrade: (id) => { selectedUpgrade = id; render(); }, setEntry: (amount, redraw) => { entryCents = amount; if (redraw) render(); }, setReserve: (amount) => { reserveCents = amount; }, retryMarket, extraCamp: () => researchUI.campExtras(), openReport: () => changeScreen("report"), openTask: (task) => changeScreen(task) }));
+  else content = h("div", null, h("div", { class: "app-shell" }, topbar()), gameView({ run, manifest, selectedCard, selectedRetain, selectedUpgrade, entryCents, reserveCents, marketLoading, marketError, battleFeedback, tutorialStep, action, selectCard: (id) => { selectedCard = id; if (id && run?.node === "N1" && tutorialStep < 2) { tutorialStep = 2; save(); } render(); }, selectRetain: (id) => { selectedRetain = id; render(); }, selectUpgrade: (id) => { selectedUpgrade = id; render(); }, setEntry: (amount, redraw) => { entryCents = amount; if (redraw) render(); }, setReserve: (amount) => { reserveCents = amount; }, retryMarket, extraCamp: () => researchUI.campExtras(), openReport: () => changeScreen("report"), openTask: (task) => changeScreen(task), nextTutorial: () => setTutorialStep(tutorialStep + 1), skipTutorial: () => setTutorialStep(4) }));
   const wrapper = h("div", { class: `adventure${screen === "game" && run?.phase === "battle" ? " battle-active" : ""}` }, content, storageError ? h("div", { class: "toast", role: "status" }, "浏览器无法保存进度，请检查本地存储设置。") : null, toastMessage ? h("div", { class: "toast", role: "status" }, toastMessage) : null, modal);
   app.replaceChildren(wrapper);
   for (const summary of app.querySelectorAll<HTMLElement>("details > summary")) if (open.includes(summary.textContent ?? "")) (summary.parentElement as HTMLDetailsElement).open = true;
   for (const [key, left] of scrollPositions) { const element = app.querySelector<HTMLElement>(`[data-scroll-key="${CSS.escape(key)}"]`); if (element) element.scrollLeft = left; }
-  if (preserve) { if (active) { const target = app.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(active)}"]`); if (target && !(target instanceof HTMLButtonElement && target.disabled)) target.focus({ preventScroll: true }); else if (active.startsWith("play-card")) { const hand = app.querySelector<HTMLElement>('.battle-hand-panel [data-scroll-key="battle-hand"]'); const box = hand?.getBoundingClientRect(); const visible = [...(hand?.querySelectorAll<HTMLElement>(".game-card") ?? [])].find((card) => { const rect = card.getBoundingClientRect(); return !!box && rect.right > box.left && rect.left < box.right; }); (visible ?? hand)?.focus({ preventScroll: true }); } } window.scrollTo(0, scroll); }
+  if (preserve) { if (active) { const target = app.querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(active)}"]`); if (target && !(target instanceof HTMLButtonElement && target.disabled)) target.focus({ preventScroll: true }); else if (active.startsWith("play-card") || active.startsWith("tutorial-")) { const hand = app.querySelector<HTMLElement>('.battle-hand-panel [data-scroll-key="battle-hand"]'); const box = hand?.getBoundingClientRect(); const visible = [...(hand?.querySelectorAll<HTMLElement>(".game-card") ?? [])].find((card) => { const rect = card.getBoundingClientRect(); return !!box && rect.right > box.left && rect.left < box.right; }); (visible ?? hand)?.focus({ preventScroll: true }); } } window.scrollTo(0, scroll); }
 }
 try { const value: unknown = JSON.parse(localStorage.getItem(SEEN_KEY) ?? "[]"); if (Array.isArray(value)) seenCases = new Set(value.filter((item): item is string => typeof item === "string")); } catch { storageError = true; }
 try {
@@ -313,6 +326,6 @@ try {
   fundingExposureArchive = archive ?? { version: 1, createdAt: Date.now(), entries: [] };
 } catch { storageError = true; }
 realSave = readSave();
-if (realSave) { run = realSave.run; profile = realSave.profile; if (profile.enabled) { profile.funding_exposure = fundingArchiveExpired ? [] : mergeFundingExposures(profile.funding_exposure, fundingExposureArchive.entries); rememberFundingExposures(profile); } observationStartedAt = realSave.observationStartedAt; priorExposure = !!realSave.priorExposure || (fundingArchiveExpired && profile.enabled); save(); }
+if (realSave) { run = realSave.run; profile = realSave.profile; if (profile.enabled) { profile.funding_exposure = fundingArchiveExpired ? [] : mergeFundingExposures(profile.funding_exposure, fundingExposureArchive.entries); rememberFundingExposures(profile); } observationStartedAt = realSave.observationStartedAt; priorExposure = !!realSave.priorExposure || (fundingArchiveExpired && profile.enabled); tutorialStep = restoredTutorial(run, realSave.tutorialStep); save(); }
 render(false);
 loadInitial();

@@ -1,5 +1,11 @@
 # v0.4.1 美术来源
 
+## 旅行者（内置图片生成，透明背景）
+
+文件：`public/art/adventure/traveler.png`；用于替代战斗中玩家的文字占位。已核验 RGBA 通道与透明角落。
+
+生成提示：Use case: stylized-concept. Asset type: transparent full-body player character sprite for a sunny hand-painted storybook card adventure. An original friendly young ADULT traveler, gender-neutral appearance, short dark chestnut hair, curious warm expression, a soft moss-green short cloak over an ivory shirt and comfortable tan trousers, a small leather satchel with a few illustrated cards peeking out, sturdy rounded boots. Holding a small glowing amber lantern in one hand and a fan of three blank-backed cream game cards in the other. Facing slightly RIGHT toward an opponent, relaxed confident adventuring stance. Kind and welcoming for a broad audience, human proportions stylized but clearly a young adult. Sophisticated gouache storybook texture, warm sunlight, sage/ivory/honey colors matching a cheerful stone garden town. Full body and all props entirely in frame with generous padding; clean readable silhouette for a small mobile game arena. Genuine transparent background; no landscape, ground plane, words, letters, numbers, logos, card text, border, UI, weapons or franchise character references.
+
 ## 钟表鸟（内置图片生成，透明背景）
 
 文件：`public/art/adventure/clock.png`。
