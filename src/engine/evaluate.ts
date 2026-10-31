@@ -55,6 +55,23 @@ function taskInstances(events: readonly GameEvent[], obs: "O1" | "O2", step: num
   }
   return out;
 }
+/** 任务 B 第 3 步的提交：与数据一致记 O5-t，否则只记录。看过提示、示范或答案反馈后，同题不再算独立完成。 */
+function taskBInstances(events: readonly GameEvent[]): ObsInstance[] {
+  let exposed = false;
+  const seen = new Set<string>();
+  const out: ObsInstance[] = [];
+  for (const e of events) {
+    if (e.stage !== "in_task") continue;
+    if (e.type === "assist_exposure" && e.payload.task === "B") exposed = true;
+    if (e.type !== "task_step" || e.payload.task !== "B" || e.payload.step !== 3 || e.payload.phase !== "submit") continue;
+    if (seen.has(e.payload.answer)) continue;
+    seen.add(e.payload.answer);
+    const ok = e.payload.correct === true;
+    out.push({ context: "taskB", rule: `O5-${ok ? "t" : "r"}`, outcome: ok ? "consistent" : "recorded", assisted: exposed || out.length > 0, event_ids: [e.event_id] });
+    if (ok) break;
+  }
+  return out;
+}
 function aggregate(id: ObsId, instances: ObsInstance[]): Observation {
   const independent = instances.filter((i) => i.outcome === "consistent" && !i.assisted);
   const helped = instances.filter((i) => i.outcome === "consistent" && i.assisted);
@@ -137,7 +154,7 @@ export function evaluate(events: readonly GameEvent[], cfg: EngineConfig): { pro
       o4.push(inst);
     }
   }
-  const task_observations = { O1: taskInstances(events, "O1", 1), O2: taskInstances(events, "O2", 2) };
+  const task_observations = { O1: taskInstances(events, "O1", 1), O2: taskInstances(events, "O2", 2), O5: taskBInstances(events) };
   // 任务中的先猜后验也使用同一命题；只有第一次成功的提交可提供一条修正证据。
   for (const [id, step] of [["O1", 1], ["O2", 2]] as const) {
     const completion = task_observations[id].find((i) => i.outcome === "consistent");
@@ -158,5 +175,5 @@ export function evaluate(events: readonly GameEvent[], cfg: EngineConfig): { pro
     rules_version: cfg.rules_version, observations, task_observations, style: species(records, cfg.rounds),
     help_preference: helpPreference(events, records, anyUnderstanding, observations.O1.aggregation === "repeated" && observations.O2.aggregation === "repeated"), flags: { o3d },
   };
-  return { profile, progress: { K: [observations.O1, observations.O2].filter((o) => o.aggregation === "repeated").length, S1, S2, rounds_completed: complete.length, taskA_steps_done, taskB_done: false, ready_for_B: S1 && S2 } };
+  return { profile, progress: { K: [observations.O1, observations.O2].filter((o) => o.aggregation === "repeated").length, S1, S2, rounds_completed: complete.length, taskA_steps_done, taskB_done: task_observations.O5.some((i) => i.outcome === "consistent"), ready_for_B: S1 && S2 } };
 }

@@ -1,6 +1,9 @@
 // 数据加载与“揭晓前不得持有未来数据”的隔离。
 // 揭晓前只加载 cases_visible.json（只有 T 日及以前、相对日期、无代码名称）；
 // 第 n 轮的揭晓数据只在这一轮锁定后才请求，且只请求这一轮的文件。
+import type { TaskBData } from "../../contracts";
+
+export type { TaskBData };
 
 export interface VisibleRound {
   round_id: string;
@@ -108,6 +111,11 @@ export function requestedReveals(): string[] {
 
 export function loadTaskA(): Promise<TaskAData> {
   return fetchJson<TaskAData>("taskA.json");
+}
+
+/** 任务 B 只有汇总统计，不含逐条样本；M1 只发布猎豹题。 */
+export function loadTaskB(topic = "cheetah"): Promise<TaskBData> {
+  return fetchJson<TaskBData>(`taskB_${topic}.json`);
 }
 
 export function _resetForTest(): void {

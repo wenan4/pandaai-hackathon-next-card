@@ -164,3 +164,9 @@ h2 { font-size: 16px; }
 details > summary { cursor: pointer; min-height: 32px; }
 table { border-collapse: collapse; }
 pre { white-space: pre-wrap; word-break: break-all; }
+
+/* 任务 B 两组对比表：手机宽度下不横向滚动 */
+.btable { width: 100%; border-collapse: collapse; font-size: 13px; color: var(--ink); table-layout: fixed; }
+.btable th, .btable td { padding: 4px 2px; text-align: right; border-bottom: 1px solid rgba(0, 0, 0, 0.08); }
+.btable th:first-child, .btable td:first-child { text-align: left; width: 22%; }
+.btable thead th { font-weight: 400; color: var(--ink-2); font-size: 12px; }

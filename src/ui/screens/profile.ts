@@ -26,7 +26,7 @@ export function startTask(s: State, plan: Plan, profile: Profile): void {
     s.back = s.screen;
     s.screen = "taskA";
   } else {
-    s.taskB = { reason: plan.reason, guessFirst: plan.guess_first, locked: false, testOpened: false, submitted: false };
+    s.taskB = { reason: plan.reason, guessFirst: plan.guess_first, locked: false, testOpened: false, submitted: false, assist: plan.assist, exposures: [] };
     s.back = s.screen;
     s.screen = "taskB";
   }
@@ -47,7 +47,7 @@ export function planCard(plan: Plan, profile: Profile): HTMLElement {
       `协助：${ASSIST_COPY[plan.assist].label}（${profile.help_preference.source === "user" ? "你选过的档位" : "按本局帮助使用推断，可随时改"}）`,
       plan.guess_first ? " · 先猜后验" : "",
     ),
-    h("button", { class: "btn", style: "background:var(--ink);color:var(--paper)", onclick: () => update((s) => startTask(s, plan, profile)) }, plan.task === "B" ? "查看任务 B（数据准备中）" : "开始下一关", icon("arrow", 18, 2)),
+    h("button", { class: "btn", style: "background:var(--ink);color:var(--paper)", onclick: () => update((s) => startTask(s, plan, profile)) }, "开始下一关", icon("arrow", 18, 2)),
   );
 }
 
@@ -101,6 +101,7 @@ export function profileScreen(s: State): HTMLElement {
             statusPill(o.status),
           );
         }),
+        o5Row(profile),
       ),
     ),
     h(
@@ -139,12 +140,31 @@ const O4_ALT: Record<string, string> = {
 
 function describe(s: State, inst: ObsInstance): string {
   if (inst.context.startsWith("taskA")) return `任务 A 步骤 ${inst.context.slice(-1)}：提交了答案`;
+  if (inst.context === "taskB") return "任务 B：锁定规则后看了展示段和检验段，选了结论和依据";
   const cfg = ROUNDS.find((r) => r.round_id === inst.context);
   if (!cfg) return inst.context;
   const rec = collectRound(s.events, cfg);
   const flips = rec.flips.length ? rec.flips.map((c) => `「${CARD_COPY[c].title}」`).join("、") : "没有翻牌";
   const initial = rec.initial ? `第一判断「${REACTION_COPY[rec.initial]}」→ ` : "";
   return `${initial}翻开 ${flips} → 最终「${rec.final ? VERDICT_COPY[rec.final].label : "—"}」`;
+}
+
+/** 任务 B 完成后才出现的 O5：只在任务这个新情境里记录。 */
+function o5Row(profile: Profile): HTMLElement | null {
+  const done = profile.task_observations.O5.find((i) => i.outcome === "consistent");
+  if (!done) return null;
+  return h(
+    "li",
+    { class: "row" },
+    h("span", { class: "xs muted bold", style: "width:24px" }, "O5"),
+    h("div", { class: "grow stack", style: "gap:0" }, h("span", null, "在给定规则下比较两段样本"), h("span", { class: "xs muted" }, "任务 B 中记录")),
+    statusPill(done.assisted ? "assisted" : "observed"),
+  );
+}
+
+function taskLine(s: State, inst: ObsInstance): string {
+  const result = inst.outcome === "consistent" ? (inst.assisted ? "在帮助下完成" : "独立完成") : "与数据尚未对应";
+  return `${describe(s, inst)} · ${result}。这是任务中的新情境，不改写局内观察。`;
 }
 
 function alternative(inst: ObsInstance): string {
@@ -175,9 +195,18 @@ export function basisScreen(s: State): HTMLElement {
               ),
             ),
         o.understanding_unclear ? h("p", { class: "xs", style: "color:var(--leo)" }, "追问里你选了“图没看懂”：这项先记为理解待确认，不算没查证。") : null,
-        id === "O1" || id === "O2" ? profile.task_observations[id].map((inst) => h("p", { class: "small text-2" }, `${describe(s, inst)} · ${inst.outcome === "consistent" ? inst.assisted ? "在帮助下完成" : "独立完成" : "与数据尚未对应"}。这是任务中的新情境，不改写局内观察。`)) : null,
+        id === "O1" || id === "O2" ? profile.task_observations[id].map((inst) => h("p", { class: "small text-2" }, taskLine(s, inst))) : null,
       );
     }),
+    profile.task_observations.O5.length
+      ? h(
+          "article",
+          { class: "panel stack", style: "gap:8px" },
+          h("div", { class: "row" }, h("span", { class: "xs muted bold" }, "O5"), h("span", { class: "grow bold" }, "在给定规则下比较两段样本")),
+          profile.task_observations.O5.map((inst) => h("p", { class: "small text-2" }, `规则 ${inst.rule} · ${taskLine(s, inst)}`)),
+          h("p", { class: "xs muted" }, "只说明能按给定规则读两段样本，不代表会自己设计回测。"),
+        )
+      : null,
     h(
       "article",
       { class: "paper stack" },

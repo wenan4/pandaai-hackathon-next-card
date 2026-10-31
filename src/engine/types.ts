@@ -79,7 +79,8 @@ export type Species = Card | "mixed" | "unknown";
 export interface Profile {
   rules_version: string;
   observations: Record<ObsId, Observation>;
-  task_observations: Record<"O1" | "O2", ObsInstance[]>;
+  /** 任务中的新情境单独记录：O1/O2 来自任务 A，O5（在给定规则下比较两段样本）来自任务 B。 */
+  task_observations: Record<"O1" | "O2" | "O5", ObsInstance[]>;
   style: { species: Species; first_flips: { round_id: string; card: Card; counted: boolean }[]; counts: Record<Card, number> };
   help_preference: { level: AssistLevel; source: "user" | "understanding" | "explain_count"; explain_count: number };
   flags: { o3d: boolean };
