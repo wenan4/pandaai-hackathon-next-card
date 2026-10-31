@@ -90,7 +90,7 @@ def p_pre_adjust():
         if e1 or e2:
             out[sym] = {"error": e1 or e2}
             continue
-        m = raw.merge(pre, on="date", suffixes=("_raw", "_pre"))
+        m = raw.merge(pre, on="date", suffixes=("_raw", "_pre")).sort_values("date")
         last, first = m.iloc[-1], m.iloc[0]
         out[sym] = {
             "rows": len(m),
@@ -120,8 +120,8 @@ def p_span_limit():
         joined = {
             "rows": len(a) + len(b),
             "trading_days": None if cal is None else len(cal),
-            "first": str(a["date"].iloc[0]),
-            "last": str(b["date"].iloc[-1]),
+            "first": str(a["date"].min()),
+            "last": str(b["date"].max()),
         }
     return {
         "over_5y": {"error": err_over} if err_over else {"rows": len(over), "note": "超过 5 年也返回了数据"},
@@ -137,8 +137,8 @@ def p_index():
         df, err = call("get_index_daily", symbol=[sym], start_date="20231030", end_date="20261030")
         out[sym] = {"error": err} if err else {
             "rows": len(df), "columns": list(map(str, df.columns)),
-            "first": str(df["date"].iloc[0]) if len(df) else None,
-            "last": str(df["date"].iloc[-1]) if len(df) else None,
+            "first": str(df["date"].min()) if len(df) else None,
+            "last": str(df["date"].max()) if len(df) else None,
         }
     return out
 
