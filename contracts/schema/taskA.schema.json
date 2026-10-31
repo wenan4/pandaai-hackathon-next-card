@@ -1,0 +1,395 @@
+{
+  "title": "任务 A 数据文件",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "header": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "next-card/data@v0.3"
+            },
+            {
+              "type": "string",
+              "format": "starts_with",
+              "pattern": "^draft.*"
+            }
+          ]
+        },
+        "script": {
+          "type": "string",
+          "minLength": 1
+        },
+        "script_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rules_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        "data_as_of": {
+          "type": "string",
+          "pattern": "^\\d{8}$"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "apis": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "benchmark": {
+          "type": "string",
+          "minLength": 1
+        },
+        "adjustment": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dividends": {
+          "type": "string",
+          "minLength": 1
+        },
+        "normalization": {
+          "type": "string",
+          "minLength": 1
+        },
+        "selection": {
+          "type": "string",
+          "minLength": 1
+        },
+        "public_scope": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file": {
+          "type": "string",
+          "const": "taskA"
+        },
+        "windows": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "answers_computed_by": {
+          "type": "string",
+          "minLength": 1
+        },
+        "game_cases": {
+          "type": "object",
+          "properties": {
+            "file": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            "hash_format": {
+              "type": "string",
+              "minLength": 1
+            },
+            "script_version": {
+              "type": "string",
+              "minLength": 1
+            },
+            "rules_version": {
+              "type": "string",
+              "minLength": 1
+            },
+            "data_as_of": {
+              "type": "string",
+              "pattern": "^\\d{8}$"
+            }
+          },
+          "required": [
+            "file",
+            "sha256",
+            "hash_format",
+            "script_version",
+            "rules_version",
+            "data_as_of"
+          ],
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "schema",
+        "script",
+        "script_version",
+        "rules_version",
+        "data_as_of",
+        "source",
+        "apis",
+        "benchmark",
+        "adjustment",
+        "dividends",
+        "normalization",
+        "selection",
+        "public_scope",
+        "file",
+        "windows",
+        "answers_computed_by",
+        "game_cases"
+      ],
+      "additionalProperties": {}
+    },
+    "label": {
+      "type": "string",
+      "pattern": "^[A-Z]$"
+    },
+    "step1": {
+      "type": "object",
+      "properties": {
+        "observation": {
+          "type": "string",
+          "const": "O1"
+        },
+        "offsets": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          ],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "benchmark_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "unaligned": {
+          "type": "object",
+          "properties": {
+            "asset": {
+              "minItems": 2,
+              "type": "array",
+              "items": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            },
+            "benchmark": {
+              "minItems": 2,
+              "type": "array",
+              "items": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            }
+          },
+          "required": [
+            "asset",
+            "benchmark"
+          ],
+          "additionalProperties": false
+        },
+        "aligned": {
+          "type": "object",
+          "properties": {
+            "asset": {
+              "minItems": 2,
+              "type": "array",
+              "items": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            },
+            "benchmark": {
+              "minItems": 2,
+              "type": "array",
+              "items": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            }
+          },
+          "required": [
+            "asset",
+            "benchmark"
+          ],
+          "additionalProperties": false
+        },
+        "asset_return": {
+          "type": "number"
+        },
+        "benchmark_return": {
+          "type": "number"
+        },
+        "answer": {
+          "type": "string",
+          "enum": [
+            "outperform",
+            "underperform",
+            "insufficient"
+          ]
+        }
+      },
+      "required": [
+        "observation",
+        "offsets",
+        "benchmark_name",
+        "unaligned",
+        "aligned",
+        "asset_return",
+        "benchmark_return",
+        "answer"
+      ],
+      "additionalProperties": false
+    },
+    "step2": {
+      "type": "object",
+      "properties": {
+        "observation": {
+          "type": "string",
+          "const": "O2"
+        },
+        "offsets": {
+          "type": "array",
+          "prefixItems": [
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          ],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "claim": {
+          "type": "string",
+          "minLength": 1
+        },
+        "series": {
+          "minItems": 2,
+          "type": "array",
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        "cum_return": {
+          "type": "number"
+        },
+        "max_drawdown": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "answer": {
+          "type": "string",
+          "enum": [
+            "supports",
+            "refutes",
+            "insufficient"
+          ]
+        }
+      },
+      "required": [
+        "observation",
+        "offsets",
+        "claim",
+        "series",
+        "cum_return",
+        "max_drawdown",
+        "answer"
+      ],
+      "additionalProperties": false
+    },
+    "source": {
+      "type": "object",
+      "properties": {
+        "symbol": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "decision_date": {
+          "type": "string",
+          "pattern": "^\\d{8}$"
+        },
+        "windows": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "string",
+                "pattern": "^\\d{8}$"
+              },
+              {
+                "type": "string",
+                "pattern": "^\\d{8}$"
+              }
+            ],
+            "items": false,
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "hindsight_disclosure": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "symbol",
+        "name",
+        "decision_date",
+        "windows",
+        "hindsight_disclosure"
+      ],
+      "additionalProperties": {}
+    }
+  },
+  "required": [
+    "header",
+    "label",
+    "step1",
+    "step2",
+    "source"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,980 @@
+{
+  "title": "事件序列（PRD v0.3 §4.1）",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "array",
+  "items": {
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content_version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "pre_reveal",
+              "post_reveal",
+              "in_task"
+            ]
+          },
+          "round_id": {
+            "type": "string",
+            "enum": [
+              "R1",
+              "R2",
+              "R3",
+              "R4",
+              "R5",
+              "R6",
+              "taskA",
+              "taskB",
+              "session"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "const": "initial_reaction"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "reaction": {
+                "type": "string",
+                "enum": [
+                  "supports",
+                  "refutes",
+                  "insufficient"
+                ]
+              }
+            },
+            "required": [
+              "reaction"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "event_id",
+          "session_id",
+          "content_version",
+          "stage",
+          "round_id",
+          "type",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content_version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "pre_reveal",
+              "post_reveal",
+              "in_task"
+            ]
+          },
+          "round_id": {
+            "type": "string",
+            "enum": [
+              "R1",
+              "R2",
+              "R3",
+              "R4",
+              "R5",
+              "R6",
+              "taskA",
+              "taskB",
+              "session"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "const": "card_flip"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "card": {
+                "type": "string",
+                "enum": [
+                  "fox",
+                  "elephant",
+                  "leopard"
+                ]
+              }
+            },
+            "required": [
+              "card"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "event_id",
+          "session_id",
+          "content_version",
+          "stage",
+          "round_id",
+          "type",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content_version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "pre_reveal",
+              "post_reveal",
+              "in_task"
+            ]
+          },
+          "round_id": {
+            "type": "string",
+            "enum": [
+              "R1",
+              "R2",
+              "R3",
+              "R4",
+              "R5",
+              "R6",
+              "taskA",
+              "taskB",
+              "session"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "const": "explain_open"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "card": {
+                "type": "string",
+                "enum": [
+                  "fox",
+                  "elephant",
+                  "leopard"
+                ]
+              },
+              "content_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "neutral",
+                  "directional"
+                ]
+              }
+            },
+            "required": [
+              "card",
+              "content_id",
+              "kind"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "event_id",
+          "session_id",
+          "content_version",
+          "stage",
+          "round_id",
+          "type",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content_version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "pre_reveal",
+              "post_reveal",
+              "in_task"
+            ]
+          },
+          "round_id": {
+            "type": "string",
+            "enum": [
+              "R1",
+              "R2",
+              "R3",
+              "R4",
+              "R5",
+              "R6",
+              "taskA",
+              "taskB",
+              "session"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "const": "final_assessment"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "verdict": {
+                "type": "string",
+                "enum": [
+                  "supports",
+                  "refutes",
+                  "insufficient"
+                ]
+              }
+            },
+            "required": [
+              "verdict"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "event_id",
+          "session_id",
+          "content_version",
+          "stage",
+          "round_id",
+          "type",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content_version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "pre_reveal",
+              "post_reveal",
+              "in_task"
+            ]
+          },
+          "round_id": {
+            "type": "string",
+            "enum": [
+              "R1",
+              "R2",
+              "R3",
+              "R4",
+              "R5",
+              "R6",
+              "taskA",
+              "taskB",
+              "session"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "const": "decision"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "action": {
+                "type": "string",
+                "enum": [
+                  "follow",
+                  "skip",
+                  "wait"
+                ]
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "event_id",
+          "session_id",
+          "content_version",
+          "stage",
+          "round_id",
+          "type",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content_version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "pre_reveal",
+              "post_reveal",
+              "in_task"
+            ]
+          },
+          "round_id": {
+            "type": "string",
+            "enum": [
+              "R1",
+              "R2",
+              "R3",
+              "R4",
+              "R5",
+              "R6",
+              "taskA",
+              "taskB",
+              "session"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "const": "followup_answer"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "question": {
+                "type": "string",
+                "enum": [
+                  "missing",
+                  "basis",
+                  "waiting"
+                ]
+              },
+              "answer": {
+                "type": "string",
+                "enum": [
+                  "comparison",
+                  "longer_history",
+                  "signal_validation",
+                  "future_trend",
+                  "more_opinions",
+                  "chart_unclear",
+                  "own_view",
+                  "main_chart",
+                  "opened_cards",
+                  "claim_itself",
+                  "intuition",
+                  "other",
+                  "skipped"
+                ]
+              }
+            },
+            "required": [
+              "question",
+              "answer"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "event_id",
+          "session_id",
+          "content_version",
+          "stage",
+          "round_id",
+          "type",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content_version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "pre_reveal",
+              "post_reveal",
+              "in_task"
+            ]
+          },
+          "round_id": {
+            "type": "string",
+            "enum": [
+              "R1",
+              "R2",
+              "R3",
+              "R4",
+              "R5",
+              "R6",
+              "taskA",
+              "taskB",
+              "session"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "const": "self_note"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "note": {
+                "type": "string",
+                "enum": [
+                  "did_not_understand",
+                  "was_waiting_for_evidence",
+                  "just_trying",
+                  "nothing"
+                ]
+              }
+            },
+            "required": [
+              "note"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "event_id",
+          "session_id",
+          "content_version",
+          "stage",
+          "round_id",
+          "type",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content_version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "pre_reveal",
+              "post_reveal",
+              "in_task"
+            ]
+          },
+          "round_id": {
+            "type": "string",
+            "enum": [
+              "R1",
+              "R2",
+              "R3",
+              "R4",
+              "R5",
+              "R6",
+              "taskA",
+              "taskB",
+              "session"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "const": "assist_switch"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "task": {
+                "type": "string",
+                "enum": [
+                  "A",
+                  "B"
+                ]
+              },
+              "step": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "from": {
+                "type": "string",
+                "enum": [
+                  "guide",
+                  "hint",
+                  "solo"
+                ]
+              },
+              "to": {
+                "type": "string",
+                "enum": [
+                  "guide",
+                  "hint",
+                  "solo"
+                ]
+              },
+              "by": {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "system"
+                ]
+              }
+            },
+            "required": [
+              "task",
+              "from",
+              "to",
+              "by"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "event_id",
+          "session_id",
+          "content_version",
+          "stage",
+          "round_id",
+          "type",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content_version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "pre_reveal",
+              "post_reveal",
+              "in_task"
+            ]
+          },
+          "round_id": {
+            "type": "string",
+            "enum": [
+              "R1",
+              "R2",
+              "R3",
+              "R4",
+              "R5",
+              "R6",
+              "taskA",
+              "taskB",
+              "session"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "const": "assist_exposure"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "task": {
+                "type": "string",
+                "enum": [
+                  "A",
+                  "B"
+                ]
+              },
+              "step": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "content_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "hint",
+                  "demo",
+                  "answer_feedback"
+                ]
+              },
+              "attempt": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "task",
+              "step",
+              "content_id",
+              "kind",
+              "attempt"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "event_id",
+          "session_id",
+          "content_version",
+          "stage",
+          "round_id",
+          "type",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content_version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "pre_reveal",
+              "post_reveal",
+              "in_task"
+            ]
+          },
+          "round_id": {
+            "type": "string",
+            "enum": [
+              "R1",
+              "R2",
+              "R3",
+              "R4",
+              "R5",
+              "R6",
+              "taskA",
+              "taskB",
+              "session"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "const": "task_step"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "task": {
+                "type": "string",
+                "enum": [
+                  "A",
+                  "B"
+                ]
+              },
+              "step": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "content_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "attempt": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "phase": {
+                "type": "string",
+                "enum": [
+                  "guess",
+                  "submit"
+                ]
+              },
+              "answer": {
+                "type": "string",
+                "minLength": 1
+              },
+              "actions": {
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "task",
+              "step",
+              "content_id",
+              "attempt",
+              "phase",
+              "answer"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "event_id",
+          "session_id",
+          "content_version",
+          "stage",
+          "round_id",
+          "type",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content_version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "pre_reveal",
+              "post_reveal",
+              "in_task"
+            ]
+          },
+          "round_id": {
+            "type": "string",
+            "enum": [
+              "R1",
+              "R2",
+              "R3",
+              "R4",
+              "R5",
+              "R6",
+              "taskA",
+              "taskB",
+              "session"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "const": "topic_select"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "topic": {
+                "type": "string",
+                "enum": [
+                  "cheetah",
+                  "elephant",
+                  "fox"
+                ]
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "user",
+                  "focus",
+                  "bet",
+                  "style",
+                  "only_available"
+                ]
+              }
+            },
+            "required": [
+              "topic",
+              "source"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "event_id",
+          "session_id",
+          "content_version",
+          "stage",
+          "round_id",
+          "type",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "session_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "content_version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "pre_reveal",
+              "post_reveal",
+              "in_task"
+            ]
+          },
+          "round_id": {
+            "type": "string",
+            "enum": [
+              "R1",
+              "R2",
+              "R3",
+              "R4",
+              "R5",
+              "R6",
+              "taskA",
+              "taskB",
+              "session"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "const": "notice_ack"
+          },
+          "payload": {
+            "type": "object",
+            "properties": {
+              "notice_version": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "notice_version"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "event_id",
+          "session_id",
+          "content_version",
+          "stage",
+          "round_id",
+          "type",
+          "payload"
+        ],
+        "additionalProperties": false
+      }
+    ]
+  }
+}

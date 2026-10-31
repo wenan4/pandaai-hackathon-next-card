@@ -1,0 +1,1575 @@
+{
+  "title": "结构化输出（PRD v0.3 §6）",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "rules_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "real_session",
+            "simulated_path",
+            "judge_fork"
+          ]
+        },
+        "path_id": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "fork_of": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "session_id",
+        "event_count"
+      ],
+      "additionalProperties": false
+    },
+    "style": {
+      "type": "object",
+      "properties": {
+        "species": {
+          "type": "string",
+          "enum": [
+            "fox",
+            "elephant",
+            "leopard",
+            "mixed",
+            "unknown"
+          ]
+        },
+        "counted_first_flips": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "round_id": {
+                "type": "string",
+                "enum": [
+                  "R1",
+                  "R2",
+                  "R3",
+                  "R4",
+                  "R5",
+                  "R6"
+                ]
+              },
+              "card": {
+                "type": "string",
+                "enum": [
+                  "fox",
+                  "elephant",
+                  "leopard"
+                ]
+              }
+            },
+            "required": [
+              "round_id",
+              "card"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "excluded_named_flips": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "round_id": {
+                "type": "string",
+                "enum": [
+                  "R1",
+                  "R2",
+                  "R3",
+                  "R4",
+                  "R5",
+                  "R6"
+                ]
+              },
+              "card": {
+                "type": "string",
+                "enum": [
+                  "fox",
+                  "elephant",
+                  "leopard"
+                ]
+              }
+            },
+            "required": [
+              "round_id",
+              "card"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "counts": {
+          "type": "object",
+          "properties": {
+            "fox": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "elephant": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "leopard": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "fox",
+            "elephant",
+            "leopard"
+          ],
+          "additionalProperties": false
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "species",
+        "counted_first_flips",
+        "excluded_named_flips",
+        "counts",
+        "scope"
+      ],
+      "additionalProperties": false
+    },
+    "observations": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "enum": [
+                  "O1",
+                  "O2",
+                  "O3"
+                ]
+              },
+              "aggregate": {
+                "type": "string",
+                "enum": [
+                  "partial",
+                  "repeated",
+                  "mixed",
+                  "single",
+                  "assisted",
+                  "none",
+                  "uncertain"
+                ]
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "observed",
+                  "assisted",
+                  "uncertain",
+                  "not_observed"
+                ]
+              },
+              "scenarios": {
+                "minItems": 1,
+                "maxItems": 2,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "scenario": {
+                      "type": "string",
+                      "enum": [
+                        "R1",
+                        "R2",
+                        "R3",
+                        "R4",
+                        "R5",
+                        "R6",
+                        "taskA",
+                        "taskB",
+                        "session"
+                      ]
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "observed",
+                        "assisted",
+                        "uncertain",
+                        "not_observed"
+                      ]
+                    },
+                    "rule": {
+                      "type": "string",
+                      "pattern": "^O[1-5]-[a-z]$"
+                    },
+                    "uncertain_reason": {
+                      "type": "string",
+                      "enum": [
+                        "understanding",
+                        "mismatch",
+                        "no_conclusion",
+                        "knows_to_check",
+                        "evidence_not_shown",
+                        "no_comparable_round"
+                      ]
+                    },
+                    "evidence_event_ids": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "assistance": {
+                      "type": "string",
+                      "enum": [
+                        "none",
+                        "directional_explain",
+                        "hint",
+                        "demo",
+                        "answer_feedback"
+                      ]
+                    },
+                    "cross_round_rule": {
+                      "type": "string",
+                      "enum": [
+                        "met",
+                        "not_met"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "scenario",
+                    "state",
+                    "rule",
+                    "evidence_event_ids",
+                    "assistance"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "task_scenarios": {
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "scenario": {
+                      "type": "string",
+                      "enum": [
+                        "R1",
+                        "R2",
+                        "R3",
+                        "R4",
+                        "R5",
+                        "R6",
+                        "taskA",
+                        "taskB",
+                        "session"
+                      ]
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "observed",
+                        "assisted",
+                        "uncertain",
+                        "not_observed"
+                      ]
+                    },
+                    "rule": {
+                      "type": "string",
+                      "pattern": "^O[1-5]-[a-z]$"
+                    },
+                    "uncertain_reason": {
+                      "type": "string",
+                      "enum": [
+                        "understanding",
+                        "mismatch",
+                        "no_conclusion",
+                        "knows_to_check",
+                        "evidence_not_shown",
+                        "no_comparable_round"
+                      ]
+                    },
+                    "evidence_event_ids": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "assistance": {
+                      "type": "string",
+                      "enum": [
+                        "none",
+                        "directional_explain",
+                        "hint",
+                        "demo",
+                        "answer_feedback"
+                      ]
+                    },
+                    "cross_round_rule": {
+                      "type": "string",
+                      "enum": [
+                        "met",
+                        "not_met"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "scenario",
+                    "state",
+                    "rule",
+                    "evidence_event_ids",
+                    "assistance"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "id",
+              "aggregate",
+              "state",
+              "scenarios"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "const": "O4"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "observed",
+                  "assisted",
+                  "uncertain",
+                  "not_observed"
+                ]
+              },
+              "rule": {
+                "type": "string",
+                "enum": [
+                  "O4-a",
+                  "O4-b",
+                  "O4-c",
+                  "O4-d"
+                ]
+              },
+              "opportunities": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "revisions": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "independent_revisions": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "assisted_revisions": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "evidence_event_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "id",
+              "state",
+              "rule",
+              "opportunities",
+              "revisions",
+              "independent_revisions",
+              "assisted_revisions",
+              "evidence_event_ids"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "const": "O5"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "observed",
+                  "assisted",
+                  "uncertain",
+                  "not_observed"
+                ]
+              },
+              "rule": {
+                "type": "string",
+                "pattern": "^O[1-5]-[a-z]$"
+              },
+              "evidence_event_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "assistance": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "directional_explain",
+                  "hint",
+                  "demo",
+                  "answer_feedback"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "state",
+              "rule",
+              "evidence_event_ids",
+              "assistance"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "help_preference": {
+      "type": "object",
+      "properties": {
+        "suggested_assist": {
+          "type": "string",
+          "enum": [
+            "guide",
+            "hint",
+            "solo"
+          ]
+        },
+        "user_selected": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "guide",
+                "hint",
+                "solo"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "observed",
+            "assisted",
+            "uncertain",
+            "not_observed"
+          ]
+        },
+        "rule": {
+          "type": "string",
+          "enum": [
+            "user_selected",
+            "understanding",
+            "explain_3plus",
+            "explain_1_2",
+            "solo_ok",
+            "default"
+          ]
+        },
+        "explain_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "basis_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "suggested_assist",
+        "user_selected",
+        "state",
+        "rule",
+        "explain_count",
+        "basis_id"
+      ],
+      "additionalProperties": false
+    },
+    "progress": {
+      "type": "object",
+      "properties": {
+        "K": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2
+        },
+        "S1": {
+          "type": "boolean"
+        },
+        "S2": {
+          "type": "boolean"
+        },
+        "rounds_completed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6
+        },
+        "taskA_completed_steps": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "taskB_done": {
+          "type": "boolean"
+        },
+        "ready_for_B": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "K",
+        "S1",
+        "S2",
+        "rounds_completed",
+        "taskA_completed_steps",
+        "taskB_done",
+        "ready_for_B"
+      ],
+      "additionalProperties": false
+    },
+    "unknowns": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "action_profile": {
+      "type": "object",
+      "properties": {
+        "aligned": {
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "of": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "rounds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "R1",
+                  "R2",
+                  "R3",
+                  "R4",
+                  "R5",
+                  "R6"
+                ]
+              }
+            }
+          },
+          "required": [
+            "count",
+            "of",
+            "rounds"
+          ],
+          "additionalProperties": false
+        },
+        "diverged": {
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "rounds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "R1",
+                  "R2",
+                  "R3",
+                  "R4",
+                  "R5",
+                  "R6"
+                ]
+              }
+            }
+          },
+          "required": [
+            "count",
+            "rounds"
+          ],
+          "additionalProperties": false
+        },
+        "by_verdict": {
+          "type": "object",
+          "properties": {
+            "supports": {
+              "type": "object",
+              "properties": {
+                "follow": {
+                  "type": "object",
+                  "properties": {
+                    "count": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "rounds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "R1",
+                          "R2",
+                          "R3",
+                          "R4",
+                          "R5",
+                          "R6"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "count",
+                    "rounds"
+                  ],
+                  "additionalProperties": false
+                },
+                "skip": {
+                  "type": "object",
+                  "properties": {
+                    "count": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "rounds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "R1",
+                          "R2",
+                          "R3",
+                          "R4",
+                          "R5",
+                          "R6"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "count",
+                    "rounds"
+                  ],
+                  "additionalProperties": false
+                },
+                "wait": {
+                  "type": "object",
+                  "properties": {
+                    "count": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "rounds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "R1",
+                          "R2",
+                          "R3",
+                          "R4",
+                          "R5",
+                          "R6"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "count",
+                    "rounds"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "follow",
+                "skip",
+                "wait"
+              ],
+              "additionalProperties": false
+            },
+            "refutes": {
+              "type": "object",
+              "properties": {
+                "follow": {
+                  "type": "object",
+                  "properties": {
+                    "count": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "rounds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "R1",
+                          "R2",
+                          "R3",
+                          "R4",
+                          "R5",
+                          "R6"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "count",
+                    "rounds"
+                  ],
+                  "additionalProperties": false
+                },
+                "skip": {
+                  "type": "object",
+                  "properties": {
+                    "count": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "rounds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "R1",
+                          "R2",
+                          "R3",
+                          "R4",
+                          "R5",
+                          "R6"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "count",
+                    "rounds"
+                  ],
+                  "additionalProperties": false
+                },
+                "wait": {
+                  "type": "object",
+                  "properties": {
+                    "count": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "rounds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "R1",
+                          "R2",
+                          "R3",
+                          "R4",
+                          "R5",
+                          "R6"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "count",
+                    "rounds"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "follow",
+                "skip",
+                "wait"
+              ],
+              "additionalProperties": false
+            },
+            "insufficient": {
+              "type": "object",
+              "properties": {
+                "follow": {
+                  "type": "object",
+                  "properties": {
+                    "count": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "rounds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "R1",
+                          "R2",
+                          "R3",
+                          "R4",
+                          "R5",
+                          "R6"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "count",
+                    "rounds"
+                  ],
+                  "additionalProperties": false
+                },
+                "skip": {
+                  "type": "object",
+                  "properties": {
+                    "count": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "rounds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "R1",
+                          "R2",
+                          "R3",
+                          "R4",
+                          "R5",
+                          "R6"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "count",
+                    "rounds"
+                  ],
+                  "additionalProperties": false
+                },
+                "wait": {
+                  "type": "object",
+                  "properties": {
+                    "count": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "rounds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "R1",
+                          "R2",
+                          "R3",
+                          "R4",
+                          "R5",
+                          "R6"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "count",
+                    "rounds"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "follow",
+                "skip",
+                "wait"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "supports",
+            "refutes",
+            "insufficient"
+          ],
+          "additionalProperties": false
+        },
+        "follow_total": {
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "rounds": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "R1",
+                  "R2",
+                  "R3",
+                  "R4",
+                  "R5",
+                  "R6"
+                ]
+              }
+            }
+          },
+          "required": [
+            "count",
+            "rounds"
+          ],
+          "additionalProperties": false
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "aligned",
+        "diverged",
+        "by_verdict",
+        "follow_total",
+        "scope"
+      ],
+      "additionalProperties": false
+    },
+    "backed_families": {
+      "type": "object",
+      "properties": {
+        "by_family": {
+          "type": "object",
+          "properties": {
+            "relative_strength": {
+              "type": "object",
+              "properties": {
+                "count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "rounds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "R1",
+                      "R2",
+                      "R3",
+                      "R4",
+                      "R5",
+                      "R6"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "count",
+                "rounds"
+              ],
+              "additionalProperties": false
+            },
+            "steady_trend": {
+              "type": "object",
+              "properties": {
+                "count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "rounds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "R1",
+                      "R2",
+                      "R3",
+                      "R4",
+                      "R5",
+                      "R6"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "count",
+                "rounds"
+              ],
+              "additionalProperties": false
+            },
+            "volume_surge": {
+              "type": "object",
+              "properties": {
+                "count": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "rounds": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "R1",
+                      "R2",
+                      "R3",
+                      "R4",
+                      "R5",
+                      "R6"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "count",
+                "rounds"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "relative_strength",
+            "steady_trend",
+            "volume_surge"
+          ],
+          "additionalProperties": false
+        },
+        "frequent": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "relative_strength",
+              "steady_trend",
+              "volume_surge"
+            ]
+          }
+        },
+        "coverage_limited": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "relative_strength",
+              "steady_trend",
+              "volume_surge"
+            ]
+          }
+        }
+      },
+      "required": [
+        "by_family",
+        "frequent",
+        "coverage_limited"
+      ],
+      "additionalProperties": false
+    },
+    "decision_chains": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "round_id": {
+            "type": "string",
+            "enum": [
+              "R1",
+              "R2",
+              "R3",
+              "R4",
+              "R5",
+              "R6"
+            ]
+          },
+          "looked_at": {
+            "maxItems": 2,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "fox",
+                "elephant",
+                "leopard"
+              ]
+            }
+          },
+          "explains": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "card": {
+                  "type": "string",
+                  "enum": [
+                    "fox",
+                    "elephant",
+                    "leopard"
+                  ]
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "neutral",
+                    "directional"
+                  ]
+                }
+              },
+              "required": [
+                "card",
+                "kind"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "initial_reaction": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "supports",
+                  "refutes",
+                  "insufficient"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "supports",
+              "refutes",
+              "insufficient"
+            ]
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "follow",
+              "skip",
+              "wait"
+            ]
+          },
+          "followup": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "question": {
+                    "type": "string",
+                    "enum": [
+                      "missing",
+                      "basis",
+                      "waiting"
+                    ]
+                  },
+                  "answer": {
+                    "type": "string",
+                    "enum": [
+                      "comparison",
+                      "longer_history",
+                      "signal_validation",
+                      "future_trend",
+                      "more_opinions",
+                      "chart_unclear",
+                      "own_view",
+                      "main_chart",
+                      "opened_cards",
+                      "claim_itself",
+                      "intuition",
+                      "other",
+                      "skipped"
+                    ]
+                  }
+                },
+                "required": [
+                  "question",
+                  "answer"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "aligned": {
+            "type": "boolean"
+          },
+          "pattern_family": {
+            "type": "string",
+            "enum": [
+              "relative_strength",
+              "steady_trend",
+              "volume_surge"
+            ]
+          }
+        },
+        "required": [
+          "round_id",
+          "looked_at",
+          "explains",
+          "initial_reaction",
+          "verdict",
+          "action",
+          "followup",
+          "aligned",
+          "pattern_family"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "trading_view": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "refers_to": {
+            "type": "string",
+            "enum": [
+              "O1",
+              "O2",
+              "O3",
+              "O4",
+              "O5",
+              "action_profile",
+              "backed_families"
+            ]
+          },
+          "template_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scope_rounds": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "R1",
+                "R2",
+                "R3",
+                "R4",
+                "R5",
+                "R6"
+              ]
+            }
+          },
+          "reads_as": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "refers_to",
+          "template_id",
+          "scope_rounds"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "recommendation": {
+      "type": "object",
+      "properties": {
+        "task": {
+          "type": "string",
+          "enum": [
+            "A",
+            "B"
+          ]
+        },
+        "rule": {
+          "type": "string",
+          "enum": [
+            "R-A1",
+            "R-A2",
+            "R-B",
+            "R-B-progress"
+          ]
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "topic": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "cheetah",
+                "elephant",
+                "fox"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "topic_source": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "user",
+                "focus",
+                "bet",
+                "style",
+                "only_available"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "topic_sources": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "user",
+              "focus",
+              "bet",
+              "style",
+              "only_available"
+            ]
+          }
+        },
+        "topic_conflict": {
+          "type": "boolean"
+        },
+        "assist": {
+          "type": "string",
+          "enum": [
+            "guide",
+            "hint",
+            "solo"
+          ]
+        },
+        "guess_first": {
+          "type": "boolean"
+        },
+        "reason_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reason_text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "use": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "real",
+                  "sample",
+                  "planned_reference",
+                  "not_implemented"
+                ]
+              },
+              "url": {
+                "type": "string",
+                "format": "uri"
+              }
+            },
+            "required": [
+              "name",
+              "use",
+              "status"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "task",
+        "rule",
+        "steps",
+        "topic",
+        "topic_source",
+        "topic_sources",
+        "topic_conflict",
+        "assist",
+        "guess_first",
+        "reason_id",
+        "resources"
+      ],
+      "additionalProperties": false
+    },
+    "settlement": {
+      "type": "object",
+      "properties": {
+        "start": {
+          "type": "number"
+        },
+        "balance": {
+          "type": "number"
+        },
+        "rounds": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "round_id": {
+                "type": "string",
+                "enum": [
+                  "R1",
+                  "R2",
+                  "R3",
+                  "R4",
+                  "R5",
+                  "R6"
+                ]
+              },
+              "action": {
+                "type": "string",
+                "enum": [
+                  "follow",
+                  "skip",
+                  "wait"
+                ]
+              },
+              "chips_delta": {
+                "type": "number"
+              },
+              "hypothetical_delta": {
+                "type": "number"
+              },
+              "settlement_note": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "round_id",
+              "action",
+              "chips_delta",
+              "hypothetical_delta"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "counterfactual": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "start",
+        "balance",
+        "rounds",
+        "counterfactual"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "rules_version",
+    "provenance",
+    "style",
+    "observations",
+    "help_preference",
+    "progress",
+    "unknowns",
+    "action_profile",
+    "backed_families",
+    "decision_chains",
+    "trading_view",
+    "recommendation"
+  ],
+  "additionalProperties": false
+}

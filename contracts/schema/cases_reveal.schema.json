@@ -1,0 +1,401 @@
+{
+  "title": "cases_reveal：揭晓后部分",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "header": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "next-card/data@v0.3"
+            },
+            {
+              "type": "string",
+              "format": "starts_with",
+              "pattern": "^draft.*"
+            }
+          ]
+        },
+        "script": {
+          "type": "string",
+          "minLength": 1
+        },
+        "script_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rules_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        "data_as_of": {
+          "type": "string",
+          "pattern": "^\\d{8}$"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "apis": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "benchmark": {
+          "type": "string",
+          "minLength": 1
+        },
+        "adjustment": {
+          "type": "string",
+          "minLength": 1
+        },
+        "dividends": {
+          "type": "string",
+          "minLength": 1
+        },
+        "normalization": {
+          "type": "string",
+          "minLength": 1
+        },
+        "selection": {
+          "type": "string",
+          "minLength": 1
+        },
+        "public_scope": {
+          "type": "string",
+          "minLength": 1
+        },
+        "file": {
+          "type": "string",
+          "pattern": "^cases_reveal(_R[1-6])?$"
+        },
+        "pool": {
+          "type": "string",
+          "minLength": 1
+        },
+        "volume": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timing": {
+          "type": "object",
+          "properties": {
+            "decision": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reveal_entry": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reveal_exit": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "decision",
+            "reveal_entry",
+            "reveal_exit"
+          ],
+          "additionalProperties": false
+        },
+        "windows": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "filters": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        "exclusions": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "sample": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "schema",
+        "script",
+        "script_version",
+        "rules_version",
+        "generated_at",
+        "data_as_of",
+        "source",
+        "apis",
+        "benchmark",
+        "adjustment",
+        "dividends",
+        "normalization",
+        "selection",
+        "public_scope",
+        "file",
+        "pool",
+        "volume",
+        "timing",
+        "windows",
+        "filters",
+        "exclusions",
+        "sample"
+      ],
+      "additionalProperties": {}
+    },
+    "rounds": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "round_id": {
+            "type": "string",
+            "enum": [
+              "R1",
+              "R2",
+              "R3",
+              "R4",
+              "R5",
+              "R6"
+            ]
+          },
+          "after": {
+            "type": "object",
+            "properties": {
+              "offsets": {
+                "type": "array",
+                "prefixItems": [
+                  {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                ],
+                "items": false,
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "close": {
+                "minItems": 2,
+                "type": "array",
+                "items": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              },
+              "open_t1": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "close_t20": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "return_close_t_to_close_t20": {
+                "type": "number"
+              },
+              "return_open_t1_to_close_t20": {
+                "type": "number"
+              },
+              "t1_open_at_limit_up": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "offsets",
+              "close",
+              "open_t1",
+              "close_t20",
+              "return_close_t_to_close_t20",
+              "return_open_t1_to_close_t20",
+              "t1_open_at_limit_up"
+            ],
+            "additionalProperties": false
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "symbol": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "decision_date": {
+                "type": "string",
+                "pattern": "^\\d{8}$"
+              },
+              "windows": {
+                "type": "object",
+                "properties": {
+                  "fox": {
+                    "type": "array",
+                    "prefixItems": [
+                      {
+                        "type": "string",
+                        "pattern": "^\\d{8}$"
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^\\d{8}$"
+                      }
+                    ],
+                    "items": false,
+                    "minItems": 2,
+                    "maxItems": 2
+                  },
+                  "elephant": {
+                    "type": "array",
+                    "prefixItems": [
+                      {
+                        "type": "string",
+                        "pattern": "^\\d{8}$"
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^\\d{8}$"
+                      }
+                    ],
+                    "items": false,
+                    "minItems": 2,
+                    "maxItems": 2
+                  },
+                  "leopard": {
+                    "type": "array",
+                    "prefixItems": [
+                      {
+                        "type": "string",
+                        "pattern": "^\\d{8}$"
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^\\d{8}$"
+                      }
+                    ],
+                    "items": false,
+                    "minItems": 2,
+                    "maxItems": 2
+                  },
+                  "after": {
+                    "type": "array",
+                    "prefixItems": [
+                      {
+                        "type": "string",
+                        "pattern": "^\\d{8}$"
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^\\d{8}$"
+                      }
+                    ],
+                    "items": false,
+                    "minItems": 2,
+                    "maxItems": 2
+                  }
+                },
+                "required": [
+                  "fox",
+                  "elephant",
+                  "leopard",
+                  "after"
+                ],
+                "additionalProperties": false
+              },
+              "benchmark": {
+                "type": "string",
+                "minLength": 1
+              },
+              "claim": {
+                "type": "string",
+                "minLength": 1
+              },
+              "evidence_verdict": {
+                "type": "string",
+                "enum": [
+                  "supports",
+                  "refutes",
+                  "insufficient"
+                ]
+              },
+              "checks": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "selection": {
+                "type": "string",
+                "minLength": 1
+              },
+              "hindsight_disclosure": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "symbol",
+              "name",
+              "decision_date",
+              "windows",
+              "benchmark",
+              "claim",
+              "evidence_verdict",
+              "checks",
+              "selection",
+              "hindsight_disclosure"
+            ],
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "round_id",
+          "after",
+          "source"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "header",
+    "rounds"
+  ],
+  "additionalProperties": false
+}

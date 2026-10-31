@@ -1,0 +1,288 @@
+{
+  "title": "cases_visible：决策时可见部分",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "header": {
+      "type": "object",
+      "properties": {
+        "schema": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "next-card/data@v0.3"
+            },
+            {
+              "type": "string",
+              "format": "starts_with",
+              "pattern": "^draft.*"
+            }
+          ]
+        },
+        "file": {
+          "type": "string",
+          "const": "cases_visible"
+        },
+        "script_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rules_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "schema",
+        "file",
+        "script_version",
+        "rules_version",
+        "note"
+      ],
+      "additionalProperties": false
+    },
+    "rounds": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "round_id": {
+            "type": "string",
+            "enum": [
+              "R1",
+              "R2",
+              "R3",
+              "R4",
+              "R5",
+              "R6"
+            ]
+          },
+          "act": {
+            "anyOf": [
+              {
+                "type": "number",
+                "const": 1
+              },
+              {
+                "type": "number",
+                "const": 2
+              }
+            ]
+          },
+          "label": {
+            "type": "string",
+            "pattern": "^[A-F]$"
+          },
+          "claim": {
+            "type": "string",
+            "minLength": 1
+          },
+          "cards": {
+            "type": "object",
+            "properties": {
+              "fox": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "offsets": {
+                    "type": "array",
+                    "prefixItems": [
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      }
+                    ],
+                    "items": false,
+                    "minItems": 2,
+                    "maxItems": 2
+                  },
+                  "asset": {
+                    "minItems": 2,
+                    "type": "array",
+                    "items": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    }
+                  },
+                  "benchmark": {
+                    "minItems": 2,
+                    "type": "array",
+                    "items": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    }
+                  },
+                  "benchmark_name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "asset_return": {
+                    "type": "number"
+                  },
+                  "benchmark_return": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "title",
+                  "offsets",
+                  "asset",
+                  "benchmark",
+                  "benchmark_name",
+                  "asset_return",
+                  "benchmark_return"
+                ],
+                "additionalProperties": false
+              },
+              "elephant": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "offsets": {
+                    "type": "array",
+                    "prefixItems": [
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      }
+                    ],
+                    "items": false,
+                    "minItems": 2,
+                    "maxItems": 2
+                  },
+                  "series": {
+                    "minItems": 2,
+                    "type": "array",
+                    "items": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    }
+                  },
+                  "cum_return": {
+                    "type": "number"
+                  },
+                  "max_drawdown": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                },
+                "required": [
+                  "title",
+                  "offsets",
+                  "series",
+                  "cum_return",
+                  "max_drawdown"
+                ],
+                "additionalProperties": false
+              },
+              "leopard": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "offsets": {
+                    "type": "array",
+                    "prefixItems": [
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      }
+                    ],
+                    "items": false,
+                    "minItems": 2,
+                    "maxItems": 2
+                  },
+                  "close": {
+                    "minItems": 2,
+                    "type": "array",
+                    "items": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    }
+                  },
+                  "day_return": {
+                    "type": "array",
+                    "items": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    }
+                  },
+                  "volume_ratio": {
+                    "type": "array",
+                    "items": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "title",
+                  "offsets",
+                  "close",
+                  "day_return",
+                  "volume_ratio"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "fox",
+              "elephant",
+              "leopard"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "round_id",
+          "act",
+          "label",
+          "claim",
+          "cards"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "header",
+    "rounds"
+  ],
+  "additionalProperties": false
+}
