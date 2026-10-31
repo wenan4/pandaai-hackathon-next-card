@@ -1,10 +1,12 @@
 // 任务 A「同一起点，再比一次」、画像更新、任务 B「换一段数据，还成立吗？」
-import { ASSIST_COPY, OBS_COPY, STATUS_COPY } from "../../config/copy";
-import { AVAILABLE_TOPICS } from "../../config/engine";
+import { ASSIST_COPY, CHANGE_REASON, OBS_COPY, STATUS_COPY, TASK_STATUS_COPY } from "../../config/copy";
+import { AVAILABLE_TOPICS, ENGINE_CONFIG } from "../../config/engine";
 import type { TaskAData, TaskBData } from "../../data/cases";
+import { eventsBeforeTask, profileChanges } from "../../engine/changes";
+import { evaluate } from "../../engine/evaluate";
 import { compareToBenchmark, maxDrawdown, periodReturn } from "../../engine/metrics";
 import { answerKey, type TaskBAnswer } from "../../engine/taskB";
-import type { AssistLevel } from "../../engine/types";
+import type { AssistLevel, ObsInstance } from "../../engine/types";
 import { emit, go, update, type State, type TaskAUI, type TaskBUI } from "../../state/store";
 import { lineChart } from "../chart";
 import { footer, label, topbar } from "../components";
@@ -298,6 +300,29 @@ function segmentCard(d: TaskBData, seg: "display" | "test"): HTMLElement {
   );
 }
 
+/** 两段并排：三列，手机上不需要横向滚动。 */
+function compareCard(d: TaskBData): HTMLElement {
+  const rows: [string, (seg: "display" | "test") => string][] = [
+    ["信号组收益为正", (seg) => pct1(d[seg].signal_group.primary_metric)],
+    ["基准组收益为正", (seg) => pct1(d[seg].baseline_group.primary_metric)],
+    // 单位写在下方说明里，窄屏上不折行
+    ["差值", (seg) => { const v = d[seg].delta; return v === null ? "—" : `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}`; }],
+    ["达到阈值", (seg) => (d[seg].meets_threshold === null ? "暂不判断" : d[seg].meets_threshold ? "达到" : "未达到")],
+  ];
+  return h(
+    "section",
+    { class: "paper stack", style: "gap:6px" },
+    h("h2", { style: "color:var(--ink)" }, "两段并排"),
+    h(
+      "table",
+      { class: "btable" },
+      h("thead", null, h("tr", null, h("th", { style: "width:38%" }, ""), h("th", null, SEG_NAME.display), h("th", null, SEG_NAME.test))),
+      h("tbody", null, rows.map(([k, f]) => h("tr", null, h("th", { scope: "row" }, k), h("td", { class: "mono" }, f("display")), h("td", { class: "mono" }, f("test"))))),
+    ),
+    h("p", { class: "xs", style: "color:var(--ink-2)" }, `差值 = 信号组 − 基准组，单位是百分点；高出至少 ${(d.header.thresholds.advantage_margin * 100).toFixed(0)} 个百分点，才算这一段达到。`),
+  );
+}
+
 function ruleCard(d: TaskBData, locked: boolean): HTMLElement {
   const hd = d.header;
   const rows: [string, string][] = [
@@ -417,6 +442,7 @@ export function taskBScreen(s: State, d: TaskBData): HTMLElement {
       ? h("section", { class: "stack" }, h("p", { class: "xs muted" }, "检验段在这之前没有给你看过，用的是同样的规则。"), h("button", { class: "btn-line", onclick: openTest }, "打开检验段"))
       : null,
     t.testOpened ? segmentCard(d, "test") : null,
+    t.testOpened ? compareCard(d) : null,
     t.testOpened
       ? h(
           "section",
@@ -451,9 +477,26 @@ export function taskBScreen(s: State, d: TaskBData): HTMLElement {
   );
 }
 
+/** 画像变化的一行：前 → 后，下面列出新增证据作为原因。 */
+function changeRow(title: string, from: string, to: string, why: ObsInstance[] | string[]): HTMLElement {
+  const items = why.map((w) =>
+    typeof w === "string"
+      ? h("li", null, w)
+      : h("li", null, CHANGE_REASON[`${w.rule}@${w.context}`] ?? "新增一条证据", h("span", { class: "muted" }, ` · 规则 ${w.rule}${w.assisted ? " · 在帮助下" : ""}`)),
+  );
+  return h(
+    "div",
+    { class: "stack", style: "gap:4px;padding-top:8px;border-top:1px solid var(--line)" },
+    h("span", { class: "small bold" }, title),
+    h("span", { class: "small" }, from === to ? `仍是“${to}”，新增了证据` : `${from} → `, from === to ? null : h("b", null, to)),
+    items.length ? h("ul", { class: "xs text-2", style: "margin:0;padding-left:18px" }, items) : null,
+  );
+}
+
 function taskBDoneScreen(s: State, d: TaskBData): HTMLElement {
   const { profile } = currentProfile(s);
-  const done = profile.task_observations.O5.find((i) => i.outcome === "consistent");
+  // 任务前的画像：同一份记录截到任务 B 的第一条事件之前重算
+  const ch = profileChanges(evaluate(eventsBeforeTask(s.events, "B"), ENGINE_CONFIG).profile, profile);
   const v = d.verdict;
   const verdictText = {
     insufficient_evidence: "样本不够，暂不判断",
@@ -469,9 +512,15 @@ function taskBDoneScreen(s: State, d: TaskBData): HTMLElement {
     h(
       "section",
       { class: "panel stack" },
-      h("div", { class: "row" }, h("span", { class: "xs muted bold", style: "width:24px" }, "O5"), h("h2", { class: "grow" }, "在给定规则下比较两段样本")),
-      h("p", null, done ? (done.assisted ? "本次在帮助下完成" : "本次独立完成") : "本次未完成"),
-      h("p", { class: "xs muted" }, "这只说明你能按给定规则读两段样本，不代表会自己设计回测。"),
+      h("h2", null, "画像有什么变化"),
+      h("p", { class: "xs muted" }, "任务前的画像由同一份记录截到任务开始前重算，再和现在逐项比较。"),
+      changeRow("O5 在给定规则下比较两段样本", TASK_STATUS_COPY[ch.O5.before], TASK_STATUS_COPY[ch.O5.after], ch.O5.added),
+      ...ch.changed.map((c) => changeRow(`${c.id} ${OBS_COPY[c.id]}`, STATUS_COPY[c.before], STATUS_COPY[c.after], c.added)),
+      ch.help ? changeRow("协助档位", ASSIST_COPY[ch.help.before].label, ASSIST_COPY[ch.help.after].label, [profile.help_preference.source === "user" ? "你在任务里换过档位" : "按本局用过的帮助推断"]) : null,
+      ch.unchanged.length
+        ? h("p", { class: "xs text-2", style: "padding-top:8px;border-top:1px solid var(--line)" }, `${ch.unchanged.map((id) => `${id} ${OBS_COPY[id]}`).join("、")}：没有变化。`)
+        : null,
+      h("p", { class: "xs muted" }, "O5 只说明你能按给定规则读两段样本，不代表会自己设计回测。"),
     ),
     h("section", { class: "panel stack" }, h("h2", null, "这两段数据支持的观察"), h("p", { class: "small" }, `${verdictText}。`), h("p", { class: "xs muted" }, "只描述这两段样本，不回答这条规则以后是否有效。")),
     h(

@@ -58,7 +58,17 @@ export const STATUS_COPY: Record<ObsStatus, string> = {
   not_observed: "未观察到",
 };
 
-export const SPECIES_COPY: Record<Species, { name: string; method: string; helps: string; watch: string }> = {
+/** 任务记录的状态（engine/changes.ts 的 TaskStatus） */
+export const TASK_STATUS_COPY = { none: "未开始", recorded: "未完成", done: "独立完成", assisted: "在帮助下完成" } as const;
+
+/** 任务后画像变化的原因，按“规则@情境”取；没有对应文案时只显示规则编号。 */
+export const CHANGE_REASON: Record<string, string> = {
+  "O5-t@taskB": "按锁定的规则读完两段样本，结论和依据都和数据一致",
+  "O5-r@taskB": "有一次作答和数据对不上：只记录，不扣分",
+  "O4-a@taskB": "先猜的答案和数据冲突，看完两段后改成了和数据一致的结论",
+};
+
+export const SPECIES_COPY: Record<Species,{ name: string; method: string; helps: string; watch: string }> = {
   fox: { name: "狐狸", method: "先找参照", helps: "检查说法里的“更多、更好”到底是和谁比。", watch: "参照选错了，结论也会跟着偏。" },
   elephant: { name: "大象", method: "先看长远", helps: "检查一段走势放到更长时间里是不是常态。", watch: "窗口太长会冲淡最近的变化。" },
   leopard: { name: "猎豹", method: "先看信号", helps: "检查最近有没有不寻常的量价变化。", watch: "一次信号不等于之后的走势。" },
