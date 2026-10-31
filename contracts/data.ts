@@ -289,13 +289,15 @@ export const TaskBHeaderSchema = z.looseObject({
     advantage_margin: Pct,
     frozen_at: z.iso.datetime(),
   }),
+  /** 同股票池、同分段、同窗口与完整性规则，但不按信号（包括其反面）筛选。 */
   baseline_rule: z.string().min(1),
+  /** 信号组与基准组分别应用相同的不重叠规则。 */
   non_overlap_rule: z.string().min(1),
   exclusions: z.array(z.string().min(1)).min(1),
   limitations: z.array(z.string().min(1)).min(1),
 });
 
-/** 一组（信号组或基准组）在一个分段里的统计。0 次触发时指标为 null，不除以零、不用 0% 冒充。 */
+/** 一组在一个分段里的统计。无样本或指标缺失时用 null 保留未知，不用 0% 冒充。 */
 export const GroupStatsSchema = z
   .strictObject({
     n_records: z.number().int().min(0),
@@ -308,9 +310,6 @@ export const GroupStatsSchema = z
   .superRefine((g, ctx) => {
     if (g.n_records === 0 && (g.primary_metric !== null || g.mean_return !== null)) {
       ctx.addIssue({ code: "custom", path: ["primary_metric"], message: "0 条记录时指标必须为 null" });
-    }
-    if (g.n_records > 0 && g.primary_metric === null) {
-      ctx.addIssue({ code: "custom", path: ["primary_metric"], message: "有记录时必须给出主指标" });
     }
     if (g.n_symbols > g.n_records) ctx.addIssue({ code: "custom", path: ["n_symbols"], message: "标的数不能超过记录数" });
   });
@@ -349,12 +348,19 @@ export const TaskBVerdictSchema = z
     }
   });
 
-/** 判定逻辑本身（先查数据，再查阈值）由 YOU-153 实现并配 check_taskB.py；这里只固定形状。 */
+/** 缺指标必须降级；数据充分时的阈值判定由 YOU-153 实现并配 check_taskB.py。 */
 export const TaskBDataSchema = z.strictObject({
   header: TaskBHeaderSchema,
   display: SegmentStatsSchema,
   test: SegmentStatsSchema,
   verdict: TaskBVerdictSchema,
+}).superRefine((data, ctx) => {
+  const missing = [data.display, data.test].some(
+    (segment) => segment.signal_group.primary_metric === null || segment.baseline_group.primary_metric === null,
+  );
+  if (missing && data.verdict.result !== "insufficient_evidence") {
+    ctx.addIssue({ code: "custom", path: ["verdict", "result"], message: "任一组缺主指标时结论必须为 insufficient_evidence" });
+  }
 });
 
 // ───────────────────────── 前端装载边界 ─────────────────────────

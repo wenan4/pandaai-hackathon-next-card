@@ -85,6 +85,7 @@ settle(decisions, outcomes) → settlement                                  独�
 ```
 
 - `profile.observations`：O1–O3 按“能力项 + 情境 ID”各记一条，再给聚合结论，两条原始记录都保留，不平均、不加权。O4 记 N（可比较机会）、M（调整次数）及规则编号，三者必须自洽。
+- O5 与局内情境共用帮助归因校验：`observed` 必须对应 `assistance=none`，`assisted` 必须有实际帮助暴露；不能把看过答案后的完成记为独立完成。
 - `action_profile`、`backed_families`、`decision_chains`、`trading_view` 只来自 `decision` 与 `final_assessment`，不含任何松果或收益数字；不进入能力、物种或路线规则。
 - `backed_families` 只允许被 `recommend` 用于任务 B 的默认主题（PRD §5.2 第 3 条）。
 - `trading_view` 每条必须指回一个观察或习惯字段（`refers_to`）并带限定轮次。
@@ -101,6 +102,10 @@ settle(decisions, outcomes) → settlement                                  独�
 
 文件头必填项：脚本与版本、生成时间、数据截止日、实际调用的接口名、基准、复权和分红口径、归一化、筛选与采样规则、公开展示范围。`cases_reveal` 另有股票池、成交量口径、信号/执行/退出时间、筛选阈值、排除规则、样本数；`taskB` 另有信号定义与参数、主指标、执行、股票池快照与偏差、展示段/检验段边界、阈值与冻结时间、基线与不重叠规则、局限。
 
+任务 B 即使已有样本，主指标缺失时也保留 `null`；对应分段的 `delta` 和 `meets_threshold` 必须为 `null`，整份文件的结论必须为 `insufficient_evidence`。没有样本时仍禁止用 0% 冒充统计。数据充分时的阈值判定由数据脚本负责。
+
+基准组按同股票池、同分段、同持有窗口和完整性规则枚举，**不按信号筛选，也不只取不满足信号的样本**；信号组与基准组各自执行相同的不重叠规则。示例数字仍是人工占位，不能当作真实结果。
+
 ## JSON Schema
 
 ```bash
@@ -108,7 +113,7 @@ node scripts/export-json-schema.mjs           # 重新生成 contracts/schema/
 node scripts/export-json-schema.mjs --check   # 只检查是否落后于 TS
 ```
 
-JSON Schema 表达不了 `superRefine` 里的跨字段规则（O4 的 N/M 与规则编号、`ready_for_B = S1 && S2`、`TaskB` 的 0 条记录指标为 `null`、事件序列的 `event_id` 唯一与阶段匹配等）。这些规则只在 zod 校验器里生效。Python 数据脚本如果要校验这些，需要用 TS 校验器，或者在脚本里自己重写。
+导出的 JSON Schema 不包含 `superRefine` 里的跨字段校验（O4 的 N/M 与规则编号、完成状态与帮助归因、`ready_for_B = S1 && S2`、任务 B 的缺失指标与降级结论、事件序列的 `event_id` 唯一与阶段匹配等）。这些规则只在 zod 校验器里生效。Python 数据脚本如果要校验这些，需要用 TS 校验器，或者在脚本里自己重写。
 
 ## 与 PRD / 已有实现的差异
 

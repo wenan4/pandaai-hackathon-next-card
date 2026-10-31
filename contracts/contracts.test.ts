@@ -21,6 +21,7 @@ import {
   TaskADataSchema,
   TaskBDataSchema,
   type GameEvent,
+  type TaskBData,
 } from "./index";
 
 const clone = <T>(x: T): T => structuredClone(x);
@@ -185,6 +186,24 @@ describe("结构化输出", () => {
     expect(issues(StructuredResultSchema.safeParse(bad)).some((m) => m.includes("只能记 assisted"))).toBe(true);
   });
 
+  it.each(["directional_explain", "hint", "demo", "answer_feedback"])("O5 看过 %s 后只能记为有帮助完成", (assistance) => {
+    const o5 = { id: "O5", state: "observed", rule: "O5-a", evidence_event_ids: ["taskB:submit"], assistance };
+    const output = { ...clone(result), observations: [...clone(result.observations), o5] };
+    output.progress.taskB_done = true;
+    expect(issues(StructuredResultSchema.safeParse(output)).some((m) => m.includes("只能记 assisted"))).toBe(true);
+    o5.state = "assisted";
+    expect(issues(StructuredResultSchema.safeParse(output))).toEqual([]);
+  });
+
+  it("O5 没有帮助暴露时可独立完成，但不能声称在帮助下完成", () => {
+    const o5 = { id: "O5", state: "observed", rule: "O5-a", evidence_event_ids: ["taskB:submit"], assistance: "none" };
+    const output = { ...clone(result), observations: [...clone(result.observations), o5] };
+    output.progress.taskB_done = true;
+    expect(issues(StructuredResultSchema.safeParse(output))).toEqual([]);
+    o5.state = "assisted";
+    expect(issues(StructuredResultSchema.safeParse(output)).some((m) => m.includes("assisted 必须有对应的帮助暴露"))).toBe(true);
+  });
+
   it("拒绝 uncertain 缺少原因", () => {
     const bad = clone(result);
     const o1 = bad.observations[0] as { scenarios: { state: string }[] };
@@ -276,11 +295,43 @@ describe("任务 B 数据文件", () => {
     bad.test.signal_group.n_records = 0;
     bad.test.signal_group.n_symbols = 0;
     expect(TaskBDataSchema.safeParse(bad).success).toBe(false);
-    const ok = clone(taskBElephant) as unknown as { test: { signal_group: Record<string, unknown>; delta: null; meets_threshold: null } };
+    const ok: TaskBData = TaskBDataSchema.parse(clone(taskBElephant));
     Object.assign(ok.test.signal_group, { n_records: 0, n_symbols: 0, primary_metric: null, mean_return: null, covered: null });
     ok.test.delta = null;
     ok.test.meets_threshold = null;
+    ok.verdict = { result: "insufficient_evidence" };
     expect(issues(TaskBDataSchema.safeParse(ok))).toEqual([]);
+  });
+
+  it.each([
+    ["display", "signal_group"],
+    ["display", "baseline_group"],
+    ["test", "signal_group"],
+    ["test", "baseline_group"],
+  ] as const)("%s 的 %s 有样本但缺主指标时必须降级为证据不足", (segment, group) => {
+    const data: TaskBData = TaskBDataSchema.parse(clone(taskBElephant));
+    data[segment][group].primary_metric = null;
+    data[segment][group].mean_return = null;
+    data[segment].delta = null;
+    data[segment].meets_threshold = null;
+    data.verdict = { result: "insufficient_evidence" };
+    expect(data[segment][group].n_records).toBeGreaterThan(0);
+    expect(issues(TaskBDataSchema.safeParse(data))).toEqual([]);
+
+    // 缺指标不等于差值为零，也不能先作出“达到／未达到”的结论。
+    for (const verdict of [
+      { result: "both_segments" },
+      { result: "segment_difference", only_segment: "display" },
+      { result: "no_observed_advantage" },
+    ] as const) {
+      expect(issues(TaskBDataSchema.safeParse({ ...data, verdict })).some((m) => m.includes("insufficient_evidence"))).toBe(true);
+    }
+    const withDelta = clone(data);
+    withDelta[segment].delta = 0;
+    expect(TaskBDataSchema.safeParse(withDelta).success).toBe(false);
+    const withThreshold = clone(data);
+    withThreshold[segment].meets_threshold = false;
+    expect(TaskBDataSchema.safeParse(withThreshold).success).toBe(false);
   });
 
   it("segment_difference 必须注明是哪一段", () => {

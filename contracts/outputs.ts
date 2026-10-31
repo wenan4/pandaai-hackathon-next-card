@@ -38,6 +38,19 @@ const Counted = z.strictObject({ count: z.number().int().min(0), rounds: z.array
 /** 本局帮助暴露里最强的一种；none 表示独立完成。 */
 export const AssistanceSchema = z.enum(["none", "directional_explain", "hint", "demo", "answer_feedback"]);
 
+/** 局内与任务中的完成证据共用同一帮助归因约束。 */
+function checkAssistance(
+  o: { state: z.infer<typeof ObsStatusSchema>; assistance: z.infer<typeof AssistanceSchema> },
+  ctx: z.RefinementCtx,
+): void {
+  if (o.state === "observed" && o.assistance !== "none") {
+    ctx.addIssue({ code: "custom", path: ["assistance"], message: "接触过方向性提示 / 示范 / 答案反馈后只能记 assisted，不能记 observed" });
+  }
+  if (o.state === "assisted" && o.assistance === "none") {
+    ctx.addIssue({ code: "custom", path: ["assistance"], message: "assisted 必须有对应的帮助暴露" });
+  }
+}
+
 /** 能力项在一个情境里的状态（情境层）。 */
 export const ObservationInstanceSchema = z
   .strictObject({
@@ -59,12 +72,7 @@ export const ObservationInstanceSchema = z
     if (o.state !== "uncertain" && o.uncertain_reason) {
       ctx.addIssue({ code: "custom", path: ["uncertain_reason"], message: "只有 uncertain 才有原因" });
     }
-    if (o.state === "observed" && o.assistance !== "none") {
-      ctx.addIssue({ code: "custom", path: ["assistance"], message: "接触过方向性提示 / 示范 / 答案反馈后只能记 assisted，不能记 observed" });
-    }
-    if (o.state === "assisted" && o.assistance === "none") {
-      ctx.addIssue({ code: "custom", path: ["assistance"], message: "assisted 必须有对应的帮助暴露" });
-    }
+    checkAssistance(o, ctx);
   });
 
 /** O1–O3：按“能力项 + 情境 ID”各记一条，再跨情境聚合；聚合不平均、不加权，两条原始记录都保留。 */
@@ -112,7 +120,7 @@ export const O5ObservationSchema = z.strictObject({
   rule: RuleIdSchema,
   evidence_event_ids: EventIds,
   assistance: AssistanceSchema,
-});
+}).superRefine(checkAssistance);
 
 export const ObservationSchema = z.discriminatedUnion("id", [CrossScenarioObservationSchema, O4ObservationSchema, O5ObservationSchema]);
 
