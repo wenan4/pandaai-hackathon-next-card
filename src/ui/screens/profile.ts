@@ -5,11 +5,12 @@ import { ROUNDS } from "../../config/rounds";
 import { evaluate } from "../../engine/evaluate";
 import { actionHabits, betTopic, FREQUENT_BET_THRESHOLD, type DecisionChain } from "../../engine/habits";
 import { recommend } from "../../engine/recommend";
+import { structuredResult } from "../../engine/result";
 import { collectRound } from "../../engine/rounds";
 import type { ObsId, ObsInstance, Plan, Profile } from "../../engine/types";
 import { go, update, type State } from "../../state/store";
 import { footer, label, statusPill, topbar } from "../components";
-import { h } from "../dom";
+import { downloadJson, h } from "../dom";
 import { icon } from "../icons";
 
 const OBS: ObsId[] = ["O1", "O2", "O3", "O4"];
@@ -20,6 +21,11 @@ export function currentProfile(s: State) {
   // 行动习惯只用来给任务 B 选默认主题，不进入能力观察
   const habits = actionHabits(s.events, ROUNDS);
   return { profile, progress, habits, plan: recommend(profile, progress, AVAILABLE_TOPICS, { betTopic: betTopic(habits) }) };
+}
+
+function exportResult(s: State): void {
+  if (!confirm("导出的文件包含你这一局的选择记录（不含姓名等个人信息），请自行保管。继续导出吗？")) return;
+  downloadJson("next-card-result", structuredResult(s.events, ENGINE_CONFIG, AVAILABLE_TOPICS, { kind: "user_session" }, UNKNOWN_YET));
 }
 
 /** 换成交易语言来看 + 你的下一步习惯。只描述本局，不评高低，不影响能力观察。 */
@@ -145,6 +151,7 @@ export function profileScreen(s: State): HTMLElement {
     tradingView(s, profile),
     planCard(plan, profile),
     h("button", { class: "btn-line", onclick: () => go("basis") }, "看每条观察的依据"),
+    h("button", { class: "btn-text", onclick: () => exportResult(s) }, "导出结构化结果（JSON）"),
     footer(),
   );
 }

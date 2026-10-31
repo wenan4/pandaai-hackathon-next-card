@@ -1,17 +1,18 @@
 // 评委面板（?judge=1）：预设路径或当前体验记录 → 字段编辑 → 分叉重算 → 前后差异并列。
 // 所有结果都来自同一套 evaluate / recommend / settle，面板里没有规则的第二份实现。
-import { ACTION_COPY, CARD_COPY, FOLLOWUP_COPY, OBS_COPY, STATUS_COPY, VERDICT_COPY } from "../config/copy";
+import { ACTION_COPY, CARD_COPY, FOLLOWUP_COPY, OBS_COPY, STATUS_COPY, UNKNOWN_YET, VERDICT_COPY } from "../config/copy";
 import { AVAILABLE_TOPICS, ENGINE_CONFIG } from "../config/engine";
 import { ROUNDS } from "../config/rounds";
 import { evaluate } from "../engine/evaluate";
 import { eventsFromSpecs, type RoundSpec } from "../engine/paths";
 import { recommend } from "../engine/recommend";
+import { structuredResult } from "../engine/result";
 import { collectRound, followupFor } from "../engine/rounds";
 import { flipOutcomes, settle } from "../engine/settle";
 import type { Action, Card, GameEvent, ObsId, Verdict } from "../engine/types";
 import { getState } from "../state/store";
 import { label } from "../ui/components";
-import { h } from "../ui/dom";
+import { downloadJson, h } from "../ui/dom";
 import { PRESETS } from "./presets";
 import { runChecks, type CheckResult } from "./checks";
 import { forkEvents } from "./replay";
@@ -233,7 +234,7 @@ export function renderPanel(): HTMLElement {
       h(
         "section",
         { class: "panel stack", style: "flex:1 1 420px;min-width:0" },
-        h("h2", null, "profile / progress JSON"),
+        h("div", { class: "row" }, h("h2", { class: "grow" }, "profile / progress JSON"), h("button", { class: "btn-line", style: "width:auto;min-height:36px;font-size:13px", onclick: () => downloadJson("next-card-result", structuredResult(shown.events, ENGINE_CONFIG, AVAILABLE_TOPICS, simulated ? { kind: "simulated_path", path_id: PRESETS.find((p) => p.id === ps.baseline)?.name } : { kind: "user_session" }, UNKNOWN_YET)) }, "导出结构化结果")),
         h("pre", { class: "xs mono", style: "max-height:420px;overflow:auto;margin:0;color:var(--text-2)" }, JSON.stringify({ profile: shown.profile, progress: shown.progress }, null, 2)),
       ),
     ),
