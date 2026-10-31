@@ -8,7 +8,7 @@ PandaAI「苏客松」赛道作品。三轮翻牌短决策，从用户怎样找�
 
 ## 环境要求
 
-- Node.js ≥ 20（开发用 24）
+- Node.js 24（`.node-version` 与 CI、Cloudflare Pages 保持一致）
 - 离线取数：Python 3.11 / 3.12，以及 Panda Data 账号（只放本地 `.env`，不进仓库）
 
 ## 前端
@@ -75,13 +75,34 @@ npm run check:secrets   # 扫描所有 git 跟踪的文件，看有没有 .env �
 
 ## 部署
 
-GitHub Pages，用 GitHub Actions 部署（`.github/workflows/deploy.yml`）：推送 `main` 后跑测试和构建（含 `dist/` 密钥扫描），通过后发布 `dist/`。PR 上由 `.github/workflows/ci.yml` 跑同样的检查，但不部署。
+使用 **Cloudflare Pages 原生 Git 集成**。连接私有仓库 `wenan4/pandaai-hackathon-next-card` 后，`main` 更新自动发布生产版本，其他分支生成独立预览。GitHub Actions 只运行 CI；不再使用 GitHub Pages 的部署任务、权限或环境。
 
-- 线上地址：<https://wenan4.github.io/pandaai-hackathon-next-card/>
-- 评委面板：<https://wenan4.github.io/pandaai-hackathon-next-card/?judge=1>
+### 一次性接入
 
-> 以上地址是 GitHub Pages 的默认地址。要等首次部署成功后，才能确认在手机上实际可以打开。
+在 [Cloudflare Workers & Pages](https://dash.cloudflare.com/?to=/:account/workers-and-pages) 创建 Pages 项目，选择导入 Git 仓库；若提示连接 GitHub，将 Cloudflare Workers & Pages 应用的仓库权限限定为本仓库。配置如下：
 
-仓库是私有的，但 Pages 站点公开，评委不需要访问仓库。启用 Pages 只需做一次：仓库 Settings → Pages → Source 选 **GitHub Actions**。私有仓库的 Pages 需要账号是 GitHub Pro 或团队套餐。
+| 设置 | 值 |
+|---|---|
+| 项目名 | `pandaai-hackathon-next-card`（以创建成功后的名称为准） |
+| 生产分支 | `main` |
+| 框架预设 | None |
+| 根目录 | 仓库根目录 |
+| 构建系统 | v3 |
+| 构建命令 | `npm ci && npm run build:pages` |
+| 输出目录 | `dist` |
+| Node.js | 根目录 `.node-version` 指定的 24 |
+| 环境变量（Production 和 Preview） | `SKIP_DEPENDENCY_INSTALL=1`，由构建命令执行锁定依赖安装 |
+| 分支控制 | 开启 `main` 自动生产部署；其他分支开启预览 |
+| PR 评论 | 关闭；部署状态和预览地址从 Cloudflare 查看 |
 
-`vite.config.ts` 里 `base: "./"`，资源和数据都按相对路径加载，换成 Cloudflare Pages 等根路径托管也不用改代码。
+`build:pages` 依次执行测试、类型检查、构建、产物密钥扫描和仓库密钥扫描；任何一步失败都会以非零状态结束，Pages 不会发布该提交。`.github/workflows/ci.yml` 在 PR 和 `main` 上运行相同检查。只有 `dist/` 会发布；不上传源码、文档、Python 环境或取数凭据。Cloudflare 无需 Panda Data 账号，也无需在 GitHub Secrets 中保存 Cloudflare API Token。
+
+### 上线状态与验收
+
+**尚未上线（2026-10-31）**：Cloudflare 插件连接已验证，但创建 Git 集成项目时返回 `8000011`（Pages Git installation 不可用），账号中尚无本项目。需完成或修复上述 GitHub 仓库授权，再创建项目。此处暂不提供未经验证的 `pages.dev` 地址。
+
+首次部署成功后，在 Deployments 中确认生产部署对应 `main` 的提交，并验证手机首页、字体、静态 JSON 与 `?judge=1` 评委面板；再将实际正式地址和评委入口补入本节。PR／分支预览地址不得作为正式地址，预览部署不得覆盖生产版本。
+
+仓库保持私有，发布的 Pages 网站公开；无账号系统，无需测试账号。`vite.config.ts` 使用 `base: "./"`，资源和数据按相对路径加载，可直接部署在 Pages 根路径。
+
+配置依据：[Git 集成](https://developers.cloudflare.com/pages/configuration/git-integration/)、[构建配置](https://developers.cloudflare.com/pages/configuration/build-configuration/)、[构建环境与版本覆盖](https://developers.cloudflare.com/pages/configuration/build-image/)。

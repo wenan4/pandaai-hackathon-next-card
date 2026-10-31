@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite --host",
     "build": "tsc --noEmit && vite build && node scripts/check-secrets.mjs dist",
+    "build:pages": "npm test && npm run lint && npm run build && npm run check:secrets",
     "preview": "vite preview --host",
     "test": "vitest run",
     "test:watch": "vitest",

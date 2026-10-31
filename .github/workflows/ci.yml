@@ -1,8 +1,10 @@
-# PR 检查：测试 → 类型检查 → 构建（含 dist/ 密钥扫描）
+# PR 和 main 检查；网站发布由 Cloudflare Pages 原生 Git 集成负责。
 name: CI
 
 on:
   pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -15,11 +17,8 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: 24
+          node-version-file: .node-version
           cache: npm
       - run: npm ci
-      - run: npm test
-      - run: npm run lint
-      - run: npm run build
-      # 扫描所有 git 跟踪的文件里有没有 JWT；CI 没有 .env，所以不查真实值
-      - run: npm run check:secrets
+      # 与 Pages 共用发布前检查；失败时 Pages 不会发布该提交。
+      - run: npm run build:pages
