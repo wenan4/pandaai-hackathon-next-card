@@ -9,6 +9,7 @@
 
 - 修订规格：[PRD v0.4.1](docs/PRD-v0.4.md)，§17 明确知识、研究过程、兴趣、学习需求和任务后画像更新。
 - 实际验证：[MVP 验证记录](docs/MVP-VERIFICATION.md)。未通过浏览器验证的能力不作为完成声明。
+- 演示流程与本地视频：[4分45秒功能演示说明](docs/DEMO-WALKTHROUGH.md)，包含实际操作、模拟分叉及数据核对，不作为真人试玩。
 - 美术与生成提示：[美术来源](docs/adventure-art.md)。本次生成原创插画，用户已指定明亮、亲切的大众视觉方向。
 - 数据口径：[冒险数据说明](docs/adventure-data.md)。只发布派生数据，前端不需要 Panda Data 账号。
 - 安装与运行：`npm ci`、`npm run dev`；发布检查：`npm run build:pages`。

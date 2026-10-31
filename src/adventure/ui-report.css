@@ -1,0 +1,50 @@
+.report-page { display: grid; gap: 10px; max-width: 880px; margin: 0 auto; padding-top: 18px; }
+.report-page > .panel { padding: 16px 19px; }
+.report-hero { background: linear-gradient(115deg, rgba(255,252,240,.98), rgba(242,249,230,.96)); }
+.report-hero-top, .report-section-heading { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.report-hero h1 { margin-top: 4px; color: #426a4d; font-size: clamp(1.48rem, 4.5vw, 2rem); }
+.report-hero > .hint { margin-top: 5px; font-size: .82rem; }
+.report-stats { margin-top: 7px; color: #526a53; font-size: .78rem; font-weight: 700; }
+.report-page h2 { color: #45694d; font-size: 1.05rem; }
+.report-section-heading .fineprint { white-space: nowrap; }
+.report-highlight-list, .report-observation-list { list-style: none; margin: 9px 0 0; padding: 0; }
+.report-highlight-list { display: grid; gap: 8px; }
+.report-highlight-list li { display: flex; gap: 10px; align-items: start; }
+.report-highlight-number { display: grid; place-items: center; flex: 0 0 27px; height: 27px; border-radius: 9px; background: #edf3df; color: #789065; font: 700 .7rem "IBM Plex Mono", monospace; }
+.report-highlight-list strong { display: block; color: #516a4d; font-size: .81rem; }
+.report-highlight-list p, .report-observation-list li { color: #657667; font-size: .78rem; line-height: 1.48; }
+.report-observation-list { display: grid; gap: 5px; }
+.report-observation-list li { border-left: 2px solid #b2c7a2; padding-left: 9px; }
+.report-observations > .hint, .report-highlights > .hint { margin-top: 6px; font-size: .8rem; }
+.report-knowledge { margin-top: 12px; padding-top: 9px; border-top: 1px solid #e7eadb; }
+.report-knowledge h3 { color: #66806a; font-size: .79rem; }
+.report-knowledge-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; margin-top: 6px; }
+.report-knowledge-list > div { min-width: 0; padding: 7px 9px; border-radius: 9px; background: #f1f6e9; }
+.report-knowledge-list span, .report-knowledge-list strong { display: block; line-height: 1.4; }
+.report-knowledge-list span { color: #71816f; font-size: .68rem; }
+.report-knowledge-list strong { margin-top: 2px; color: #4a6b51; font-size: .73rem; }
+.report-knowledge > .fineprint { margin-top: 5px; line-height: 1.35; }
+.report-next { display: flex; align-items: center; justify-content: space-between; gap: 15px; background: #fff8e5; }
+.report-next h2 { margin-top: 4px; }
+.report-next .hint { margin-top: 5px; font-size: .77rem; line-height: 1.45; }
+.report-next .button { flex: 0 0 auto; }
+.report-page > .report-more { padding: 0 19px; }
+.report-disclosure { border-top: 1px solid #e6e8d9; padding: 0; }
+.report-disclosure:first-child { border-top: 0; }
+.report-disclosure > summary { display: flex; min-height: 45px; align-items: center; justify-content: space-between; gap: 12px; }
+.report-disclosure > summary::after { float: none; margin-left: auto; }
+.report-disclosure > :not(summary) { margin-top: 0; margin-bottom: 13px; }
+.report-disclosure > .button { margin-top: 8px; }
+.report-expanded { padding: 5px 0 8px; }
+.report-expanded > .panel { box-shadow: none; }
+.report-expanded h3 { color: #526e55; font-size: .9rem; }
+.report-actions { padding: 2px 0 12px; }
+@media (max-width: 540px) {
+  .report-page { gap: 8px; padding-top: 12px; }
+  .report-page > .panel { padding: 13px 15px; }
+  .report-page > .report-more { padding: 0 15px; }
+  .report-next { align-items: stretch; flex-direction: column; gap: 9px; }
+  .report-next .button { width: 100%; }
+  .report-knowledge-list { gap: 5px; }
+  .report-knowledge-list > div { padding: 6px 7px; }
+}

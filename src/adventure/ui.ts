@@ -3,16 +3,17 @@ import { h, type Child } from "../ui/dom";
 import { createRun, forkRun, pendingMarketStep, reduceRun } from "./engine";
 import { CARDS, ENEMIES } from "./content";
 import { loadMarketInitial, loadMarketInitialCase, loadMarketStage, loadResearchCase, type MarketInitialCase, type MarketManifest } from "./market";
-import { addUserReason, compareSchedule, compareSelfForecast, declarePriorExposure, emptyResearchProfile, markHistoryHelp, recommendResearch, revokeResearch, setHelpPreference, setResearchGoal, showHistoryEvidence, startHistory, submitHistory, updateJourney, type Direction, type Goal, type HelpPreference, type Reason, type ResearchProfile } from "./research";
+import { addUserReason, compareSchedule, compareSelfForecast, declarePriorExposure, emptyResearchProfile, markHistoryHelp, recommendResearch, revokeResearch, setHelpPreference, setResearchGoal, showHistoryEvidence, startHistory, submitHistory, updateJourney, type Direction, type Goal, type HelpPreference, type ResearchProfile } from "./research";
 import type { Run, RunAction } from "./types";
-import { button, coins, dateText, deckSummary, details, moneyHistory, note, pill } from "./ui-components";
+import { button, coins, dateText, pill } from "./ui-components";
 import { gameView, nodeNames } from "./ui-game";
 import { ResearchUI } from "./ui-research";
 import { makeDemoPath } from "./ui-demo";
 import { mergeFundingExposures, parseFundingExposureArchive, type FundingExposureArchive } from "./ui-exposure";
-import { researchSummary } from "./ui-report";
+import { reportView } from "./ui-report";
 import { casesAreRelated, chooseAdventureCase, hasSeenRelatedCase, independentBattleSeed } from "./ui-case";
 import { CalibrationDemoUI } from "./ui-calibration-demo";
+import { dataInfoContent } from "./ui-data-info";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const SAVE_KEY = "nextcard:adventure:v0.4";
@@ -290,8 +291,7 @@ function settings(): void {
   showDialog("旅程与隐私设置", body, [button("完成", closeDialog, "secondary")]);
 }
 function dataInfo(): void {
-  const source = manifest ? h("div", { class: "stack" }, h("p", { class: "hint" }, manifest.source), h("p", { class: "hint" }, `数据截至 ${manifest.dataAsOf}；${manifest.adjustment}`), h("p", { class: "hint" }, manifest.selection), ...manifest.limitations.map((item) => h("p", { class: "fineprint" }, item))) : h("p", { class: "hint" }, "数据目录尚未加载。可返回后重试。\n");
-  showDialog("关于这段历史", h("div", { class: "stack" }, source, h("p", { class: "hint" }, "契约使用历史派生价格；起点与未来分段加载。每次回收按下一可用开盘报价执行。静态数据分段旨在避免误用，不是保密机制。固定历史样本不代表未来表现或现实投资建议。")), [button("知道了", closeDialog, "secondary")]);
+  showDialog("关于这段历史", dataInfoContent(manifest, run), [button("知道了", closeDialog, "secondary")]);
 }
 function topbar(): HTMLElement {
   return h("header", { class: "topbar" }, h("button", { type: "button", class: "brand", onclick: () => changeScreen("intro"), "aria-label": "回到冒险首页" }, h("span", { class: "brand-mark", "aria-hidden": "true" }, "灯"), h("span", null, h("span", { class: "brand-name" }, "下一张牌"), h("span", { class: "brand-sub" }, "A LITTLE JOURNEY"))),
@@ -312,22 +312,9 @@ function preferencePanel(): HTMLElement {
     h("p", { class: "hint strong" }, "希望怎样获得帮助？"), h("p", { class: "fineprint" }, help ? "任务会使用你选择的帮助方式；随时可以调整。" : "尚未选择。进入任务后可查看建议，再决定是否使用帮助。"), h("div", { class: "selection-row" }, ([ ["self", "自主尝试"], ["hint", "给我提示"], ["step", "分步说明"] ] as const).map(([id, label]) => h("button", { type: "button", class: `choice${help === id ? " selected" : ""}`, "aria-pressed": String(help === id), "data-focus-key": `preference-help-${id}`, onclick: () => { setProfile(setHelpPreference(profile, uid("help"), id as HelpPreference)); if (modal) showDialog("目标与帮助（可跳过）", preferencePanel(), [button("完成", closeDialog, "secondary")]); } }, label))));
 }
 function report(): HTMLElement {
-  const current = run!; const rec = recommendResearch(profile); const active = current.status === "active"; const ending = active ? "营地里的小发现" : current.status === "cleared" ? "灯火已点亮" : current.status === "returned" ? "带着收获返程" : "旅程暂时停在这里";
-  const observations = profile.journey_observations.slice(0, 2);
-  const reasonEvidence = profile.journey_observations[0]?.evidence_ids[0];
-  const reasonSelect = h("select", { "aria-label": "补充我的原因" }, h("option", { value: "" }, "选择一个原因"), h("option", { value: "upgrade" }, "想留钱升级"), h("option", { value: "not_understood" }, "有些规则没看懂"), h("option", { value: "not_interested" }, "暂时不感兴趣"), h("option", { value: "autonomous" }, "想自主尝试"), h("option", { value: "other" }, "其他或不确定"));
-  return h("div", { class: "app-shell" }, topbar(), h("main", { class: "page-grid", id: "main-content" }, h("div", { class: "main-column" },
-    h("section", { class: "panel report-intro" }, h("div", { class: "report-seal", "aria-hidden": "true" }, "灯"), h("div", { class: "eyebrow" }, active ? "A PAUSE IN THE JOURNEY" : "JOURNEY COMPLETE"), h("h1", null, ending), h("p", null, active ? "先看看这一路留下的线索，也可以试一个短练习。完成后随时回到营地继续冒险。" : current.status === "cleared" ? "你带着一路收集的卡牌与选择，完成了守灯者的挑战。" : current.status === "returned" ? "每条归途都有意义。你可以回看这一段旅程，再决定下一步。" : "这一局的战斗到此结束，带走的发现仍然属于你。"), current.source !== "real" ? pill("模拟演示", "gold") : null),
-    h("section", { class: "panel stack" }, h("h2", null, active ? "目前的牌组" : "这一趟的牌组"), h("p", { class: "hint" }, `${active ? "当前生命" : "最终生命"} ${current.hp}/${current.maxHp} · ${current.deck.length} 张牌 · 可用金币 ${coins(current.wallet.cashCents)}`), deckSummary(current), details("查看金币往来", moneyHistory(current))),
-    profile.enabled ? h("section", { class: "panel stack" }, h("div", { class: "panel-head" }, h("div", null, h("h2", null, "本局观察"), h("p", { class: "hint" }, "只描述这次实际发生的选择，不给人贴标签。"))), observations.length ? observations.map((item) => h("div", { class: "observation" }, h("strong", null, item.text), h("p", null, item.limitations.join("；")))) : h("p", { class: "hint" }, "还没有足够的经营选择可供描述。你仍可自选研究起点。"),
-      details("查看依据与边界", h("div", { class: "stack" }, profile.journey_observations.map((item) => h("p", { class: "hint" }, `${item.text} 依据：${item.evidence_ids.join("、")}。${item.limitations.join("；")}。`)), h("p", { class: "hint" }, "现实财务承受能力未评估；单次游戏不能建立稳定交易类型。"))), researchUI.calibrationReport(),
-      reasonEvidence ? details("补充我的原因", h("p", { class: "hint" }, "你的补充会作为新记录保留，不改写原来发生的事。"), reasonSelect, button("保存补充", () => { const value = reasonSelect.value as Reason | ""; if (!value) { flash("请选择一个原因。"); return; } setProfile(addUserReason(profile, uid("reason"), reasonEvidence, value)); flash("已保存你的补充。"); }, "small secondary")) : null) : note("你选择了只玩游戏。旅程仍可回顾，也可以不保存观察地试试下面的练习。"),
-    profile.enabled ? researchSummary(profile) : null,
-    profile.enabled ? preferencePanel() : null,
-    h("section", { class: "panel stack" }, h("div", { class: "eyebrow" }, "WHAT NEXT"), h("h2", null, "带着问题再走一步"), h("p", { class: "hint" }, profile.enabled ? rec.reason : "两个练习都可以尝试，过程不会保存为人物观察。"), profile.enabled ? h("p", { class: "fineprint" }, rec.help_reason) : null,
-      h("div", { class: "route-grid" }, h("div", { class: "route-card" }, h("div", { class: "task-title" }, h("span", { class: "task-badge" }, "D1"), h("h3", null, "资金安排台")), h("p", { class: "hint" }, "调整参与金额和回收比例，看看途中哪些采购仍能支付。"), button(rec.task_id === "D1" && profile.enabled ? "从这里开始 · 推荐" : "打开资金安排台", () => changeScreen("d1"), "secondary")),
-        h("div", { class: "route-card" }, h("div", { class: "task-title" }, h("span", { class: "task-badge" }, "D2"), h("h3", null, "历史对照台")), h("p", { class: "hint" }, "先固定日程，再比较同期基准与另一段历史。"), button(rec.task_id === "D2" && profile.enabled ? "从这里开始 · 推荐" : "打开历史对照台", () => changeScreen("d2"), "secondary")))),
-    h("div", { class: "button-row" }, active ? button("返回营地", () => changeScreen("game"), "gold") : button("再来一局", () => askNewRun(profile.enabled), "gold"), active ? null : button("回到首页", () => changeScreen("intro"), "secondary"))), h("aside", { class: "side-column" }, h("section", { class: "panel stack" }, h("div", { class: "eyebrow" }, "YOUR NEXT STEP"), h("h3", null, "探索由你选择"), h("p", { class: "hint" }, profile.enabled ? rec.reason : "两个练习都可以自由尝试。"), h("p", { class: "fineprint" }, "可以随时更改目标与帮助方式。")))));
+  return reportView({ run: run!, profile, header: topbar(), preferences: profile.enabled ? preferencePanel() : null, calibration: profile.enabled ? researchUI.calibrationReport() : null,
+    openTask: (task) => changeScreen(task === "D1" ? "d1" : "d2"), resume: () => changeScreen("game"), newRun: () => askNewRun(profile.enabled), home: () => changeScreen("intro"),
+    saveReason: (evidenceId, reason) => { if (!reason) { flash("请选择一个原因。"); return; } setProfile(addUserReason(profile, uid("reason"), evidenceId, reason)); flash("已保存你的补充。"); } });
 }
 function judge(): HTMLElement {
   const current = run!;
