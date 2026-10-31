@@ -3,7 +3,8 @@
 处理三件 SDK 不替你做的事：
 - 单次请求跨度不超过 5 年 → 按 4 年一段切开再拼接；
 - 返回按日期倒序 → 统一按 (symbol, date) 升序；
-- 重复请求很慢 → 结果缓存到 scripts/cache/（已 gitignore），用参数哈希做文件名。删掉缓存文件即可强制重取。
+- 重复请求很慢 → 结果缓存到 scripts/cache/（已 gitignore），用参数哈希做文件名。删掉缓存文件即可强制重取；
+- 每分钟请求次数有上限 → 遇到“每分钟请求次数超限”时等 61 秒重试，最多 3 次。
 
 所有日期都是 YYYYMMDD 字符串。
 """
@@ -11,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from datetime import date, datetime, timedelta
 from typing import Callable, Iterable
 
@@ -30,6 +32,17 @@ def sdk():
     if _pd is None:
         _pd = login()
     return _pd
+
+
+def call(fn: str, **kwargs):
+    """调用 SDK 接口；遇到每分钟限流时等待后重试。"""
+    for attempt in range(4):
+        try:
+            return getattr(sdk(), fn)(**kwargs)
+        except Exception as e:  # noqa: BLE001
+            if "请求次数超限" not in str(e) or attempt == 3:
+                raise
+            time.sleep(61)
 
 
 def _d(s: str) -> date:
@@ -75,7 +88,7 @@ def _fetch_ranged(fn: str, symbols: list[str], start: str, end: str, date_col: s
         frames = []
         for batch in _batches(sorted(set(symbols)), SYMBOL_BATCH):
             for a, b in date_chunks(start, end):
-                df = getattr(sdk(), fn)(symbol=batch, start_date=a, end_date=b, **kw)
+                df = call(fn, symbol=batch, start_date=a, end_date=b, **kw)
                 if df is not None and len(df):
                     frames.append(df)
         if not frames:
@@ -100,7 +113,7 @@ def index_daily(symbols: list[str], start: str, end: str) -> pd.DataFrame:
 def index_members(index_symbol: str, on: str) -> list[str]:
     """某个交易日的指数成分股（点时）。"""
     def fetch():
-        df = sdk().get_index_weights(index_symbol=index_symbol, start_date=on, end_date=on)
+        df = call("get_index_weights", index_symbol=index_symbol, start_date=on, end_date=on)
         return df if df is not None else pd.DataFrame(columns=["stock_symbol"])
 
     df = _cached({"fn": "get_index_weights", "index": index_symbol, "on": on}, fetch)
@@ -109,7 +122,7 @@ def index_members(index_symbol: str, on: str) -> list[str]:
 
 def trade_days(start: str, end: str) -> list[str]:
     def fetch():
-        frames = [sdk().get_trade_cal(start_date=a, end_date=b, is_trading_day=1) for a, b in date_chunks(start, end)]
+        frames = [call("get_trade_cal", start_date=a, end_date=b, is_trading_day=1) for a, b in date_chunks(start, end)]
         return pd.concat(frames, ignore_index=True)
 
     df = _cached({"fn": "get_trade_cal", "start": start, "end": end}, fetch)
@@ -126,5 +139,18 @@ def st_flags(symbols: list[str], start: str, end: str) -> pd.DataFrame:
     return _fetch_ranged("get_st_list", symbols, start, end)
 
 
+def industry_membership(level: str = "L1") -> pd.DataFrame:
+    """申万（sws_2021）行业归属全量，含 in_date / out_date，可按日期还原点时归属。"""
+    return _cached({"fn": "get_industry_constituents", "level": level}, lambda: call("get_industry_constituents", level=level))
+
+
+def industry_on(membership: pd.DataFrame, symbol: str, on: str, level: str = "L1") -> str | None:
+    """某只股票在某个交易日所属的行业代码。"""
+    col = f"{level.lower()}_code"
+    m = membership[membership["stock_symbol"] == symbol]
+    m = m[(m["in_date"].astype(str) <= on) & (m["out_date"].isna() | (m["out_date"].astype(str) > on))]
+    return str(m[col].iloc[0]) if len(m) else None
+
+
 def last_trade_date() -> str:
-    return str(sdk().get_last_trade_date())
+    return str(call("get_last_trade_date"))

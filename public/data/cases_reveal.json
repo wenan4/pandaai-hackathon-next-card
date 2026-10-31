@@ -1,0 +1,328 @@
+{
+ "header": {
+  "schema": "draft（YOU-145 冻结前的临时格式）",
+  "script": "scripts/build_cases.py",
+  "script_version": "cases-0.1.0",
+  "rules_version": "v0.3",
+  "generated_at": "2026-10-31T07:34:50Z",
+  "data_as_of": "20261030",
+  "source": "Panda Data（panda_data 1.0.5）",
+  "apis": [
+   "get_stock_daily_pre",
+   "get_index_daily",
+   "get_index_weights",
+   "get_adj_factor",
+   "get_industry_constituents",
+   "get_trade_cal"
+  ],
+  "pool": "000300.SH + 000905.SH 在决策日 T 的点时成分",
+  "benchmark": "000300.SH 沪深300（筛选前固定）",
+  "adjustment": "前复权，以数据截止日为锚回算；区间收益不受锚点影响，但绝对价位不是当时的成交价",
+  "dividends": "前复权价已包含分红送转的影响（相当于分红再投资）",
+  "volume": "原始成交量（股），未复权；量比 = 当日量 ÷ 之前 20 个非停牌交易日均量（不含当日）",
+  "normalization": "每张卡的价格序列以窗口首日 = 100 归一化；揭晓走势以 T 日收盘 = 100",
+  "timing": {
+   "decision": "T 日收盘后",
+   "reveal_entry": "T+1 开盘",
+   "reveal_exit": "T+20 收盘"
+  },
+  "windows": {
+   "short": 60,
+   "long": 729,
+   "volume": 20,
+   "after": 20
+  },
+  "candidate_decision_days": {
+   "from": "20231101",
+   "to": "20260924",
+   "every_n_trading_days": 5,
+   "count": 142
+  },
+  "filters": {
+   "R1": {
+    "min_r60": 0.1,
+    "require_bench_higher": true,
+    "min_r3y": 0.0
+   },
+   "R2": {
+    "r60_range": [
+     0.0,
+     0.05
+    ],
+    "min_r3y": 0.0,
+    "max_mdd3y": 0.15
+   },
+   "R3": {
+    "vol_mult": 3.0,
+    "min_day_ret": 0.05,
+    "trigger_within": 3,
+    "max_abs_r3y": 0.15,
+    "max_bench_day_ret": 0.02,
+    "max_sector_day_ret": 0.02,
+    "split_factor": 1.1
+   }
+  },
+  "exclusions": [
+   "决策日停牌（trade_status ≠ 0）",
+   "历史不足 729 个交易日或揭晓窗口不足 20 个交易日",
+   "R3：量比回看窗口内有送转除权（ex_factor ≥ 1.1）",
+   "trade_status 为空时：有成交量视为正常交易，否则视为停牌"
+  ],
+  "sample": {
+   "R1": {
+    "evaluated": 108366,
+    "passed": 1311
+   },
+   "R2": {
+    "evaluated": 108366,
+    "passed": 145
+   },
+   "R3": {
+    "evaluated": 108366,
+    "passed": 261,
+    "passed_basic": 512
+   }
+  },
+  "selection": "每轮在通过条件的候选中按 T 日前 60 日平均成交额最高者自动选取；未参考 T 之后数据",
+  "industry_note": "申万一级归属取当前分类（接口不提供历史归属），映射到中证全指一级行业指数作为行业基准",
+  "public_scope": "尚未获得 PandaAI 公开展示许可的明确答复，暂按最保守方式处理：只发布归一化曲线与派生统计，不发布原始行情",
+  "file": "cases_reveal"
+ },
+ "rounds": [
+  {
+   "round_id": "R1",
+   "after": {
+    "offsets": [
+     0,
+     20
+    ],
+    "close": [
+     100.0,
+     98.8263,
+     98.8263,
+     99.8044,
+     98.3568,
+     99.374,
+     97.5352,
+     96.5962,
+     98.3177,
+     96.0094,
+     95.892,
+     95.8138,
+     95.1878,
+     94.1706,
+     91.1581,
+     91.6667,
+     91.6275,
+     91.3146,
+     91.1581,
+     91.5493,
+     90.3365
+    ],
+    "open_t1": 99.4131,
+    "close_t20": 90.3365,
+    "return_close_t_to_close_t20": -0.096635,
+    "return_open_t1_to_close_t20": -0.091303,
+    "t1_open_at_limit_up": false
+   },
+   "source": {
+    "symbol": "300059.SZ",
+    "name": "东方财富",
+    "decision_date": "20251103",
+    "windows": {
+     "fox": [
+      "20250801",
+      "20251103"
+     ],
+     "elephant": [
+      "20221031",
+      "20251103"
+     ],
+     "leopard": [
+      "20250926",
+      "20251103"
+     ],
+     "after": [
+      "20251104",
+      "20251201"
+     ]
+    },
+    "benchmark": "000300.SH 沪深300",
+    "claim": "过去这 60 个交易日，A 的涨幅高于这张卡指定的市场基准（沪深300）。",
+    "evidence_verdict": "refutes",
+    "checks": {
+     "r60": 0.103151,
+     "bench_r60": 0.147592,
+     "r3y": 0.983425,
+     "pass_r60_ge_10pct": true,
+     "pass_bench_higher": true,
+     "pass_r3y_up": true,
+     "pass": true
+    },
+    "selection": "在通过全部条件的候选中，按 T 日前 60 个交易日平均成交额最高者自动选取；三轮标的互不相同。",
+    "hindsight_disclosure": "选取只用 T 日及以前的数据，未参考 T 之后的走势。"
+   }
+  },
+  {
+   "round_id": "R2",
+   "after": {
+    "offsets": [
+     0,
+     20
+    ],
+    "close": [
+     100.0,
+     101.0244,
+     100.3886,
+     100.6711,
+     100.7418,
+     100.7771,
+     101.095,
+     101.0597,
+     100.4592,
+     100.106,
+     99.4702,
+     99.4348,
+     99.7174,
+     99.3995,
+     99.4702,
+     99.5761,
+     99.011,
+     98.693,
+     99.2229,
+     98.8343,
+     99.1522
+    ],
+    "open_t1": 100.0,
+    "close_t20": 99.1522,
+    "return_close_t_to_close_t20": -0.008478,
+    "return_open_t1_to_close_t20": -0.008478,
+    "t1_open_at_limit_up": false
+   },
+   "source": {
+    "symbol": "600900.SH",
+    "name": "长江电力",
+    "decision_date": "20251103",
+    "windows": {
+     "fox": [
+      "20250801",
+      "20251103"
+     ],
+     "elephant": [
+      "20221031",
+      "20251103"
+     ],
+     "leopard": [
+      "20250926",
+      "20251103"
+     ],
+     "after": [
+      "20251104",
+      "20251201"
+     ]
+    },
+    "benchmark": "000300.SH 沪深300",
+    "claim": "过去三年，B 总体上涨，而且从阶段高点往下最多跌了不到 15%。",
+    "evidence_verdict": "supports",
+    "checks": {
+     "r60": 0.011433,
+     "r3y": 0.537884,
+     "mdd3y": 0.131121,
+     "pass_r60_in_0_5pct": true,
+     "pass_r3y_up": true,
+     "pass_mdd_lt_15pct": true,
+     "pass": true
+    },
+    "selection": "在通过全部条件的候选中，按 T 日前 60 个交易日平均成交额最高者自动选取；三轮标的互不相同。",
+    "hindsight_disclosure": "选取只用 T 日及以前的数据，未参考 T 之后的走势。"
+   }
+  },
+  {
+   "round_id": "R3",
+   "after": {
+    "offsets": [
+     0,
+     20
+    ],
+    "close": [
+     100.0,
+     109.375,
+     108.1597,
+     104.6007,
+     106.5104,
+     110.2141,
+     118.6053,
+     115.9722,
+     118.0556,
+     116.8981,
+     109.7512,
+     103.1539,
+     100.6944,
+     102.5174,
+     100.9259,
+     111.0243,
+     109.1146,
+     112.8472,
+     120.081,
+     118.4028,
+     115.625
+    ],
+    "open_t1": 100.897,
+    "close_t20": 115.625,
+    "return_close_t_to_close_t20": 0.15625,
+    "return_open_t1_to_close_t20": 0.145971,
+    "t1_open_at_limit_up": false
+   },
+   "source": {
+    "symbol": "000063.SZ",
+    "name": "中兴通讯",
+    "decision_date": "20241218",
+    "windows": {
+     "fox": [
+      "20240918",
+      "20241218"
+     ],
+     "elephant": [
+      "20211215",
+      "20241218"
+     ],
+     "leopard": [
+      "20241120",
+      "20241218"
+     ],
+     "after": [
+      "20241219",
+      "20250116"
+     ]
+    },
+    "benchmark": "000300.SH 沪深300",
+    "claim": "20 个交易日后，C 的收盘价会高于今天。",
+    "evidence_verdict": "insufficient",
+    "checks": {
+     "r3y": 0.093382,
+     "pass_surge": true,
+     "pass_range_bound": true,
+     "pass_basic": true,
+     "trigger_date": "20241217",
+     "sw_l1": "801770",
+     "sector_index": "000994.SH",
+     "bench_day_ret": 0.002605,
+     "sector_day_ret": -0.008483,
+     "pass_bench_quiet": true,
+     "pass_sector_quiet": true,
+     "pass": true,
+     "surges": [
+      {
+       "date": "20241217",
+       "vol_ratio": 6.0059,
+       "day_ret": 0.057735
+      }
+     ]
+    },
+    "selection": "在通过全部条件的候选中，按 T 日前 60 个交易日平均成交额最高者自动选取；三轮标的互不相同。",
+    "hindsight_disclosure": "选取只用 T 日及以前的数据，未参考 T 之后的走势。",
+    "sector_index": "000994.SH 全指通信"
+   }
+  }
+ ]
+}
