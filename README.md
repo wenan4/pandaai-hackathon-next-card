@@ -75,15 +75,15 @@ npm run check:secrets   # 扫描所有 git 跟踪的文件，看有没有 .env �
 
 ## 部署
 
-使用 **Cloudflare Pages 原生 Git 集成**。连接私有仓库 `wenan4/pandaai-hackathon-next-card` 后，`main` 更新自动发布生产版本，其他分支生成独立预览。GitHub Actions 只运行 CI；不再使用 GitHub Pages 的部署任务、权限或环境。
+使用 **Cloudflare Pages 原生 Git 集成**，已连接私有仓库 `wenan4/pandaai-hackathon-next-card`。`main` 更新自动发布生产版本，其他分支生成独立预览。GitHub Actions 只运行 CI；不再使用 GitHub Pages 的部署任务、权限或环境。
 
-### 一次性接入
+### 部署配置
 
-在 [Cloudflare Workers & Pages](https://dash.cloudflare.com/?to=/:account/workers-and-pages) 创建 Pages 项目，选择导入 Git 仓库；若提示连接 GitHub，将 Cloudflare Workers & Pages 应用的仓库权限限定为本仓库。配置如下：
+在 [Cloudflare Workers & Pages](https://dash.cloudflare.com/?to=/:account/workers-and-pages) 中管理现有 Pages 项目，无需重复创建。Cloudflare Workers & Pages 应用已获得本仓库访问权限；配置如下：
 
 | 设置 | 值 |
 |---|---|
-| 项目名 | `pandaai-hackathon-next-card`（以创建成功后的名称为准） |
+| 项目名 | `pandaai-hackathon-next-card` |
 | 生产分支 | `main` |
 | 框架预设 | None |
 | 根目录 | 仓库根目录 |
@@ -91,7 +91,7 @@ npm run check:secrets   # 扫描所有 git 跟踪的文件，看有没有 .env �
 | 构建命令 | `npm ci && npm run build:pages` |
 | 输出目录 | `dist` |
 | Node.js | 根目录 `.node-version` 指定的 24 |
-| 环境变量（Production 和 Preview） | `SKIP_DEPENDENCY_INSTALL=1`，由构建命令执行锁定依赖安装 |
+| 环境变量（Production 和 Preview） | `NODE_VERSION=24` 与版本文件一致；`SKIP_DEPENDENCY_INSTALL=1`，由构建命令执行锁定依赖安装 |
 | 分支控制 | 开启 `main` 自动生产部署；其他分支开启预览 |
 | PR 评论 | 关闭；部署状态和预览地址从 Cloudflare 查看 |
 
@@ -99,9 +99,14 @@ npm run check:secrets   # 扫描所有 git 跟踪的文件，看有没有 .env �
 
 ### 上线状态与验收
 
-**尚未上线（2026-10-31）**：Cloudflare 插件连接已验证，但创建 Git 集成项目时返回 `8000011`（Pages Git installation 不可用），账号中尚无本项目。需完成或修复上述 GitHub 仓库授权，再创建项目。此处暂不提供未经验证的 `pages.dev` 地址。
+**已上线（2026-10-31）**：
 
-首次部署成功后，在 Deployments 中确认生产部署对应 `main` 的提交，并验证手机首页、字体、静态 JSON 与 `?judge=1` 评委面板；再将实际正式地址和评委入口补入本节。PR／分支预览地址不得作为正式地址，预览部署不得覆盖生产版本。
+- 正式体验：[下一张牌](https://pandaai-hackathon-next-card.pages.dev/)
+- 评委面板：[改变选择并实时重算](https://pandaai-hackathon-next-card.pages.dev/?judge=1)
+
+已在 360px 手机视口验证首页、第一轮、字体和静态数据加载，无横向溢出或浏览器报错。评委面板修改 R1 最终判断后，O1 与 O4 按规则重算并展示前后差异；未改动的行动对应代币余额保持不变。
+
+生产部署与 PR 分支预览均已成功，且预览没有替换生产部署。后续在 Pages 的 Deployments 中查看每次构建状态和对应 Git 提交；PR／分支预览地址不得作为正式地址。
 
 仓库保持私有，发布的 Pages 网站公开；无账号系统，无需测试账号。`vite.config.ts` 使用 `base: "./"`，资源和数据按相对路径加载，可直接部署在 Pages 根路径。
 
