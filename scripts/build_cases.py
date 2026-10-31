@@ -26,8 +26,9 @@ from pd_common import data  # noqa: E402
 from pd_common.client import REPO_ROOT  # noqa: E402
 from pd_common.metrics import max_drawdown, normalize, period_return  # noqa: E402
 
-SCRIPT_VERSION = "cases-0.1.1"
+SCRIPT_VERSION = "cases-0.1.2"
 RULES_VERSION = "v0.3"
+DATA_SCHEMA_ID = "next-card/data@v0.3"  # contracts/common.ts
 
 # ---------------------------------------------------------------- 冻结参数（筛选前固定）
 BENCHMARK = ("000300.SH", "沪深300")          # R1 指定基准，命题里写明
@@ -455,7 +456,7 @@ def export_round(c: Candidate, g: pd.DataFrame, bench_close: pd.Series) -> tuple
 
 def full_header(stats, t_days, as_of):
     return {
-        "schema": "draft（YOU-145 冻结前的临时格式）",
+        "schema": DATA_SCHEMA_ID,
         "script": "scripts/build_cases.py",
         "script_version": SCRIPT_VERSION,
         "rules_version": RULES_VERSION,
@@ -500,7 +501,7 @@ def export(chosen, groups, bench_close, stats, t_days, as_of):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     visible = {
         "header": {
-            "schema": "draft（YOU-145 冻结前的临时格式）",
+            "schema": DATA_SCHEMA_ID,
             "file": "cases_visible",
             "script_version": SCRIPT_VERSION,
             "rules_version": RULES_VERSION,

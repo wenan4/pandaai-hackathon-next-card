@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import contextlib
+from datetime import datetime, timezone
 import hashlib
 import io
 import json
@@ -25,7 +26,7 @@ from pd_common import data  # noqa: E402
 from pd_common.client import REPO_ROOT  # noqa: E402
 from pd_common.metrics import compare_to_benchmark, max_drawdown, normalize, period_return  # noqa: E402
 
-SCRIPT_VERSION = "taskA-0.1.1"
+SCRIPT_VERSION = "taskA-0.1.2"
 STEP2_CLAIM = "过去三年，D 总体上涨，而且从阶段高点往下最多跌了不到 15%。"
 STEP2_MAX_MDD = 0.15
 MIN_GAP_DAYS = 120  # D 的决策日与 A/B/C 至少相隔的交易日数，避免基准走势与第一幕重合到能凭记忆作答
@@ -136,11 +137,12 @@ def build():
 
     task = {
         "header": {
-            "schema": "draft（YOU-145 冻结前的临时格式）",
+            "schema": bc.DATA_SCHEMA_ID,
             "file": "taskA",
             "script": "scripts/build_taskA.py",
             "script_version": SCRIPT_VERSION,
             "rules_version": bc.RULES_VERSION,
+            "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "game_cases": game_binding,
             "data_as_of": as_of,
             "source": "Panda Data（panda_data 1.0.5）",

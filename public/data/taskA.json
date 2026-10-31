@@ -1,15 +1,16 @@
 {
  "header": {
-  "schema": "draft（YOU-145 冻结前的临时格式）",
+  "schema": "next-card/data@v0.3",
   "file": "taskA",
   "script": "scripts/build_taskA.py",
-  "script_version": "taskA-0.1.1",
+  "script_version": "taskA-0.1.2",
   "rules_version": "v0.3",
+  "generated_at": "2026-10-31T12:04:53Z",
   "game_cases": {
    "file": "cases_reveal.json",
-   "sha256": "a0b60c6325399ab8431d4db5d8e5ccb73ee0f4e1692a1894d36f68e0264573b3",
+   "sha256": "4bc9f82cf92ef6971b9e1a2de4b918c2923c1a920054609f7dc858717a70f26e",
    "hash_format": "canonical-json-utf8",
-   "script_version": "cases-0.1.1",
+   "script_version": "cases-0.1.2",
    "rules_version": "v0.3",
    "data_as_of": "20261030"
   },
