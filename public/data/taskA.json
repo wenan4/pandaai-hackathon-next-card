@@ -3,8 +3,16 @@
   "schema": "draft（YOU-145 冻结前的临时格式）",
   "file": "taskA",
   "script": "scripts/build_taskA.py",
-  "script_version": "taskA-0.1.0",
+  "script_version": "taskA-0.1.1",
   "rules_version": "v0.3",
+  "game_cases": {
+   "file": "cases_reveal.json",
+   "sha256": "a0b60c6325399ab8431d4db5d8e5ccb73ee0f4e1692a1894d36f68e0264573b3",
+   "hash_format": "canonical-json-utf8",
+   "script_version": "cases-0.1.1",
+   "rules_version": "v0.3",
+   "data_as_of": "20261030"
+  },
   "data_as_of": "20261030",
   "source": "Panda Data（panda_data 1.0.5）",
   "apis": [
@@ -22,7 +30,7 @@
    "step2": 729
   },
   "answers_computed_by": "scripts/pd_common/metrics.py（与 src/engine/metrics.ts 同一口径）",
-  "selection": "从第一幕 R1 / R2 条件的候选中，排除 A/B/C 的代码、申万一级行业，且决策日与 A/B/C 相隔至少 120 个交易日，按 T 日前 60 日平均成交额最高者自动选取；未参考 T 之后数据",
+  "selection": "从 R1 / R2 条件的候选中，排除已发布 cases_reveal.json 中 A/B/C 的代码、申万一级行业，且决策日与它们相隔至少 120 个交易日；行业未知或任务窗口不完整的候选不采用；按 T 日前 60 日平均成交额最高者自动选取，不按后续收益选案",
   "public_scope": "尚未获得 PandaAI 公开展示许可的明确答复，暂按最保守方式处理：只发布归一化曲线与派生统计"
  },
  "label": "D",

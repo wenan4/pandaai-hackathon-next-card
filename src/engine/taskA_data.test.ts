@@ -4,6 +4,16 @@ import { compareToBenchmark, maxDrawdown, periodReturn } from "./metrics";
 
 // 任务 A 的标准答案必须能由前端同一份 metrics.ts 从数据重算出来，不手写
 describe("任务 A 标准答案与引擎口径一致", () => {
+  it("对齐前后的标的和基准曲线都有完整的有限数值", () => {
+    for (const state of ["aligned", "unaligned"] as const) {
+      for (const key of ["asset", "benchmark"] as const) {
+        const series = taskA.step1[state][key];
+        expect(series).toHaveLength(taskA.header.windows.step1 + 1);
+        expect(series.every((v) => Number.isFinite(v) && v > 0)).toBe(true);
+      }
+    }
+  });
+
   it("步骤 1：对齐前后跑赢判断一致", () => {
     const { aligned, unaligned, answer } = taskA.step1;
     expect(compareToBenchmark(aligned.asset, aligned.benchmark)).toBe(answer);

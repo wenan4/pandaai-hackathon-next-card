@@ -1,5 +1,7 @@
 """任务 A 产物检查（YOU-152）：标准答案可由数据重算，D 与 A/B/C 不同。"""
 import json
+import hashlib
+import math
 import sys
 import unittest
 from pathlib import Path
@@ -24,6 +26,24 @@ class TaskAOutput(unittest.TestCase):
         abc = {r["source"]["symbol"] for r in self.cases["rounds"]}
         self.assertNotIn(self.task["source"]["symbol"], abc)
         self.assertEqual(sorted(abc), self.task["source"]["excluded"]["symbols"])
+        self.assertEqual(sorted(r["source"]["decision_date"] for r in self.cases["rounds"]),
+                         self.task["source"]["excluded"]["decision_dates"])
+
+    def test_game_binding_matches_published_artifact(self):
+        binding = self.task["header"]["game_cases"]
+        self.assertEqual(binding["file"], CASES_PATH.name)
+        canonical = json.dumps(self.cases, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        self.assertEqual(binding["sha256"], hashlib.sha256(canonical.encode("utf-8")).hexdigest())
+        self.assertEqual(binding["hash_format"], "canonical-json-utf8")
+        for key in ("script_version", "rules_version", "data_as_of"):
+            self.assertEqual(binding[key], self.cases["header"][key])
+
+    def test_industries_are_known_and_distinct(self):
+        source = self.task["source"]
+        self.assertTrue(source["sw_l1"])
+        self.assertTrue(source["excluded"]["industries"])
+        self.assertTrue(all(source["excluded"]["industries"]))
+        self.assertNotIn(source["sw_l1"], source["excluded"]["industries"])
 
     def test_step1_answer_recomputes(self):
         s1 = self.task["step1"]
@@ -42,7 +62,11 @@ class TaskAOutput(unittest.TestCase):
 
     def test_window_lengths(self):
         w = self.task["header"]["windows"]
-        self.assertEqual(len(self.task["step1"]["aligned"]["asset"]), w["step1"] + 1)
+        for state in ("aligned", "unaligned"):
+            for key in ("asset", "benchmark"):
+                values = self.task["step1"][state][key]
+                self.assertEqual(len(values), w["step1"] + 1)
+                self.assertTrue(all(math.isfinite(v) and v > 0 for v in values))
         self.assertEqual(len(self.task["step2"]["series"]), w["step2"] + 1)
 
 

@@ -29,17 +29,25 @@ def market_fixture():
     return days, t, frame, benchmark
 
 
-def scan_fixture(days, t, frame, benchmark):
+def scan_fixture(days, t, frame, benchmark, **scan_kwargs):
     loaded = (days, [t], {t: ["600001.SH"]}, frame.reset_index(),
               benchmark.rename_axis("date").reset_index(),
               pd.DataFrame(columns=["symbol", "date", "close"]),
               pd.DataFrame(columns=["symbol", "ex_factor", "ex_date"]))
     with patch.object(bc, "load", return_value=loaded), \
          patch.object(bc.data, "industry_membership", return_value=pd.DataFrame()):
-        return bc.scan()
+        return bc.scan(**scan_kwargs)
 
 
 class CalendarAndExecutionTests(unittest.TestCase):
+    def test_task_scan_preserves_r1_without_evaluating_r3(self):
+        days, t, frame, benchmark = market_fixture()
+        with patch.object(bc, "check_r3_basic", side_effect=AssertionError("R3 must not run")):
+            candidates, stats, *_ = scan_fixture(days, t, frame, benchmark, include_r3=False)
+        self.assertEqual(len(candidates["R1"]), 1)
+        self.assertEqual(candidates["R3"], [])
+        self.assertEqual(stats["R3"]["evaluated"], 0)
+
     def test_complete_candidate_uses_identical_screen_and_export_returns(self):
         days, t, frame, benchmark = market_fixture()
         candidates, *_ = scan_fixture(days, t, frame, benchmark)
