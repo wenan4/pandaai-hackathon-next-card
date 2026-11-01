@@ -103,6 +103,21 @@ describe("data source and revealed time boundaries", () => {
     expect(text).toContain("2025-03-07 · 第一段收盘参考（T0 后第 20 个交易日）（已展示报价）：0.869028");
     expect(text).not.toContain("2025-02-10");
   });
+  it.each([0, 50] as const)("labels a later additional purchase with %i percent sold", async (percent) => {
+    const fetch = setup();
+    let run = await makeCalibrationDemo();
+    run = reduceRun(run, { type: "submit-redemption", percent, additionalEntryCents: 1000 });
+    const pending = pendingMarketStep(run)!;
+    const pendingText = render(manifest, run);
+    expect(pendingText).not.toContain("新增投入 10 金币已成交");
+    run = reduceRun(run, { type: "apply-quote", quote: await loadMarketStage(pending.caseId, pending.stage, true) });
+    const calls = fetch.mock.calls.length;
+    const text = render(manifest, run);
+    expect(text).toContain("新增投入 10 金币已成交");
+    expect(text.includes("回收旧份额，并新增投入")).toBe(percent > 0);
+    expect(text).not.toContain("未回收份额，仅推进时间");
+    expect(fetch).toHaveBeenCalledTimes(calls);
+  });
 
   it("labels zero participation as advancing time, not a purchase", async () => {
     setup();

@@ -331,6 +331,10 @@ export function observeJourney(run: Pick<Run, "history" | "source" | "observatio
       out.push({ rule_id: "J2-01", source: run.source, scope: "one_decision", text: "本次打开了已取得的额外历史资料。", evidence_ids: [e.id], eligible_opportunities: 1, observed_choices: 1, limitations: ["打开不等于已经理解"] });
     }
     if (e.action === "submit-redemption" && typeof e.data.percent === "number") {
+      const additional = e.data.additionalEntryCents;
+      if (typeof additional === "number" && Number.isSafeInteger(additional) && additional >= 0 && Number.isSafeInteger(s.cashCents) && s.cashCents > 0 && additional <= s.cashCents) {
+        out.push({ rule_id: "J1-01", source: run.source, scope: "one_decision", text: `本营地选择追加 ${(additional / 100).toFixed(2)} 金币，预留后 ${( (s.cashCents - additional) / 100).toFixed(2)} 金币可用；回收款尚未到账。`, evidence_ids: [e.id], eligible_opportunities: 1, observed_choices: 1, limitations: ["仅描述本次安排", "选择原因未知"] });
+      }
       if (/^\d+$/.test(s.shareUnits) && BigInt(s.shareUnits) > 0n) out.push({ rule_id: "J3-01", source: run.source, scope: "one_decision", text: `展示当前状态后，选择回收 ${e.data.percent}% 的当时份额。`, evidence_ids: [e.id], eligible_opportunities: 1, observed_choices: 1, limitations: ["不推断感受或动机", "不能提前使用待到账金额"] });
       else out.push({ rule_id: "J0-00", source: run.source, scope: "one_decision", text: "当时没有契约份额，回收选项没有形成有区别的选择机会。", evidence_ids: [e.id], eligible_opportunities: 0, observed_choices: 0, limitations: ["只记录局内操作", "不推断偏好或能力"] });
     }
@@ -485,6 +489,8 @@ export function compareRecommendationPlans(before: RecommendationPlan, after: Re
 
 export type FundingEvent =
   | { id: string; label: string; kind: "entry-exec" }
+  | { id: string; label: string; kind: "additional-reserve"; amountCents: number }
+  | { id: string; label: string; kind: "additional-exec"; price: number; reserveId: string }
   | { id: string; label: string; kind: "income"; amountCents: number }
   | { id: string; label: string; kind: "purchase"; amountCents: number }
   | { id: string; label: string; kind: "reference"; price: number }
@@ -497,6 +503,8 @@ export interface FundingScenario {
   events: FundingEvent[];
   /** When the original run ended without shares, its automatic quote may not yet have been requested. */
   pendingFinal?: { stage: MarketStage; afterDate: string };
+  /** The existing order is still awaiting a game quote; D1 must not fetch or invent it. */
+  pendingAdditional?: { reserveId: string };
   /** A fixed external schedule, not a claim of the combat outcome of a changed game. */
   assumptions: string;
 }
@@ -515,7 +523,7 @@ export interface FundingRow {
 export interface FundingTimeline { rows: FundingRow[]; stoppedAt: string | null; pendingFinal: FundingScenario["pendingFinal"] | null; note: string }
 export interface FundingFeedback {
   target: { id: string; label: string; selected: boolean; actualCanPay: boolean; correct: boolean; cashBeforeCents: number; amountCents: number };
-  revised: { status: "completed" } | { status: "pending-final-quote" }
+  revised: { status: "completed" } | { status: "pending-final-quote" } | { status: "pending-additional-quote" }
     | { status: "blocked"; id: string; label: string; cashBeforeCents: number; amountCents: number; shortfallCents: number };
   revisedTarget: { status: "not-reached" }
     | { status: "reached"; cashBeforeCents: number; amountCents: number; canPay: boolean };
@@ -571,7 +579,8 @@ export function fundingQuestionKey(scenario: FundingScenario, purchaseId: string
   if (purchaseIndex < 0) throw new Error("题目中的采购节点不存在");
   const earlier = scenario.events.slice(0, purchaseIndex + 1);
   const facts = earlier.map((event) => {
-    if (event.kind === "income" || event.kind === "purchase") return { kind: event.kind, amountCents: event.amountCents };
+    if (event.kind === "income" || event.kind === "purchase" || event.kind === "additional-reserve") return { kind: event.kind, amountCents: event.amountCents };
+    if (event.kind === "additional-exec") return { kind: event.kind, price: event.price };
     if (event.kind === "reference") return { kind: event.kind, price: event.price };
     if (event.kind === "recovery") return { kind: event.kind, price: event.price, percent: event.automatic ? 100 : plan.recovery[event.id] ?? 0 };
     return { kind: event.kind };
@@ -617,6 +626,7 @@ export function simulateFundingPlan(scenario: FundingScenario, plan: FundingPlan
   let shares = "0";
   let lastPrice: number | null = null;
   let executed = false;
+  const additionalReservations = new Map<string, number>();
   const rows: FundingRow[] = [{ id: "entry", label: "预留参与金额，等待下一开盘", kind: "entry", cashBeforeCents: scenario.startingCashCents, cashCents: cash, shareUnits: shares, referenceValueCents: null, canPay: null, amountCents: plan.participationCents }];
   let stoppedAt: string | null = null;
   for (const e of scenario.events) {
@@ -628,6 +638,18 @@ export function simulateFundingPlan(scenario: FundingScenario, plan: FundingPlan
     if (e.kind === "purchase") {
       requireCents(e.amountCents); amount = e.amountCents; canPay = cash >= amount;
       if (canPay) cash -= amount; else stoppedAt = e.id;
+    }
+    if (e.kind === "additional-reserve") {
+      if (!executed) throw new Error("入场执行前不能追加参与");
+      requireCents(e.amountCents); amount = e.amountCents; canPay = cash >= amount;
+      if (canPay) { cash -= amount; additionalReservations.set(e.id, amount); } else stoppedAt = e.id;
+    }
+    if (e.kind === "additional-exec") {
+      const reserved = additionalReservations.get(e.reserveId);
+      if (reserved === undefined) throw new Error("追加参与缺少对应的预留金额");
+      validPrice(e.price); lastPrice = e.price; amount = reserved;
+      shares = (BigInt(shares) + BigInt(sharesForCents(reserved, e.price))).toString();
+      additionalReservations.delete(e.reserveId);
     }
     if (e.kind === "reference") { if (!executed) throw new Error("入场执行前不能展示未来参考报价"); validPrice(e.price); lastPrice = e.price; }
     if (e.kind === "recovery") {
@@ -643,12 +665,19 @@ export function simulateFundingPlan(scenario: FundingScenario, plan: FundingPlan
     if (stoppedAt) break;
   }
   let pendingFinal: FundingScenario["pendingFinal"] | null = null;
+  if (!stoppedAt && scenario.pendingAdditional) {
+    const reserved = additionalReservations.get(scenario.pendingAdditional.reserveId);
+    if (reserved === undefined || additionalReservations.size !== 1) throw new Error("待执行追加缺少对应的预留金额");
+    stoppedAt = "pending-additional-quote";
+    rows.push({ id: stoppedAt, label: "追加金额已预留，本次安排与新增份额等待下一开盘价", kind: "pending", cashBeforeCents: cash, cashCents: cash, shareUnits: shares, referenceValueCents: lastPrice === null ? null : centsForShares(shares, lastPrice), canPay: null, amountCents: reserved });
+  }
+  if (!stoppedAt && additionalReservations.size) throw new Error("追加参与缺少执行或待报价状态");
   if (!stoppedAt && BigInt(shares) > 0n && scenario.pendingFinal) {
     stoppedAt = "pending-final-quote";
     pendingFinal = scenario.pendingFinal;
     rows.push({ id: stoppedAt, label: "结束后仍有份额，等待下一可用执行报价，尚未到账", kind: "pending", cashBeforeCents: cash, cashCents: cash, shareUnits: shares, referenceValueCents: lastPrice === null ? null : centsForShares(shares, lastPrice), canPay: null, amountCents: 0 });
   }
-  return { rows, stoppedAt, pendingFinal, note: "固定外部收入与采购日程的账本练习；首次买不起或结算缺价时暂停，不推断改变选择后战斗仍会按原样发生。" };
+  return { rows, stoppedAt, pendingFinal, note: "固定外部收入、采购和已选追加金额的账本练习；现金不足或结算缺价时暂停，不预支未到账回收款，不推断改变选择后战斗仍会按原样发生。" };
 }
 
 export function submitFunding(profile: ResearchProfile, scenario: FundingScenario, submission: FundingSubmission): { profile: ResearchProfile; change: ProfileChange; recommendation: Recommendation; timeline: FundingTimeline; revisedTimeline: FundingTimeline; feedback: FundingFeedback } {
@@ -706,6 +735,7 @@ export function fundingScenarioFromRun(run: Run): { scenario: FundingScenario; p
     if (line.kind === "purchase") items.push({ at: ordinal(line.id) - 0.5, tie: i, event: { id: `ledger-${i}`, label: `实际采购：${line.description}`, kind: "purchase", amountCents: -line.cashDeltaCents } });
   });
   let pendingPercent: Percent = 0;
+  let pendingExtra: { reserveId: string; amountCents: number; node: string } | null = null;
   const attempted = new Set<string>();
   for (const e of run.history) {
     if (ordinal(e.id) <= start) continue;
@@ -714,7 +744,18 @@ export function fundingScenarioFromRun(run: Run): { scenario: FundingScenario; p
       const key = `${e.node}|${s?.phase}|${s?.cashCents}|${s?.shareUnits}|${e.data.purchase}|${e.data.cardId}|${e.data.cardInstanceId}|${e.data.priceCents}`;
       if (!attempted.has(key)) { attempted.add(key); items.push({ at: ordinal(e.id), tie: 0, event: { id: `attempt-${e.id}`, label: "原局尝试但未支付的采购（作为固定需求）", kind: "purchase", amountCents: e.data.priceCents } }); }
     }
-    if (e.type === "choice" && e.action === "submit-redemption" && typeof e.data.percent === "number" && validPercent(e.data.percent)) pendingPercent = e.data.percent;
+    if (e.type === "choice" && e.action === "submit-redemption") {
+      if (typeof e.data.percent === "number" && validPercent(e.data.percent)) pendingPercent = e.data.percent;
+      const additional = e.data.additionalEntryCents;
+      if (additional !== undefined && (typeof additional !== "number" || !Number.isSafeInteger(additional) || additional < 0)) return null;
+      if (typeof additional === "number" && additional > 0) {
+        if (pendingExtra) return null;
+        const reserveId = `additional-${e.id}`;
+        pendingExtra = { reserveId, amountCents: additional, node: e.node };
+        const place = e.node === "N4" ? "中途营地" : e.node === "N6" ? "最后营地" : "营地";
+        items.push({ at: ordinal(e.id), tie: 0, event: { id: reserveId, label: `${place}固定追加预留 ${(additional / 100).toFixed(2)} 金币`, kind: "additional-reserve", amountCents: additional } });
+      }
+    }
     if (e.type !== "market" || e.action !== "apply-quote" || typeof e.data.price !== "number" || typeof e.data.stage !== "string") continue;
     if (e.data.stage === "entry") { items.push({ at: ordinal(e.id), tie: 0, event: { id: `quote-${e.id}`, label: "下一开盘执行参与", kind: "entry-exec" } }); continue; }
     const isClose = ["t1", "t2", "t3"].includes(e.data.stage);
@@ -722,12 +763,22 @@ export function fundingScenarioFromRun(run: Run): { scenario: FundingScenario; p
     else {
       const percent = e.data.automatic === true ? 100 : pendingPercent;
       items.push({ at: ordinal(e.id), tie: 0, event: { id: `quote-${e.id}`, label: `实际执行：${e.data.stage}${e.data.automatic === true ? "（自动回收）" : ""}`, kind: "recovery", price: e.data.price, automatic: e.data.automatic === true }, percent });
+      if (pendingExtra) {
+        if (e.data.automatic === true || e.data.additionalEntryCents !== pendingExtra.amountCents
+          || !((pendingExtra.node === "N4" && e.data.stage === "t1-exec") || (pendingExtra.node === "N6" && e.data.stage === "t2-exec"))
+          || e.data.additionalShareUnits !== sharesForCents(pendingExtra.amountCents, e.data.price)) return null;
+        items.push({ at: ordinal(e.id), tie: 1, event: { id: `additional-exec-${e.id}`, label: "追加预留按同一开盘价换成份额", kind: "additional-exec", price: e.data.price, reserveId: pendingExtra.reserveId } });
+        pendingExtra = null;
+      } else if (e.data.additionalEntryCents !== undefined && e.data.additionalEntryCents !== 0) return null;
       pendingPercent = 0;
     }
   }
   items.sort((a, b) => a.at - b.at || a.tie - b.tie);
   const recovery: Record<string, Percent> = {};
   for (const item of items) if (item.event.kind === "recovery") recovery[item.event.id] = item.percent ?? 0;
+  if (pendingExtra && !(run.phase === "market" && run.status === "active" && run.market.order?.kind === "sell"
+    && run.market.order.additionalEntryCents === pendingExtra.amountCents && run.node === pendingExtra.node)) return null;
+  if (!pendingExtra && run.market.order?.kind === "sell" && (run.market.order.additionalEntryCents ?? 0) > 0) return null;
   let pendingFinal: FundingScenario["pendingFinal"];
   const hasAutomatic = items.some((item) => item.event.kind === "recovery" && item.event.automatic);
   const last = run.market.lastQuote;
@@ -739,7 +790,7 @@ export function fundingScenarioFromRun(run: Run): { scenario: FundingScenario; p
     pendingFinal = { stage, afterDate: last.date };
   }
   return { scenario: { id: `run-${run.id}`, caseId: run.caseId, startingCashCents: entry.snapshot.cashCents, entryPrice: filled.data.price,
-    events: items.map((item) => item.event), ...(pendingFinal ? { pendingFinal } : {}), assumptions: "使用本局已发生报价及收入；采购和未支付尝试作为固定需求。改变参与金额后战斗及后续真实行为未被假定不变；首次买不起即停止。" },
+    events: items.map((item) => item.event), ...(pendingFinal ? { pendingFinal } : {}), ...(pendingExtra ? { pendingAdditional: { reserveId: pendingExtra.reserveId } } : {}), assumptions: "使用本局已发生报价及收入；采购、未支付尝试和已选追加金额作为固定日程。改变初次参与后不假定战斗及后续真实行为不变；现金不足时停止，不预支回收款。" },
     plan: { participationCents: entry.data.amountCents, recovery } };
 }
 
@@ -764,9 +815,10 @@ export function evaluateFundingPractice(scenario: FundingScenario, submission: P
     : { status: "not-reached" };
   let revised: FundingFeedback["revised"];
   if (revisedTimeline.pendingFinal) revised = { status: "pending-final-quote" };
+  else if (revisedTimeline.stoppedAt === "pending-additional-quote") revised = { status: "pending-additional-quote" };
   else if (revisedTimeline.stoppedAt !== null) {
-    const blocked = revisedTimeline.rows.find((row) => row.id === revisedTimeline.stoppedAt && row.kind === "purchase" && row.canPay === false);
-    if (!blocked) throw new Error("无法确定暂停的采购节点");
+    const blocked = revisedTimeline.rows.find((row) => row.id === revisedTimeline.stoppedAt && (row.kind === "purchase" || row.kind === "additional-reserve") && row.canPay === false);
+    if (!blocked) throw new Error("无法确定暂停的资金节点");
     revised = { status: "blocked", id: blocked.id, label: blocked.label, cashBeforeCents: blocked.cashBeforeCents, amountCents: blocked.amountCents, shortfallCents: blocked.amountCents - blocked.cashBeforeCents };
   } else revised = { status: "completed" };
   const correct = purchase.canPay === submission.canPay;
@@ -962,7 +1014,6 @@ export function submitHistory(profile: ResearchProfile, id: string, answers: His
   requireEnabled(profile);
   const attempt = profile.research_process.find((a) => a.id === id);
   if (!attempt || attempt.submitted || !attempt.shown) throw new Error("请先锁定判断并实际展示数据");
-  if (!answers.reason.trim()) throw new Error("请选择或填写本次理由");
   if (!answers.comparison && !answers.boundary) throw new Error("请至少完成一个已展示的判断");
   if (answers.boundary && (!attempt.shown.other || !answers.historyDifference)) throw new Error("先展示另一历史片段，并比较两段固定日程的结果");
   const feedback = evaluateHistoryFeedback(attempt.shown.primary, attempt.shown.other ?? null, answers);
@@ -1047,13 +1098,16 @@ export function recordCalibrationFeeling(profile: ResearchProfile, forecastId: s
   return { ...profile, calibration: [...profile.calibration, compareSelfForecast({ ...forecast, priorExposure }, context, feeling, null)] };
 }
 /** Then record the voluntary contract action and optional self-reported reason. */
-export function recordCalibrationAction(profile: ResearchProfile, forecastId: string, action: ContractAction, reason?: string): ResearchProfile {
+export function recordCalibrationAction(profile: ResearchProfile, forecastId: string, action: ContractAction, reason?: string, options?: { additionalEntryCents?: number }): ResearchProfile {
   if (!profile.enabled) return profile;
+  const additional = options?.additionalEntryCents ?? 0;
+  requireCents(additional);
   const forecast = profile.forecasts.find((f) => f.id === forecastId);
   const current = profile.calibration.find((c) => c.forecastId === forecastId);
   if (!forecast || !current || current.action !== null) throw new Error("请先记录当前感受，且每次只记录一个行动");
   const related = relatedCaseIds(forecast.caseId);
   const priorExposure = forecast.priorExposure || hasDeclaredPriorExposure(profile, forecast.caseId) || hasShownRelatedHistory(profile, forecast.caseId) || profile.funding_attempts.some((a) => related.includes(a.caseId)) || hasRelatedCalibration(profile, forecast.caseId, forecast.id);
-  const compared = { ...compareSelfForecast({ ...forecast, priorExposure }, current.context, current.feeling, action), reason: reason ?? null };
+  const compared = { ...compareSelfForecast({ ...forecast, priorExposure }, current.context, current.feeling, action), reason: reason ?? null,
+    ...(additional > 0 ? { comparison: "unavailable" as const, unavailableReason: "本次同时追加投入，不能与原先的单一份额安排直接比较", affectComparison: "unknown" as const, actionComparison: "unknown" as const } : {}) };
   return { ...profile, calibration: profile.calibration.map((c) => c.forecastId === forecastId ? compared : c) };
 }

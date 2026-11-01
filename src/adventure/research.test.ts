@@ -93,6 +93,15 @@ describe("external exposure after a history question was locked", () => {
 });
 
 describe("data-driven research observations", () => {
+  it("permits an unanswered optional reason without changing the scored judgment", () => {
+    const shown = showHistoryEvidence(initial(emptyResearchProfile(), "optional-reason", a), "optional-reason", a);
+    const withoutReason = submitHistory(shown, "optional-reason", { comparison: "underperform", reason: "" });
+    const withReason = submitHistory(shown, "optional-reason", { comparison: "underperform", reason: "对照同期数字" });
+    expect(withoutReason.profile.research_process[0]?.final?.reason).toBe("");
+    expect(withoutReason.profile.knowledge_evidence).toEqual(withReason.profile.knowledge_evidence);
+    expect(withoutReason.feedback).toEqual(withReason.feedback);
+    expect(() => submitHistory(shown, "optional-reason", { reason: "" })).toThrow("至少完成一个");
+  });
   it("T32: an empty profile reports unobserved, not a low ability", () => {
     const p = emptyResearchProfile();
     expect(p.knowledge_observations.map((x) => x.status)).toEqual(["unobserved", "unobserved", "unobserved"]);

@@ -1,6 +1,7 @@
 import "./adventure.css";
 import "./mobile-pages.css";
 import { guideView, type GuideTopic } from "./ui-guide";
+import { archiveKey, loadArchiveSnapshot, type ArchiveSnapshot } from "./archive";
 import { h, type Child } from "../ui/dom";
 import { createRun, forkRun, pendingMarketStep, reduceRun } from "./engine";
 import { CARDS, ENEMIES, PRICES } from "./content";
@@ -42,6 +43,8 @@ let initialCase: MarketInitialCase | null = null;
 let initialCaseLoading = false;
 let initialCaseError: string | null = null;
 let initialCaseVersion = 0;
+let archiveVersion = 0;
+let archiveState: { key: string; data: ArchiveSnapshot | null; loading: boolean; error: string | null } | null = null;
 let initialError: string | null = null;
 let marketError: string | null = null;
 let marketLoading = false;
@@ -57,6 +60,7 @@ let tutorialStep = 4;
 let gamePage = "";
 let entryCents = 0;
 let reserveCents = 0;
+let redemptionPercent: 0 | 50 | 100 = 0;
 let modal: HTMLElement | null = null;
 let modalOpener: { key?: string; label?: string } | null = null;
 let toastMessage = "";
@@ -173,7 +177,7 @@ function askNewRun(enabled: boolean): void {
   } else startRun(enabled);
 }
 function cancelMarketRequest(): void { requestVersion++; marketLoading = false; marketError = null; }
-function resetInitialCase(): void { initialCaseVersion++; initialCase = null; initialCaseLoading = false; initialCaseError = null; }
+function resetInitialCase(): void { archiveVersion++; archiveState = null; initialCaseVersion++; initialCase = null; initialCaseLoading = false; initialCaseError = null; }
 /** Called only after a run has fixed its case; it never fetches other cases' histories. */
 function ensureInitialCase(): void {
   if (recovery || !run || initialCaseLoading || initialCaseError || initialCase?.caseId === run.caseId) return;
@@ -188,6 +192,21 @@ function ensureInitialCase(): void {
   });
 }
 function retryInitialCase(): void { initialCaseError = null; ensureInitialCase(); }
+function ensureArchive(): void {
+  if (!run?.archiveOwned || gamePage !== "archive" || !canPresentGame()) return;
+  const key = archiveKey(run);
+  if (archiveState?.key === key && (archiveState.loading || archiveState.data || archiveState.error)) return;
+  const captured = run; const version = ++archiveVersion;
+  archiveState = { key, data: null, loading: true, error: null }; render();
+  void loadArchiveSnapshot(captured).then((data) => {
+    if (version !== archiveVersion || !run || archiveKey(run) !== key) return;
+    archiveState = { key, data, loading: false, error: null }; render(); resumePresentations();
+  }).catch((error: unknown) => {
+    if (version !== archiveVersion || !run || archiveKey(run) !== key) return;
+    archiveState = { key, data: null, loading: false, error: errorMessage(error) }; render();
+  });
+}
+function retryArchive(): void { archiveState = null; ensureArchive(); }
 function invalidatePendingComparison(existing: ResearchProfile, exposedCase: string): ResearchProfile {
   if (!existing.enabled) return existing;
   return { ...existing, calibration: existing.calibration.map((item) => {
@@ -280,7 +299,7 @@ function action(next: RunAction): void {
       const area: GameReceipt["area"] = next.type === "choose-reward" ? "journey" : next.type === "free-rest" || next.type === "free-upgrade" ? "free" : "shop";
       gameFeedback = { area, result: feedback };
     } else if (next.type !== "apply-quote" && next.type !== "open-archive") gameFeedback = null;
-    if (before.phase !== run.phase || before.node !== run.node) { selectedReward = null; gamePage = ""; }
+    if (before.phase !== run.phase || before.node !== run.node) { selectedReward = null; gamePage = ""; entryCents = 0; redemptionPercent = 0; }
     if (feedback && (next.type === "upgrade-card" || next.type === "free-upgrade")) selectedUpgrade = null;
     if (before.node === "N1" && before.phase === "battle") {
       if (next.type === "play-card" && tutorialStep < 3) tutorialStep = 3;
@@ -304,7 +323,7 @@ function action(next: RunAction): void {
     } else if (run.phase === "battle" && previousPhase !== "battle") battleFeedback = "";
     researchUI.afterAction(next);
     const showsMarketResult = next.type === "apply-quote" && (["t1", "t2", "t3"].includes(next.quote.step)
-      || (next.quote.step !== "entry" && before.market.order?.kind === "sell" && /[1-9]/.test(before.wallet.shareUnits)));
+      || (next.quote.step !== "entry" && before.market.order?.kind === "sell" && (/[1-9]/.test(before.wallet.shareUnits) || (before.market.order.additionalEntryCents ?? 0) > 0)));
     if (showsMarketResult) {
       if (run.source === "real") markNaturalArchiveSeen(run.caseId);
       else markExternalExposure(run.caseId);
@@ -432,8 +451,7 @@ function openDetails(title: string, body: Child): void {
 function openMenu(): void {
   showDialog("旅程菜单", h("div", { class: "menu-grid" },
     run ? button("我的交易风格 · 本局画像", () => changeScreen("report"), "gold") : null,
-    run ? button("回到旅程", () => changeScreen(run?.phase === "ended" ? "report" : "game"), "secondary") : null,
-    run && profile.enabled ? button("目标与帮助", () => showDialog("目标与帮助（可跳过）", preferencePanel(), [button("完成", closeDialog, "secondary")]), "secondary") : null,
+    run && profile.enabled ? button("目标与帮助", () => showDialog("练习内容与提示", preferencePanel(), [button("完成", closeDialog, "secondary")]), "secondary") : null,
     button("数据说明", dataInfo, "secondary"), run ? button("评委面板", () => changeScreen("judge"), "secondary") : null,
     button("设置", settings, "secondary")), [button("关闭", closeDialog, "secondary")]);
 }
@@ -452,7 +470,7 @@ function requestGameAction(next: RunAction): void {
 }
 function topbar(): HTMLElement {
   return h("header", { class: "topbar" }, h("button", { type: "button", class: "brand", onclick: () => changeScreen("intro"), "aria-label": "回到冒险首页" }, h("span", { class: "brand-mark", "aria-hidden": "true" }, "灯"), h("span", null, h("span", { class: "brand-name" }, "下一张牌"), h("span", { class: "brand-sub" }, "A LITTLE JOURNEY"))),
-    h("nav", { class: "top-actions", "aria-label": "功能导航" }, button("怎么玩", () => openGuide(), "small secondary", false, "open-guide"), h("button", { type: "button", class: "link-button mobile-menu", onclick: openMenu }, "菜单"), run ? h("button", { type: "button", class: "link-button back-link", onclick: () => changeScreen(run?.phase === "ended" ? "report" : "game") }, run.phase === "ended" ? "旅程报告" : "回到旅程") : null, run && profile.enabled ? h("button", { type: "button", class: "link-button prefs-link", onclick: () => showDialog("目标与帮助（可跳过）", preferencePanel(), [button("完成", closeDialog, "secondary")]) }, "目标与帮助") : null, h("button", { type: "button", class: "link-button data-link", onclick: dataInfo }, "数据说明"), run ? h("button", { type: "button", class: "link-button judge-link", onclick: () => changeScreen("judge") }, "评委面板") : null, h("button", { type: "button", class: "link-button settings-link", onclick: settings }, "设置")));
+    h("nav", { class: "top-actions", "aria-label": "功能导航" }, button("怎么玩", () => openGuide(), "small secondary", false, "open-guide"), h("button", { type: "button", class: "link-button mobile-menu", onclick: openMenu }, "菜单"), run ? h("button", { type: "button", class: "link-button back-link", onclick: () => changeScreen(run?.phase === "ended" ? "report" : "game") }, run.phase === "ended" ? "旅程报告" : "回到旅程") : null, run && profile.enabled ? h("button", { type: "button", class: "link-button prefs-link", onclick: () => showDialog("练习内容与提示", preferencePanel(), [button("完成", closeDialog, "secondary")]) }, "目标与帮助") : null, h("button", { type: "button", class: "link-button data-link", onclick: dataInfo }, "数据说明"), run ? h("button", { type: "button", class: "link-button judge-link", onclick: () => changeScreen("judge") }, "评委面板") : null, h("button", { type: "button", class: "link-button settings-link", onclick: settings }, "设置")));
 }
 function intro(): HTMLElement {
   return h("div", { class: "intro" }, topbar(), h("main", { class: "intro-hero", id: "main-content" }, h("div", { class: "intro-content" }, h("div", { class: "intro-kicker" }, "一段轻盈的卡牌冒险"), h("h1", null, "下一张牌", h("span", null, "晨光小城 · 守灯之旅")), h("p", { class: "intro-lead" }, "带上你的牌组，穿过晨雾渐散的小城。一路战斗、收集新牌、安排补给，去寻回那盏温暖的灯。"),
@@ -464,9 +482,18 @@ function intro(): HTMLElement {
 }
 function preferencePanel(): HTMLElement {
   const goal = profile.stated_interest.at(-1)?.goal ?? null; const help = profile.help_preference.at(-1)?.help;
-  return h("section", { class: "panel stack" }, h("h2", null, "下一步，你想探索什么？"), h("p", { class: "hint" }, "这是此刻的目标，可以跳过或随时修改，不是固定标签。"),
-    h("div", { class: "selection-row" }, ([ ["funding", "资金安排"], ["history", "历史比较"], ["idea", "验证一个想法"], ["none", "暂不选择"] ] as const).map(([id, label]) => h("button", { type: "button", class: `choice${(id === "none" ? goal === null : goal === id) ? " selected" : ""}`, "aria-pressed": String(id === "none" ? goal === null : goal === id), "data-focus-key": `preference-goal-${id}`, onclick: () => { setProfile(setResearchGoal(profile, uid("goal"), id === "none" ? null : id as Goal)); if (modal) showDialog("目标与帮助（可跳过）", preferencePanel(), [button("完成", closeDialog, "secondary")]); } }, label))),
-    h("p", { class: "hint strong" }, "希望怎样获得帮助？"), h("p", { class: "fineprint" }, help ? "任务会使用你选择的帮助方式；随时可以调整。" : "尚未选择。进入任务后可查看建议，再决定是否使用帮助。"), h("div", { class: "selection-row" }, ([ ["self", "自主尝试"], ["hint", "给我提示"], ["step", "分步说明"] ] as const).map(([id, label]) => h("button", { type: "button", class: `choice${help === id ? " selected" : ""}`, "aria-pressed": String(help === id), "data-focus-key": `preference-help-${id}`, onclick: () => { setProfile(setHelpPreference(profile, uid("help"), id as HelpPreference)); if (modal) showDialog("目标与帮助（可跳过）", preferencePanel(), [button("完成", closeDialog, "secondary")]); } }, label))));
+  const refreshPreferences = (): void => { if (modal) showDialog("练习内容与提示", preferencePanel(), [button("完成", closeDialog, "secondary")]); };
+  const goals = [
+    ["funding", "算清金币", "买牌前，算一算手里的钱够不够"],
+    ["history", "看懂涨跌", "比较案例与同期市场的表现"],
+    ["idea", "检验一个猜想", "先说想法，再用另一段数据核查"],
+    ["none", "帮我推荐", "根据这局已有的线索选一个练习"],
+  ] as const;
+  const helps = [["self", "自己试试", "先自己判断"], ["hint", "给个方向", "给一条解题提示"], ["step", "一步步带我", "把判断拆成小步骤"]] as const;
+  return h("section", { class: "preference-panel stack" }, h("h2", null, "接下来想练什么？"), h("p", { class: "hint" }, "这里决定推荐哪种小练习，不改变战斗难度，也不花金币。随时能改，不选也可以。"),
+    h("div", { class: "preference-goals" }, goals.map(([id, label, description]) => h("button", { type: "button", class: `choice${(id === "none" ? goal === null : goal === id) ? " selected" : ""}`, "aria-pressed": String(id === "none" ? goal === null : goal === id), "data-focus-key": `preference-goal-${id}`, onclick: () => { setProfile(setResearchGoal(profile, uid("goal"), id === "none" ? null : id as Goal)); refreshPreferences(); } }, h("strong", null, label), h("span", null, description)))),
+    h("h3", null, "做练习时，需要多少提示？"), h("p", { class: "fineprint" }, "这是练习里的默认帮助方式，进入练习后还能切换。"),
+    h("div", { class: "preference-helps" }, helps.map(([id, label, description]) => h("button", { type: "button", class: `choice${help === id ? " selected" : ""}`, "aria-pressed": String(help === id), "data-focus-key": `preference-help-${id}`, onclick: () => { setProfile(setHelpPreference(profile, uid("help"), id as HelpPreference)); refreshPreferences(); } }, h("strong", null, label), h("span", null, description)))));
 }
 function report(): HTMLElement {
   return reportView({ run: run!, profile, manifest, wasCaseSeen: (caseId) => hasSeenRelatedCase(seenCases, caseId), header: topbar(), preferences: profile.enabled ? preferencePanel() : null, calibration: profile.enabled ? researchUI.calibrationReport() : null,
@@ -687,10 +714,11 @@ function render(preserve = true): void {
   else if (screen === "report") content = report();
   else if (screen === "judge") content = judge();
   else if (screen === "d1" || screen === "d2") content = h("div", { class: "app-shell" }, topbar(), screen === "d1" ? researchUI.renderFunding() : researchUI.renderHistory());
-  else content = h("div", null, h("div", { class: "app-shell" }, topbar()), gameView({ run, initialCase, initialCaseError, initialCaseLoading, retryInitialCase, selectedCard, selectedRetain, selectedUpgrade, selectedReward, entryCents, reserveCents, marketLoading, marketError, battleFeedback, gameFeedback, tutorialStep, page: gamePage, selectPage: (page) => { gamePage = page; if (gameFeedback?.area === "journey") gameFeedback = null; render(false); resumePresentations(); }, openDetails, openGuide, action: requestGameAction, selectCard: (id) => { selectedCard = id; if (id && run?.node === "N1" && tutorialStep < 2) { tutorialStep = 2; save(); } render(); }, selectRetain: (id) => { selectedRetain = id; render(); }, selectUpgrade: (id) => { selectedUpgrade = id; render(); }, selectReward, setEntry: (amount, redraw) => { entryCents = amount; if (redraw) render(); }, setReserve: (amount) => { reserveCents = amount; }, retryMarket, extraCamp: () => researchUI.campExtras(), openReport: () => changeScreen("report"), openTask: (task) => changeScreen(task), archiveShown, nextTutorial: () => setTutorialStep(tutorialStep + 1), skipTutorial: () => setTutorialStep(4), openPile, openEnemyPlan }));
+  else content = h("div", null, h("div", { class: "app-shell" }, topbar()), gameView({ run, archiveSnapshot: archiveState?.key === archiveKey(run) ? archiveState.data : null, archiveLoading: archiveState?.loading ?? false, archiveError: archiveState?.key === archiveKey(run) ? archiveState.error : null, retryArchive, initialCase, initialCaseError, initialCaseLoading, retryInitialCase, selectedCard, selectedRetain, selectedUpgrade, selectedReward, entryCents, reserveCents, redemptionPercent, setRedemptionPercent: (value) => { redemptionPercent = value; }, marketLoading, marketError, battleFeedback, gameFeedback, tutorialStep, page: gamePage, selectPage: (page) => { gamePage = page; if (gameFeedback?.area === "journey") gameFeedback = null; render(false); resumePresentations(); }, openDetails, openGuide, action: requestGameAction, selectCard: (id) => { selectedCard = id; if (id && run?.node === "N1" && tutorialStep < 2) { tutorialStep = 2; save(); } render(); }, selectRetain: (id) => { selectedRetain = id; render(); }, selectUpgrade: (id) => { selectedUpgrade = id; render(); }, selectReward, setEntry: (amount, redraw) => { entryCents = amount; if (redraw) render(); }, setReserve: (amount) => { reserveCents = amount; }, retryMarket, extraCamp: () => researchUI.campExtras(), openReport: () => changeScreen("report"), openTask: (task) => changeScreen(task), archiveShown, nextTutorial: () => setTutorialStep(tutorialStep + 1), skipTutorial: () => setTutorialStep(4), openPile, openEnemyPlan }));
   content.inert = !!modal;
   const wrapper = h("div", { class: `adventure screen-${screen}${screen === "game" && run?.phase === "battle" ? " battle-active" : ""}` }, content, storageError ? h("div", { class: "toast", role: "status" }, "浏览器无法保存进度，请检查本地存储设置。") : null, toastMessage ? h("div", { class: "toast", role: "status" }, toastMessage) : null, modal);
   app.replaceChildren(wrapper);
+  if (screen === "game" && gamePage === "archive" && run?.archiveOwned) queueMicrotask(ensureArchive);
   for (const summary of app.querySelectorAll<HTMLElement>("details > summary")) if (open.includes(summary.textContent ?? "")) (summary.parentElement as HTMLDetailsElement).open = true;
   for (const [key, left] of scrollPositions) { const element = app.querySelector<HTMLElement>(`[data-scroll-key="${CSS.escape(key)}"]`); if (element) element.scrollLeft = left; }
   if (preserve) { if (active) { const target = (modal ?? app).querySelector<HTMLElement>(`[data-focus-key="${CSS.escape(active)}"]`); if (target && !(target instanceof HTMLButtonElement && target.disabled)) target.focus({ preventScroll: true }); else if (active.startsWith("play-card") || active.startsWith("tutorial-")) { const hand = app.querySelector<HTMLElement>('.battle-hand-panel [data-scroll-key="battle-hand"]'); const box = hand?.getBoundingClientRect(); const visible = [...(hand?.querySelectorAll<HTMLElement>(".game-card") ?? [])].find((card) => { const rect = card.getBoundingClientRect(); return !!box && rect.right > box.left && rect.left < box.right; }); (visible ?? hand)?.focus({ preventScroll: true }); } } window.scrollTo(0, scroll); }
@@ -702,8 +730,9 @@ function resumePresentations(): void {
   publishPendingDemo();
   researchUI.resumePendingPresentation(); calibrationDemoUI.resumePendingPresentation();
   if (canPresentGame() && run) {
+    ensureArchive();
     const view = app.querySelector<HTMLDetailsElement>('[data-archive-view="true"]');
-    if (view && archiveShown(view, run) && !run.history.some((event) => event.action === "open-archive")) action({ type: "open-archive" });
+    if (view && archiveShown(view, run) && !run.history.some((event) => event.action === "open-archive" && event.node === run!.node)) action({ type: "open-archive" });
   }
   queueMarket();
 }

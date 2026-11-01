@@ -62,7 +62,7 @@ const pendingFinal = record({
   stage: z.enum(["entry", "t1", "t1-exec", "t2", "t2-exec", "t3", "final-exec", "exit-after-entry", "exit-after-t1-exec", "exit-after-t2-exec"]), afterDate: z.string(),
 });
 const fundingRow = record({
-  id, label: z.string(), kind: z.enum(["entry", "pending", "entry-exec", "income", "purchase", "reference", "recovery"]),
+  id, label: z.string(), kind: z.enum(["entry", "pending", "entry-exec", "additional-reserve", "additional-exec", "income", "purchase", "reference", "recovery"]),
   cashBeforeCents: integer, cashCents: integer, shareUnits: z.string().regex(/^\d+$/),
   referenceValueCents: integer.nullable(), canPay: z.boolean().nullable(), amountCents: integer,
 });

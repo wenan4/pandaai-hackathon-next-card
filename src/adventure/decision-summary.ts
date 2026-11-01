@@ -21,7 +21,28 @@ const hasShares = (value: unknown): boolean => typeof value === 'string' && /^\d
 const coins = (value: number): string => (value / 100).toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
 const eventData = (event: GameEvent, key: string): unknown => event.data?.[key];
 
-function fundingInsight(history: GameEvent[]): DecisionInsight {
+function fundingInsight(run: Run, history: GameEvent[]): DecisionInsight {
+  const later = history.filter((event) => event.type === 'choice' && event.action === 'submit-redemption' && eventData(event, 'additionalEntryCents') !== undefined);
+  if (later.length) {
+    const initial = history.find((event) => event.type === 'choice' && event.action === 'submit-entry');
+    const choices = [...(initial ? [initial] : []), ...later];
+    const records = choices.map((event) => {
+      const amount = eventData(event, event.action === 'submit-entry' ? 'amountCents' : 'additionalEntryCents');
+      const cash = event.snapshot?.cashCents;
+      const place = event.action === 'submit-entry' ? '首营地' : event.node === 'N4' ? '中途营地' : event.node === 'N6' ? '最后营地' : '当时';
+      if (!isAmount(amount)) return { event, observed: false, text: `${place}参与金额未完整记录` };
+      if (!isAmount(cash) || amount > cash) return { event, observed: false, text: `${place}提交${event.action === 'submit-entry' ? '参与' : '追加'} ${coins(amount)} 金币，当时可用金额未知` };
+      if (cash === 0) return { event, observed: false, text: `${place}当时没有可用金币` };
+      return { event, observed: true, text: `${place}可用 ${coins(cash)} 金币，选择${event.action === 'submit-entry' ? '参与' : '追加'} ${coins(amount)} 金币，预留后剩 ${coins(cash - amount)} 金币` };
+    });
+    const executed = run.wallet?.investedCents;
+    const pending = run.phase === 'market' && run.market?.order?.kind === 'sell' ? run.market.order.additionalEntryCents ?? 0 : 0;
+    const total = isAmount(executed) ? `累计已执行 ${coins(executed)} 金币` : '已执行总额未知';
+    const waiting = isAmount(pending) && pending > 0 ? `；${coins(pending)} 金币已预留、待下一报价执行` : '';
+    return { status: records.some((record) => record.observed) ? 'observed' : 'unobserved', title: '各营地的参与安排', brief: `${total}${waiting}`,
+      detail: `${initial ? '' : '首次参与记录未完整保存。'}${records.map((record) => record.text).join('；')}。${total}${waiting}。回收款不能提前用于预留；选择原因未知。`,
+      evidenceIds: records.map((record) => record.event.id) };
+  }
   const index = history.findIndex((event) => event.type === 'choice' && event.action === 'submit-entry');
   const choice = history[index];
   if (!choice) return { status: 'unobserved', title: '参与与留用', brief: '尚无参与安排', detail: '尚无已提交的参与安排，暂时无法描述这次资金取舍。', evidenceIds: [] };
@@ -45,22 +66,37 @@ function responseInsight(history: GameEvent[]): DecisionInsight {
   const choices = history.filter((event) => event.type === 'choice' && event.action === 'submit-redemption');
   const valid = choices.filter((event) => {
     const percent = eventData(event, 'percent');
-    return hasShares(event.snapshot?.shareUnits) && (percent === 0 || percent === 50 || percent === 100);
+    const additional = eventData(event, 'additionalEntryCents');
+    const cash = event.snapshot?.cashCents;
+    return (hasShares(event.snapshot?.shareUnits) && (percent === 0 || percent === 50 || percent === 100))
+      || (isAmount(additional) && additional > 0 && isAmount(cash) && additional <= cash);
   });
   if (!valid.length) return { status: 'unobserved', title: '面对变化的安排', brief: '尚无持有后的自主选择', detail: choices.length ? '尚无可确认的持有份额时的自主回收选择；这不能说明偏好。' : '尚无持有份额后的自主回收选择，暂时无法描述面对变化时的安排。', evidenceIds: choices.map((event) => event.id) };
   const text = valid.map((event) => {
     const percent = eventData(event, 'percent');
     const action = percent === 0 ? '选择继续持有' : percent === 50 ? '选择回收一半份额' : '选择全部回收份额';
+    const validRedemption = hasShares(event.snapshot?.shareUnits) && (percent === 0 || percent === 50 || percent === 100);
     const reference = event.snapshot?.referenceValueCents;
     const basis = event.snapshot?.costBasisCents;
     const position = event.node === 'N4' ? '中途营地' : event.node === 'N6' ? '最后营地' : '当时';
-    if (!isAmount(reference) || !isAmount(basis)) return `${position}：${action}，当时参考价值或成本未完整记录`;
+    const added = eventData(event, 'additionalEntryCents');
+    const cash = event.snapshot?.cashCents;
+    const extra = isAmount(added) && added > 0 && isAmount(cash) && added <= cash ? `；选择预留追加 ${coins(added)} 金币` : '';
+    if (!validRedemption) return `${position}：${hasShares(event.snapshot?.shareUnits) ? '回收比例未完整记录' : '当时没有可确认的持有份额'}${extra}`;
+    if (!isAmount(reference) || !isAmount(basis)) return `${position}：${action}，当时参考价值或成本未完整记录${extra}`;
     const difference = reference - basis;
     const change = difference === 0 ? '与当时份额成本相同' : `${difference > 0 ? '高于' : '低于'}当时份额成本 ${coins(Math.abs(difference))} 金币`;
-    return `${position}：参考价值 ${coins(reference)} 金币，${change}；${action}`;
+    return `${position}：参考价值 ${coins(reference)} 金币，${change}；${action}${extra}`;
   });
   const incomplete = valid.length < choices.length ? '另有选择记录缺少份额或比例，无法判断。' : '';
-  const brief = valid.map((event) => `${event.node === 'N4' ? '中途' : event.node === 'N6' ? '最后营地' : '当时'}${eventData(event, 'percent') === 0 ? '继续持有' : eventData(event, 'percent') === 50 ? '选择回收一半' : '选择全部回收'}`).join('；');
+  const brief = valid.map((event) => {
+    const place = event.node === 'N4' ? '中途' : event.node === 'N6' ? '最后营地' : '当时';
+    const pct = eventData(event, 'percent');
+    const original = hasShares(event.snapshot?.shareUnits) && (pct === 0 || pct === 50 || pct === 100) ? pct === 0 ? '继续持有' : pct === 50 ? '选择回收一半' : '选择全部回收' : '';
+    const added = eventData(event, 'additionalEntryCents'); const cash = event.snapshot?.cashCents;
+    const extra = isAmount(added) && added > 0 && isAmount(cash) && added <= cash ? `${original ? '并' : '选择'}追加 ${coins(added)} 金币` : '';
+    return `${place}${original}${extra}`;
+  }).join('；');
   return { status: 'observed', title: '已发生的份额安排', brief, detail: `${text.join('；')}。${incomplete}这是提交时的选择，不代表回收已到账；原因与感受不能由此推断。`, evidenceIds: valid.map((event) => event.id) };
 }
 
@@ -82,5 +118,5 @@ export function decisionSummary(run: Run): DecisionSummary {
     return { funding: disabled('参与与留用'), response: disabled('面对变化的安排'), information: disabled('资料使用'), source: run.source, boundary };
   }
   const history = run.history ?? [];
-  return { funding: fundingInsight(history), response: responseInsight(history), information: informationInsight(history), source: run.source, boundary };
+  return { funding: fundingInsight(run, history), response: responseInsight(history), information: informationInsight(history), source: run.source, boundary };
 }

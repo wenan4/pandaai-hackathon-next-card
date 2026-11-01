@@ -11,6 +11,7 @@ import type { MarketInitialCase } from "./market";
 import type { CardId, CardInstance, Run, RunAction } from "./types";
 import type { PileKind } from "./ui-piles";
 import type { GuideTopic } from "./ui-guide";
+import type { ArchiveSnapshot } from "./archive";
 import { outcomeFeedback, type ActionFeedback } from "./game-feedback";
 import { button, cardFace, chart, coins, dateText, deckSummary, details, metric, moneyHistory, moneyPanel, note, panel, pill } from "./ui-components";
 
@@ -26,6 +27,8 @@ export interface GameViewContext {
   selectedReward: CardId | null;
   entryCents: number;
   reserveCents: number;
+  redemptionPercent?: 0 | 50 | 100;
+  setRedemptionPercent?: (percent: 0 | 50 | 100) => void;
   marketLoading: boolean;
   marketError: string | null;
   battleFeedback: string;
@@ -47,6 +50,10 @@ export interface GameViewContext {
   archiveShown: (view: HTMLDetailsElement, displayedRun: Run) => boolean;
   nextTutorial: () => void;
   skipTutorial: () => void;
+  archiveSnapshot?: ArchiveSnapshot | null;
+  archiveLoading?: boolean;
+  archiveError?: string | null;
+  retryArchive?: () => void;
   page?: string;
   selectPage?: (page: string) => void;
   openDetails?: (title: string, body: Child) => void;
@@ -192,15 +199,18 @@ function shop(ctx: GameViewContext, roadside = false, section: "supplies" | "car
       return h("article", { class: "shop-card-offer" }, cardFace({ cardId, upgraded: false }, { disabled: true, label: "购买后加入牌组" }), button(purchased ? "已购买" : missing ? "尝试购买" : "购买 · 25 金币", () => ctx.action(missing ? { type: "purchase-attempted", purchase: "buy-card", cardId } : { type: "buy-card", cardId }), "small secondary", purchased || !supplyOpen, `buy-${cardId}`), h("p", { class: "fineprint" }, purchased ? "已加入牌组" : missing ?? `购买后剩 ${coins(cash - PRICES.cardCents)} 金币`));
     })) : null,
     section === "cards" ? h("p", { class: "fineprint" }, "左右滑动比较卡牌；每件本营地限购一次。") : null,
-    !roadside && section === "archive" ? h("div", { class: "stack" }, !run.archiveOwned ? h("p", { class: "hint" }, "花 4 金币查看更长的历史走势和同期市场对照，帮助你决定要不要参与、投入多少。购买后在这里翻开。") : null, !run.archiveOwned ? h("p", { class: "fineprint" }, "只包含起点以前的资料，不会揭晓下一段价格。") : null, !run.archiveOwned ? button(cash < PRICES.archiveCents ? "尝试购买档案" : "购买档案 · 4 金币", () => ctx.action(cash < PRICES.archiveCents ? { type: "purchase-attempted", purchase: "buy-archive" } : { type: "buy-archive" }), "secondary", !supplyOpen, "archive") : archiveView(ctx)) : null);
+    !roadside && section === "archive" ? h("div", { class: "stack" }, !run.archiveOwned ? h("p", { class: "hint" }, "花 4 金币解锁历史走势和同期市场对照。只买一次，之后每到新营地免费更新，帮助你决定要不要投入、投入多少。") : null, !run.archiveOwned ? h("p", { class: "fineprint" }, "内容更新到已经走过的这一站，不包含后面的行情。") : null, !run.archiveOwned ? button(cash < PRICES.archiveCents ? "尝试购买档案" : "购买档案 · 4 金币", () => ctx.action(cash < PRICES.archiveCents ? { type: "purchase-attempted", purchase: "buy-archive" } : { type: "buy-archive" }), "secondary", run.phase !== "camp" || run.archiveOwned, "archive") : archiveView(ctx)) : null);
 }
 function archiveView(ctx: GameViewContext): HTMLElement {
-  const c = ctx.initialCase?.caseId === ctx.run.caseId ? ctx.initialCase : null;
-  if (!c) return ctx.initialCaseError ? h("div", { class: "stack" }, note(`历史档案暂时无法加载：${ctx.initialCaseError}`, true), button("重试加载档案", ctx.retryInitialCase, "small secondary", ctx.initialCaseLoading)) : h("p", { class: "hint", role: "status" }, "正在加载本局已固定案例的历史档案……");
+  const c = ctx.archiveSnapshot === undefined ? (ctx.initialCase?.caseId === ctx.run.caseId ? ctx.initialCase : null) : ctx.archiveSnapshot;
+  const error = ctx.archiveError ?? ctx.initialCaseError;
+  if (!c) return error ? h("div", { class: "stack" }, note(`历史档案暂时无法更新：${error}`, true), button("重试加载档案", ctx.retryArchive ?? ctx.retryInitialCase, "small secondary", ctx.archiveLoading ?? ctx.initialCaseLoading)) : h("p", { class: "hint", role: "status" }, "正在整理截至这一站的档案……");
   const a = c.history.asset; const b = c.history.benchmark;
-  const view = details("翻开已购买的历史档案", h("p", { class: "hint" }, `截至 ${dateText(c.decisionDate)} 的资料；绿色为案例资产，金色为${c.benchmark}。两条线各自从同一起点比较，不包含未来行情。`), chart(a, b, "案例资产与同期基准的历史走势"), h("div", { class: "metric-grid" }, metric("案例这一段", `${((a.at(-1)! / a[0]! - 1) * 100).toFixed(1)}%`), metric("同期基准", `${((b.at(-1)! / b[0]! - 1) * 100).toFixed(1)}%`)));
+  const throughDate = "throughDate" in c ? c.throughDate : c.decisionDate;
+  const updated = "revealedSegments" in c ? c.revealedSegments : 0;
+  const view = details("翻开已购买的历史档案", h("p", { class: "hint" }, `已更新至 ${dateText(String(throughDate))}${updated ? ` · 已加入 ${updated} 段旅途行情` : " · 起点资料"}。绿色是案例，金色是同期${c.benchmark}。`), chart(a, b, "截至本站的案例与同期市场走势"), h("div", { class: "metric-grid" }, metric("这段历史：案例", `${((a.at(-1)! / a[0]! - 1) * 100).toFixed(1)}%`), metric("同期市场", `${((b.at(-1)! / b[0]! - 1) * 100).toFixed(1)}%`)));
   view.setAttribute("data-archive-view", "true");
-  view.addEventListener("toggle", () => { if (!ctx.archiveShown(view, ctx.run)) return; if (!ctx.run.history.some((event) => event.action === "open-archive")) ctx.action({ type: "open-archive" }); });
+  view.addEventListener("toggle", () => { if (!ctx.archiveShown(view, ctx.run)) return; if (!ctx.run.history.some((event) => event.action === "open-archive" && event.node === ctx.run.node)) ctx.action({ type: "open-archive" }); });
   return view;
 }
 function entryPanel(ctx: GameViewContext): HTMLElement {
@@ -211,27 +221,33 @@ function entryPanel(ctx: GameViewContext): HTMLElement {
   const preview = h("p", { class: "notice", id: "entry-preview" }, `用于投资 ${coins(initial)} · 留在手中 ${coins(cash - initial)} 金币`);
   const submit = button(initial ? `确认参与 ${coins(initial)} 金币` : "不参与，保留金币", () => ctx.action({ type: "submit-entry", amountCents: Math.max(0, Math.min(cash, Math.round((Number(input.value) || 0) * 100))) }), "gold", !can(run, "submit-entry"), "entry-submit");
   input.addEventListener("input", () => { const amount = Math.max(0, Math.min(cash, Math.round((Number(input.value) || 0) * 100))); ctx.setEntry(amount); preview.textContent = `用于投资 ${coins(amount)} · 留在手中 ${coins(cash - amount)} 金币`; submit.textContent = amount ? `确认参与 ${coins(amount)} 金币` : "不参与，保留金币"; });
-  return panel("随行投资 · 金币怎样分配？", "拿一部分金币随价格涨跌，下一营地再决定是否取回。也可以选择 0，把金币都留在手中。",
+  return panel("随行投资 · 金币怎样分配？", "拿一部分金币随价格涨跌。也可以先选 0：中途和最后营地仍能投入或追加。",
     h("p", { class: "hint" }, "同一份金币：买牌 25、升级 20、补生命 10。先想好留多少给旅途。"),
     h("div", { class: "selection-row" }, [0, 25, 50, 75].map((pct) => button(`${pct}%`, () => ctx.setEntry(Math.floor(cash * pct / 100), true), "small secondary"))),
     h("label", { class: "field" }, "参与金额（金币）", input), preview, submit,
     h("div", { class: "button-row" }, button("先看看历史档案", () => ctx.selectPage?.("archive"), "small ghost"), button("这笔投资怎么玩？", () => ctx.openGuide?.("money"), "small ghost")));
 }
 function redemptionPanel(ctx: GameViewContext): HTMLElement {
-  const { run } = ctx; const decision = run.camp!.decision;
+  const { run } = ctx; const decision = run.camp!.decision; const cash = run.wallet.cashCents;
   const settled = run.wallet.ledger.filter((entry) => entry.node === run.node && entry.kind === "redemption").at(-1);
-  const value = run.market.referenceValueCents;
   const choice = run.history.filter((event) => event.node === run.node && event.action === "submit-redemption").at(-1);
   const sold = typeof choice?.data.shareUnits === "string" && /[1-9]/.test(choice.data.shareUnits);
-  const change = value === null ? null : value - run.wallet.costBasisCents;
-  const cash = run.wallet.cashCents;
-  const buying = [cash >= PRICES.cardCents ? "买牌" : "", cash >= PRICES.upgradeCents ? "升级" : "", cash >= PRICES.healCents ? "补生命" : ""].filter(Boolean);
-  const spending = h("p", { class: "hint" }, buying.length ? `手中金币足够${buying.join("、")}；按需要选择。` : `手中 ${coins(cash)} 金币，补生命需 10、升级需 20、买牌需 25。`);
-  if (decision === "settled") return panel("这一站安排好了", settled && sold ? `本次回收到账 ${coins(settled.cashDeltaCents)} 金币。现在可用 ${coins(cash)}。` : `本次没有回收份额，当前可用 ${coins(cash)} 金币。`, moneyPanel(run), spending, button("去挑选补给", () => ctx.selectPage?.("supplies"), "secondary"));
-  if (decision === "awaiting-execution") return panel("正在办理回收", "按下一次报价执行，完成后直接显示到账金额。");
-  return panel("随行投资 · 这一站的变化", value === null ? "正在等待本阶段价格。" : `剩余份额价值 ${coins(value)} 金币${change === null ? "" : `，相对其投入${change >= 0 ? "增加" : "减少"} ${coins(Math.abs(change))}${run.wallet.costBasisCents > 0 ? `（${(change / run.wallet.costBasisCents * 100).toFixed(1)}%）` : ""}`}。`,
-    moneyPanel(run), spending, h("p", { class: "fineprint" }, "选择回收后，下一次报价会决定实际到账金额。"),
-    h("div", { class: "choice-grid" }, button("继续持有", () => ctx.action({ type: "submit-redemption", percent: 0 }), "secondary", !can(run, "submit-redemption"), "redeem-0"), button("回收一半份额", () => ctx.action({ type: "submit-redemption", percent: 50 }), "secondary", !can(run, "submit-redemption"), "redeem-50"), button("全部回收", () => ctx.action({ type: "submit-redemption", percent: 100 }), "secondary", !can(run, "submit-redemption"), "redeem-100")));
+  const added = typeof choice?.data.additionalEntryCents === "number" ? choice.data.additionalEntryCents : 0;
+  const hasHolding = /[1-9]/.test(run.wallet.shareUnits);
+  const value = run.market.referenceValueCents; const change = value === null ? null : value - run.wallet.costBasisCents;
+  if (decision === "settled") return panel("这一站安排好了", `${added > 0 ? `新增投入 ${coins(added)} 金币已成交。` : ""}${settled && sold ? `回收到账 ${coins(settled.cashDeltaCents)} 金币。` : "本次没有回收份额。"}现在可用 ${coins(cash)} 金币。`, moneyPanel(run), h("p", { class: "hint" }, run.node === "N4" ? "下一处营地还能投入、追加或回收。" : "前往挑战后，旅程结束时会自动回收剩余份额。"), button("去挑选补给", () => ctx.selectPage?.("supplies"), "secondary"));
+  if (decision === "awaiting-execution") return panel("正在执行这一站的安排", "按下一次报价办理，完成后显示新投入与回收到账金额。");
+  const initial = Math.max(0, Math.min(cash, ctx.entryCents));
+  const input = h("input", { type: "number", min: "0", max: cash / 100, step: ".01", value: initial / 100, "data-focus-key": "additional-entry-amount" });
+  const percent = ctx.redemptionPercent ?? 0;
+  const recovery = h("select", { "data-focus-key": "redemption-percent", onchange: (event: Event) => ctx.setRedemptionPercent?.(Number((event.currentTarget as HTMLSelectElement).value) as 0 | 50 | 100) }, ...([0, 50, 100] as const).map((n) => h("option", { value: n, selected: percent === n }, n === 0 ? "继续持有" : n === 50 ? "取回一半" : "全部取回")));
+  const preview = h("p", { class: "notice", "aria-live": "polite" }, `新增投入 ${coins(initial)} · 手中还留 ${coins(cash - initial)} 金币`);
+  input.addEventListener("input", () => { const amount = Math.max(0, Math.min(cash, Math.round((Number(input.value) || 0) * 100))); ctx.setEntry(amount); preview.textContent = `新增投入 ${coins(amount)} · 手中还留 ${coins(cash - amount)} 金币`; });
+  return panel(hasHolding ? "这一站：追加、持有或取回" : "这一站，也能开始投资", hasHolding && value !== null ? `现有份额价值 ${coins(value)} 金币${change === null ? "" : `，较对应投入${change >= 0 ? "增加" : "减少"} ${coins(Math.abs(change))}${run.wallet.costBasisCents > 0 ? `（${(change / run.wallet.costBasisCents * 100).toFixed(1)}%）` : ""}`}。` : `之前没参与也没关系。现在手里有 ${coins(cash)} 金币，可以从这一站开始。`,
+    h("div", { class: hasHolding ? "camp-allocation-fields" : "stack" }, h("label", { class: "field" }, "这次新投入多少金币？", input), hasHolding ? h("label", { class: "field" }, "原来那份怎么安排？", recovery) : null),
+    preview, h("p", { class: "fineprint" }, "填 0 表示不增加投入。确认后按下一次报价执行；取回的金额到账前不能拿来追加。"),
+    button("确认本营地安排", () => ctx.action({ type: "submit-redemption", percent: hasHolding ? Number(recovery.value) as 0 | 50 | 100 : 0, additionalEntryCents: Math.max(0, Math.min(cash, Math.round((Number(input.value) || 0) * 100))) }), "gold", !can(run, "submit-redemption"), "camp-allocation-submit"),
+    h("div", { class: "button-row" }, button("先看更新后的档案", () => ctx.selectPage?.("archive"), "small ghost"), button("投入和取回怎么选？", () => ctx.openGuide?.("money"), "small ghost")));
 }
 function freeRest(ctx: GameViewContext): HTMLElement | null {
   const { run } = ctx; if (!run.camp || run.camp.node === "N2") return null;
@@ -260,7 +276,7 @@ function campView(ctx: GameViewContext): HTMLElement {
     ...(extras ? [{ id: "thoughts", label: "预期与感受", body: extras }] : []),
   ];
   return h("div", { class: "camp-stage" }, screenTabs(ctx, pages, "allocation"),
-    h("div", { class: "stage-actions" }, !can(run, "continue") ? h("p", { class: "fineprint" }, camp.node === "N2" ? "先完成金币安排；选 0 也能继续。" : "先完成这一站的持有或回收安排。") : h("p", { class: "fineprint" }, "准备好了就出发，也可以先买牌或补给。"),
+    h("div", { class: "stage-actions" }, !can(run, "continue") ? h("p", { class: "fineprint" }, camp.node === "N2" ? "先完成金币安排；选 0 也能继续。" : "先确认本营地安排；新投入也可以填 0。") : h("p", { class: "fineprint" }, "准备好了就出发，也可以先买牌或补给。"),
       h("div", { class: "button-row" }, button(proceed, () => ctx.action({ type: "continue" }), "", !can(run, "continue"), "camp-continue"), camp.node === "N6" ? button("提前返程", () => ctx.action({ type: "return-home" }), "secondary", !can(run, "return-home"), "return-home") : null)));
 }
 function routeView(ctx: GameViewContext): HTMLElement {

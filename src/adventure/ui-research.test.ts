@@ -1,10 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { makeCalibrationDemo } from "./calibration-demo";
+import { calibrationDemoContext, makeCalibrationDemo } from "./calibration-demo";
 import { createRun, reduceRun } from "./engine";
 import { loadMarketInitial, loadMarketStage, loadResearchCase, resetMarketCacheForTest, type MarketManifest } from "./market";
 import { validateResearchProfile } from "./profile-validation";
-import { compareSchedule, declarePriorExposure, emptyResearchProfile, fundingScenarioFromRun, markPendingHistoryExposure, setHelpPreference, setResearchGoal, showHistoryEvidence, simulateFundingPlan, startHistory, type ResearchProfile } from "./research";
+import { compareSchedule, declarePriorExposure, emptyResearchProfile, fundingScenarioFromRun, markPendingHistoryExposure, recordCalibrationFeeling, saveForecast, setHelpPreference, setResearchGoal, showHistoryEvidence, simulateFundingPlan, startHistory, type ResearchProfile } from "./research";
 import type { ResearchMarketCase } from "./market";
 import type { CardId, Run } from "./types";
 import { hasSeenRelatedCase } from "./ui-case";
@@ -24,6 +24,7 @@ class FakeElement extends FakeNode {
   attributes: Record<string, string> = {};
   listeners: Record<string, (event: { currentTarget: FakeElement }) => void> = {};
   value = "";
+  open = false;
   focused = false; scrolled = false;
   constructor(readonly tag: string) { super(); }
   setAttribute(name: string, value: string): void { this.attributes[name] = value; }
@@ -55,6 +56,13 @@ function selectAt(node: FakeNode, label: string): FakeElement {
 function change(node: FakeElement, value: string): void { node.value = value; node.fire("change"); }
 function visiblePage(node: FakeNode): string | undefined {
   return find(node, (item) => !!item.attributes["data-research-page"] && !("hidden" in item.attributes))?.attributes["data-research-page"];
+}
+function visibleText(node: FakeNode): string {
+  if (node instanceof FakeElement && "hidden" in node.attributes) return "";
+  if (node instanceof FakeElement && node.tag === "details" && !node.open && !("open" in node.attributes)) {
+    return node.children.filter((child): child is FakeElement => child instanceof FakeElement && child.tag === "summary").map(visibleText).join("");
+  }
+  return node.children.map((child) => typeof child === "string" ? child : visibleText(child)).join("");
 }
 const flush = async (): Promise<void> => { await Promise.resolve(); await Promise.resolve(); };
 
@@ -138,22 +146,187 @@ async function delayedCase(caseId: string): Promise<{ requested: ReturnType<type
   return { requested, decoded, release };
 }
 async function completePrimaryHistory(state: ReturnType<typeof harness>): Promise<void> {
-  state.section = "D2"; state.render(); buttonAt(state.root, "锁定并查看同期资料").fire("click");
-  await vi.waitFor(() => expect(state.root.textContent).toContain("本案例结果相对同期基准"));
+  state.section = "D2"; state.render(); buttonAt(state.root, "开始看数据").fire("click");
+  await vi.waitFor(() => expect(state.root.textContent).toContain("这段历史的盈亏"));
   buttonAt(state.root, "作答").fire("click");
-  change(selectAt(state.root, "本案例结果相对同期基准"), "equal");
-  change(selectAt(state.root, "这次主要依据什么"), "根据同日期的数字比较");
+  change(selectAt(state.root, "这段历史比同期市场怎样？"), "equal");
+  change(selectAt(state.root, "你是怎么看出来的"), "根据同日期的数字比较");
   buttonAt(state.root, "提交这次研究").fire("click");
 }
 
 describe("research UI help and next steps", () => {
+  it("introduces a safe money exercise before asking about a real recorded expense", async () => {
+    const { run, manifest } = await fixture(); const originalRun = JSON.stringify(run);
+    const state = harness(run, manifest, emptyResearchProfile()); state.render();
+    expect(visibleText(state.root)).toContain("金币够不够用？");
+    expect(visibleText(state.root)).toContain("资金安排台");
+    expect(visibleText(state.root)).toContain("不会扣游戏金币");
+    expect(visibleText(state.root)).toContain("牌要 25 金币，手里有 20 金币");
+    expect(visibleText(state.root)).toContain("份额还没卖出");
+    expect(state.profile.funding_attempts).toHaveLength(0);
+    expect(state.profile.funding_exposure).toHaveLength(0);
+    buttonAt(state.root, "开始判断").fire("click");
+    expect(visiblePage(state.root)).toBe("d1-question");
+    expect(visibleText(state.root)).toContain("选择一笔花费");
+    expect(visibleText(state.root)).toContain("当时手里有");
+    buttonAt(state.root, "可以支付").fire("click");
+    buttonAt(state.root, "下一步：试试调整").fire("click");
+    expect(visiblePage(state.root)).toBe("d1-revision");
+    expect(visibleText(state.root)).toContain("这里只是试算");
+    expect(state.profile.funding_attempts).toHaveLength(0);
+    expect(JSON.stringify(run)).toBe(originalRun);
+  });
+
+  it("records the first-page rule only when the expanded explanation is actually visible", async () => {
+    const { run, manifest } = await fixture();
+    const state = harness(run, manifest, emptyResearchProfile());
+    const ruleDetails = (): FakeElement => find(state.root, (item) => item.tag === "details" && item.textContent.startsWith("可选：调整最初的参与和取回"))!;
+    state.inert = true; state.render();
+    let explanation = ruleDetails(); explanation.open = true; explanation.fire("toggle"); await flush();
+    expect(state.profile.funding_exposure).toHaveLength(0);
+    state.inert = false; state.hidden = true; state.render();
+    explanation = ruleDetails(); explanation.open = true; explanation.fire("toggle"); await flush();
+    expect(state.profile.funding_exposure).toHaveLength(0);
+    state.hidden = false; state.render();
+    explanation.fire("toggle"); await flush(); // detached from the previous render
+    explanation = ruleDetails(); explanation.open = false; explanation.fire("toggle"); await flush();
+    expect(state.profile.funding_exposure).toHaveLength(0);
+    buttonAt(state.root, "开始判断").fire("click");
+    explanation = ruleDetails(); explanation.open = true; explanation.fire("toggle"); await flush();
+    expect(state.profile.funding_exposure).toHaveLength(0);
+    buttonAt(state.root, "开始").fire("click");
+    explanation = ruleDetails(); explanation.open = true; explanation.fire("toggle"); await flush();
+    expect(state.profile.funding_exposure).toHaveLength(1);
+    expect(state.profile.funding_exposure[0]?.help).toBe("hint");
+  });
+
+  it("records the adjustment rule after it becomes visible even when the answer was already chosen", async () => {
+    const { run, manifest } = await fixture();
+    const state = harness(run, manifest, emptyResearchProfile()); state.render();
+    buttonAt(state.root, "开始判断").fire("click"); buttonAt(state.root, "可以支付").fire("click");
+    state.inert = true; buttonAt(state.root, "下一步：试试调整").fire("click"); await flush();
+    expect(state.profile.funding_exposure).toHaveLength(0);
+    state.inert = false; state.hidden = true; state.render(); await flush();
+    expect(state.profile.funding_exposure).toHaveLength(0);
+    state.hidden = false; state.render(); await flush();
+    expect(state.profile.funding_exposure[0]?.help).toBe("hint");
+    buttonAt(state.root, "判断").fire("click"); buttonAt(state.root, "不能支付").fire("click");
+    buttonAt(state.root, "下一步：试试调整").fire("click"); await flush();
+    buttonAt(state.root, "提交判断并保存计划").fire("click");
+    expect(state.profile.funding_attempts.at(-1)).toMatchObject({ answer: false, help: "hint" });
+    expect(state.profile.knowledge_evidence.at(-1)?.independent).toBe(false);
+  });
+
+  it("retains stronger help on the original question and records a visible rule for a changed plan", async () => {
+    const { run, manifest } = await fixture();
+    const state = harness(run, manifest, emptyResearchProfile()); state.render();
+    buttonAt(state.root, "开始判断").fire("click"); buttonAt(state.root, "分步说明").fire("click"); await flush();
+    const firstKey = state.profile.funding_exposure[0]!.questionKey;
+    expect(state.profile.funding_exposure[0]?.help).toBe("step");
+    buttonAt(state.root, "开始").fire("click");
+    let explanation = find(state.root, (item) => item.tag === "details" && item.textContent.startsWith("可选：调整最初的参与和取回"))!;
+    explanation.open = true; explanation.fire("toggle"); await flush();
+    expect(state.profile.funding_exposure.find((item) => item.questionKey === firstKey)?.help).toBe("step");
+    const amount = find(state.root, (item) => item.attributes["data-focus-key"] === "funding-plan-amount")!;
+    change(amount, "19");
+    explanation = find(state.root, (item) => item.tag === "details" && item.textContent.startsWith("可选：调整最初的参与和取回"))!;
+    explanation.open = true; explanation.fire("toggle"); await flush();
+    expect(state.profile.funding_exposure.find((item) => item.questionKey === firstKey)?.help).toBe("step");
+    expect(state.profile.funding_exposure.find((item) => item.questionKey !== firstKey)?.help).toBe("hint");
+  });
+
+  it("explains a matched historical comparison and can check a second period after the first answer", async () => {
+    const { run, manifest } = await fixture(); const originalRun = JSON.stringify(run);
+    const state = harness(run, manifest, emptyResearchProfile()); state.section = "D2"; state.render();
+    expect(visibleText(state.root)).toContain("这次涨跌，真的说明什么？");
+    expect(visibleText(state.root)).toContain("历史对照台");
+    expect(visibleText(state.root)).toContain("不会扣游戏金币");
+    expect(visibleText(state.root)).toContain("同样的金币和时间");
+    expect(visibleText(state.root)).toContain("暂时不猜也可以");
+    expect(visibleText(state.root)).not.toContain("这段历史的盈亏");
+    expect(state.profile.research_process).toHaveLength(0);
+    change(selectAt(state.root, "你猜这段历史比同期市场怎样？"), "underperform");
+    buttonAt(state.root, "开始看数据").fire("click");
+    await vi.waitFor(() => expect(state.profile.research_process.at(-1)?.shown).not.toBeNull());
+    expect(visiblePage(state.root)).toBe("d2-data");
+    expect(visibleText(state.root)).toContain("这段历史的盈亏");
+    expect(visibleText(state.root)).toContain("同期市场的盈亏");
+    expect(state.profile.research_process.at(-1)?.initialClaim).toBe("underperform");
+    buttonAt(state.root, "作答").fire("click");
+    change(selectAt(state.root, "这段历史比同期市场怎样？"), "equal");
+    buttonAt(state.root, "再看另一段").fire("click");
+    await vi.waitFor(() => expect(state.profile.research_process.at(-1)?.shown?.other).toBeDefined());
+    expect(visiblePage(state.root)).toBe("d2-other");
+    buttonAt(state.root, "作答").fire("click");
+    const comparison = selectAt(state.root, "这段历史比同期市场怎样？");
+    expect(find(comparison, (item) => item.tag === "option" && "selected" in item.attributes)?.attributes.value).toBe("equal");
+    expect(state.profile.research_process.at(-1)?.submitted).toBe(false);
+    expect(JSON.stringify(run)).toBe(originalRun);
+  });
+
+  it("submits the comparison without forcing or inventing a reason", async () => {
+    const { run, manifest } = await fixture();
+    const state = harness(run, manifest, emptyResearchProfile()); state.section = "D2"; state.render();
+    buttonAt(state.root, "开始看数据").fire("click");
+    await vi.waitFor(() => expect(state.profile.research_process.at(-1)?.shown).not.toBeNull());
+    buttonAt(state.root, "作答").fire("click");
+    expect(visibleText(state.root)).toContain("你是怎么看出来的？（可不填）");
+    change(selectAt(state.root, "这段历史比同期市场怎样？"), "equal");
+    buttonAt(state.root, "提交这次研究").fire("click");
+    expect(state.profile.research_process.at(-1)?.final).toMatchObject({ comparison: "equal", reason: "" });
+    expect(state.profile.knowledge_evidence.some((item) => item.dimension === "K1")).toBe(true);
+    expect(validateResearchProfile(JSON.parse(JSON.stringify(state.profile)), "real").ok).toBe(true);
+  });
+
+  it("shows fixed additional investments and distinguishes their pending and insufficient-cash outcomes", async () => {
+    let run = await makeCalibrationDemo(); run.source = "real";
+    run = reduceRun(run, { type: "buy-archive" });
+    run = reduceRun(run, { type: "submit-redemption", percent: 50, additionalEntryCents: 1000 });
+    const manifest = await loadMarketInitial(); const derived = fundingScenarioFromRun(run)!;
+    const originalRun = JSON.stringify(run);
+    const pending = harness(run, manifest, emptyResearchProfile()); pending.render();
+    expect(visibleText(pending.root)).toContain("后续追加按原金额保留：10 金币");
+    buttonAt(pending.root, "开始判断").fire("click"); buttonAt(pending.root, "可以支付").fire("click");
+    buttonAt(pending.root, "下一步：试试调整").fire("click");
+    expect(visibleText(pending.root)).toContain("后续追加按原金额保留：10 金币");
+    buttonAt(pending.root, "提交判断并保存计划").fire("click");
+    expect(visibleText(pending.root)).toContain("追加金额已预留，这次操作还未执行，新增份额等待下一开盘报价");
+    expect(pending.profile.funding_attempts.at(-1)?.revisedTimeline.stoppedAt).toBe("pending-additional-quote");
+
+    const insufficient = harness(run, manifest, emptyResearchProfile()); insufficient.render();
+    buttonAt(insufficient.root, "开始判断").fire("click"); buttonAt(insufficient.root, "可以支付").fire("click");
+    buttonAt(insufficient.root, "下一步：试试调整").fire("click");
+    const amount = find(insufficient.root, (item) => item.attributes["data-focus-key"] === "funding-revised-amount")!;
+    change(amount, String(derived.scenario.startingCashCents / 100));
+    buttonAt(insufficient.root, "提交判断并保存计划").fire("click");
+    const saved = insufficient.profile.funding_attempts.at(-1)!;
+    const stopped = saved.revisedTimeline.rows.find((row) => row.id === saved.revisedTimeline.stoppedAt)!;
+    expect(stopped.kind).toBe("additional-reserve");
+    expect(visibleText(insufficient.root)).toContain(`这次追加需要 ${coins(stopped.amountCents)} 金币，当时可用 ${coins(stopped.cashBeforeCents)} 金币，还差`);
+    expect(JSON.stringify(run)).toBe(originalRun);
+  });
+
+  it("passes a simultaneous addition into the recorded forecast comparison", async () => {
+    const run = await makeCalibrationDemo(); const manifest = await loadMarketInitial();
+    let profile = saveForecast(emptyResearchProfile(true, "demo"), { id: "before", caseId: run.caseId, amountCents: 2000,
+      lossMin: .1, lossMax: .2, minCashCents: 1000, minHealthRatio: .5, feeling: "mild", action: "half", priorExposure: false, beforeFuture: true });
+    profile = recordCalibrationFeeling(profile, "before", calibrationDemoContext(run), "strong");
+    expect(profile.calibration[0]?.comparison).toBe("matched");
+    const state = harness(run, manifest, profile);
+    state.run = reduceRun(run, { type: "submit-redemption", percent: 50, additionalEntryCents: 1000 });
+    state.ui.afterAction({ type: "submit-redemption", percent: 50, additionalEntryCents: 1000 });
+    expect(state.profile.calibration[0]).toMatchObject({ feeling: "strong", action: "half", comparison: "unavailable", affectComparison: "unknown", actionComparison: "unknown", unavailableReason: expect.stringContaining("同时追加") });
+    const report = state.ui.calibrationReport() as unknown as FakeElement;
+    expect(report.textContent).toContain("感受来自本人填写，行动来自本局选择");
+  });
+
   it("labels recorded market stages in plain language without changing the underlying journey", async () => {
     const { run, manifest } = await fixture(); const before = JSON.stringify(run);
     const state = harness(run, manifest, emptyResearchProfile()); state.render();
     expect(state.root.textContent).toContain("第一段回收时");
     expect(state.root.textContent).not.toContain("实际执行：t1-exec");
     state.ui.leave(); state.section = "D2"; state.render();
-    buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    buttonAt(state.root, "开始看数据").fire("click");
     await vi.waitFor(() => expect(state.profile.research_process.at(-1)?.shown).not.toBeNull());
     expect(state.root.textContent).toContain("第一段回收时");
     expect(state.root.textContent).toContain("第二段回收时");
@@ -165,7 +338,7 @@ describe("research UI help and next steps", () => {
   it("moves focus to the active step when navigating between research pages", async () => {
     const { run, manifest } = await fixture();
     const state = harness(run, manifest, emptyResearchProfile()); state.render();
-    buttonAt(state.root, "下一步：判断采购").fire("click");
+    buttonAt(state.root, "开始判断").fire("click");
     expect(visiblePage(state.root)).toBe("d1-question");
     expect(buttonAt(state.root, "判断").attributes["aria-pressed"]).toBe("true");
     expect(buttonAt(state.root, "判断").focused).toBe(true);
@@ -226,8 +399,8 @@ describe("research UI help and next steps", () => {
     expect(state.profile.research_process).toHaveLength(attempts);
     const start = find(state.root, (item) => item.attributes["data-focus-key"] === "history-task-start")!;
     expect(start.focused).toBe(true); expect(start.scrolled).toBe(true);
-    expect(find(selectAt(state.root, "查看的历史片段"), (item) => item.tag === "option" && "selected" in item.attributes)?.attributes.value).toBe("lantern-b");
-    buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    expect(find(selectAt(state.root, "想看哪段历史？"), (item) => item.tag === "option" && "selected" in item.attributes)?.attributes.value).toBe("lantern-b");
+    buttonAt(state.root, "开始看数据").fire("click");
     await vi.waitFor(() => expect(state.profile.research_process.at(-1)?.shown).not.toBeNull());
     expect(state.profile.research_process.at(-1)).toMatchObject({ caseId: "lantern-b", priorExposure: false });
   });
@@ -240,9 +413,9 @@ describe("research UI help and next steps", () => {
     expect(buttonAt(result, "复习已看过的片段").attributes.class).toContain("gold");
     expect(result.textContent).not.toContain("继续 · 未见历史片段");
     buttonAt(result, "复习已看过的片段").fire("click");
-    const selected = find(selectAt(state.root, "查看的历史片段"), (item) => item.tag === "option" && "selected" in item.attributes)!;
+    const selected = find(selectAt(state.root, "想看哪段历史？"), (item) => item.tag === "option" && "selected" in item.attributes)!;
     expect(selected.textContent).toContain("已看过 · 复习");
-    buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    buttonAt(state.root, "开始看数据").fire("click");
     await vi.waitFor(() => expect(state.profile.research_process.at(-1)?.shown).not.toBeNull());
     expect(state.profile.research_process.at(-1)?.priorExposure).toBe(true);
   });
@@ -250,11 +423,11 @@ describe("research UI help and next steps", () => {
   it("resumes an existing locked D2 attempt without creating a new one, even with no catalogue", async () => {
     const { run, manifest } = await fixture();
     const state = harness(run, manifest, setResearchGoal(emptyResearchProfile(), "goal", "history"));
-    state.section = "D2"; state.render(); buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    state.section = "D2"; state.render(); buttonAt(state.root, "开始看数据").fire("click");
     await vi.waitFor(() => expect(state.profile.research_process.at(-1)?.shown).not.toBeNull());
     const schedule = { startingCashCents: 7200, participationCents: 2000, t1: 0 as const, t2: 0 as const };
     state.profile = startHistory(state.profile, { id: "already-locked", caseId: "lantern-b", questionVersion: "d2-v1", schedule, initialClaim: "unknown", priorExposure: false }); state.render();
-    change(selectAt(state.root, "本案例结果相对同期基准"), "equal"); change(selectAt(state.root, "这次主要依据什么"), "根据同日期的数字比较");
+    change(selectAt(state.root, "这段历史比同期市场怎样？"), "equal"); change(selectAt(state.root, "你是怎么看出来的"), "根据同日期的数字比较");
     buttonAt(state.root, "提交这次研究").fire("click"); state.manifest = null; state.error = "网络不可用"; state.render();
     const result = find(state.root, (item) => item.attributes.id === "research-d2-result")!;
     expect(buttonAt(result, "继续已锁定的历史研究").attributes.class).toContain("gold");
@@ -309,7 +482,7 @@ describe("research UI help and next steps", () => {
 
   it("uses equal self-chosen next steps and no persistence claims in play-only mode", async () => {
     const { run, manifest } = await fixture(); const state = harness(run, manifest, emptyResearchProfile(false)); state.render();
-    expect(state.root.textContent).toContain("试试另一份计划"); expect(state.root.textContent).not.toContain("为自己保存另一份计划");
+    expect(state.root.textContent).toContain("换一种安排试试"); expect(state.root.textContent).not.toContain("为自己保存另一份计划");
     buttonAt(state.root, "可以支付").fire("click"); buttonAt(state.root, "提交判断并查看核查").fire("click");
     const result = find(state.root, (item) => item.attributes.id === "research-d1-result")!;
     expect(result.textContent).toContain("接下来可以自行选择练习"); expect(result.textContent).not.toContain("当前建议");
@@ -350,10 +523,10 @@ describe("research UI help and next steps", () => {
     const state = harness(run, manifest, emptyResearchProfile(enabled));
     state.section = "D2"; state.render();
     expect(state.root.textContent).not.toContain("研究后的观察");
-    buttonAt(state.root, "锁定并查看同期资料").fire("click");
-    await vi.waitFor(() => expect(state.root.textContent).toContain("案例固定日程盈亏"));
+    buttonAt(state.root, "开始看数据").fire("click");
+    await vi.waitFor(() => expect(state.root.textContent).toContain("这段历史的盈亏"));
     buttonAt(state.root, "再查看另一段历史（未见）").fire("click");
-    await vi.waitFor(() => expect(state.root.textContent).toContain("另一段历史的结果相对第一段"));
+    await vi.waitFor(() => expect(state.root.textContent).toContain("另一段比第一段怎样？"));
     const entry = run.history.find((item) => item.action === "submit-entry")!;
     const cash = entry.snapshot!.cashCents; const invested = Number(entry.data.amountCents);
     const schedule = { startingCashCents: cash, participationCents: Math.min(cash, invested || 2000), t1: 0 as const, t2: 0 as const };
@@ -361,19 +534,19 @@ describe("research UI help and next steps", () => {
     const second = compareSchedule(await loadResearchCase("lantern-b", true), schedule);
     const difference = second.asset.gainCents > first.asset.gainCents ? "outperform" : second.asset.gainCents < first.asset.gainCents ? "underperform" : "equal";
     const wrongDifference = difference === "equal" ? "outperform" : "equal";
-    change(selectAt(state.root, "本案例结果相对同期基准"), first.direction);
-    change(selectAt(state.root, "另一段历史的结果相对第一段"), wrong === "difference" ? wrongDifference : difference);
+    change(selectAt(state.root, "这段历史比同期市场怎样？"), first.direction);
+    change(selectAt(state.root, "另一段比第一段怎样？"), wrong === "difference" ? wrongDifference : difference);
     change(selectAt(state.root, "这些结果能说明什么"), wrong === "boundary" ? "predicts_future" : "only_samples");
-    change(selectAt(state.root, "这次主要依据什么"), "查看了不同片段的差异");
+    change(selectAt(state.root, "你是怎么看出来的"), "查看了不同片段的差异");
     buttonAt(state.root, "提交这次研究").fire("click");
     const result = find(state.root, (item) => item.tag === "section" && item.textContent.startsWith("研究后的观察"))!;
     const comparison = find(result, (item) => item.tag === "p" && item.textContent.startsWith("同期比较："))!;
     const differenceResult = find(result, (item) => item.tag === "p" && item.textContent.startsWith("两段比较："))!;
-    const boundary = find(result, (item) => item.tag === "p" && item.textContent.startsWith("样本边界："))!;
+    const boundary = find(result, (item) => item.tag === "p" && item.textContent.startsWith("关于未来："))!;
     expect(comparison.textContent).toContain("这一步与数据一致");
     expect(differenceResult.textContent).toContain(wrong === "difference" ? "这一步需要再核查" : "这一步与数据一致");
     expect(boundary.textContent).toContain(wrong === "boundary" ? "这一步需要再核查" : "这一步与数据一致");
-    expect(boundary.textContent).toContain(wrong === "boundary" ? "你选“说明未来必然得到相同结果”" : "你选“描述这两个样本，不能预测未来”");
+    expect(boundary.textContent).toContain(wrong === "boundary" ? "你选“说明未来必然得到相同结果”" : "你选“只说明这两段历史，不能预测未来”");
     expect(result.textContent).not.toContain("本次判断与展示数据不一致");
     if (enabled) {
       expect(state.profile.knowledge_evidence.find((item) => item.dimension === "K1")?.correct).toBe(true);
@@ -384,17 +557,17 @@ describe("research UI help and next steps", () => {
     const { run, manifest } = await fixture();
     const state = harness(run, manifest, emptyResearchProfile(enabled));
     state.section = "D2"; state.render();
-    buttonAt(state.root, "锁定并查看同期资料").fire("click");
-    await vi.waitFor(() => expect(state.root.textContent).toContain("本案例结果相对同期基准"));
-    change(selectAt(state.root, "本案例结果相对同期基准"), "equal");
-    change(selectAt(state.root, "这次主要依据什么"), "根据同日期的数字比较");
+    buttonAt(state.root, "开始看数据").fire("click");
+    await vi.waitFor(() => expect(state.root.textContent).toContain("这段历史的盈亏"));
+    change(selectAt(state.root, "这段历史比同期市场怎样？"), "equal");
+    change(selectAt(state.root, "你是怎么看出来的"), "根据同日期的数字比较");
     expect(state.root.textContent).not.toContain("研究后的观察");
     buttonAt(state.root, "提交这次研究").fire("click");
     const result = find(state.root, (item) => item.tag === "section" && item.textContent.startsWith("研究后的观察"))!;
     const feedback = find(result, (item) => item.attributes.class === "notice")!;
     expect(feedback.textContent).toContain("同期比较：");
     expect(feedback.textContent).not.toContain("两段比较：");
-    expect(feedback.textContent).not.toContain("样本边界：");
+    expect(feedback.textContent).not.toContain("关于未来：");
   });
   it.each([true, false])("reports the first blocked purchase in the revised D1 plan (observation=%s)", async (enabled) => {
     const fixtureState = await fixture(); let run = fixtureState.run;
@@ -407,14 +580,14 @@ describe("research UI help and next steps", () => {
     const blocked = simulateFundingPlan(derived.scenario, revised).rows.find((row) => row.canPay === false)!;
     expect(blocked).toBeDefined();
     const state = harness(run, fixtureState.manifest, emptyResearchProfile(enabled)); state.render();
-    const selected = find(selectAt(state.root, "选择要核查的采购"), (item) => item.tag === "option" && "selected" in item.attributes)!;
-    const field = find(state.root, (item) => item.tag === "label" && item.textContent.startsWith("调整后的参与金额"))!;
+    const selected = find(selectAt(state.root, "选择一笔花费"), (item) => item.tag === "option" && "selected" in item.attributes)!;
+    const field = find(state.root, (item) => item.tag === "label" && item.textContent.startsWith("一开始改拿多少金币参与"))!;
     change(find(field, (item) => item.tag === "input")!, String(derived.scenario.startingCashCents / 100));
     buttonAt(state.root, "不能支付").fire("click");
     buttonAt(state.root, enabled ? "提交判断并保存计划" : "提交判断并查看核查").fire("click");
     const result = find(state.root, (item) => item.tag === "section" && item.textContent.startsWith("这次核查的结果"))!;
-    expect(result.textContent).toContain(`调整后的计划在“${blocked.label}”暂停`);
-    expect(result.textContent).toContain(`需要 ${coins(blocked.amountCents)} 金币，采购前可用 ${coins(blocked.cashBeforeCents)} 金币，还差 ${coins(blocked.amountCents - blocked.cashBeforeCents)} 金币`);
+    expect(result.textContent).toContain(`调整后的计划在“${blocked.label.replace(/^实际采购：/, "")}”暂停`);
+    expect(result.textContent).toContain(`需要 ${coins(blocked.amountCents)} 金币，当时可用 ${coins(blocked.cashBeforeCents)} 金币，还差 ${coins(blocked.amountCents - blocked.cashBeforeCents)} 金币`);
     if (blocked.id !== selected.attributes.value) expect(result.textContent).toContain("调整后的计划尚未到达本次核查的采购");
   });
   it("retries a missing case catalogue without mistaking it for exhausted cases", async () => {
@@ -429,7 +602,7 @@ describe("research UI help and next steps", () => {
     state.loading = true; state.error = null; state.render();
     expect(buttonAt(state.root, "正在加载案例目录…").attributes.disabled).toBe("");
     state.loading = false; state.manifest = manifest; state.render();
-    expect(buttonAt(state.root, "锁定并查看同期资料").attributes.disabled).toBeUndefined();
+    expect(buttonAt(state.root, "开始看数据").attributes.disabled).toBeUndefined();
     expect(state.profile.research_process).toHaveLength(0);
   });
   it("continues a locked task when the catalogue is missing and restores the second-case choice after recovery", async () => {
@@ -467,7 +640,7 @@ describe("research UI help and next steps", () => {
     expect(visiblePage(state.root)).toBe("d1-plan");
     expect(state.profile.funding_exposure).toHaveLength(0);
     state.inert = true; buttonAt(state.root, "判断").fire("click"); await flush();
-    expect(state.root.textContent).toContain("先找采购前的可用金币");
+    expect(state.root.textContent).toContain("先找买东西前手里能花的金币");
     expect(state.profile.funding_exposure).toHaveLength(0);
     state.inert = false; state.render(); await flush();
     expect(state.profile.funding_exposure).toHaveLength(1);
@@ -490,9 +663,9 @@ describe("research UI help and next steps", () => {
     const state = harness(run, manifest, setHelpPreference(emptyResearchProfile(), "preferred", "hint"), new Set(["lantern-a"]));
     state.section = "D2"; state.render();
     expect(state.profile.research_process).toHaveLength(0);
-    expect(state.root.textContent).not.toContain("先比较同日程下两项盈亏");
+    expect(state.root.textContent).not.toContain("先比较同一时间里历史案例和市场赚了多少");
     expect(state.root.textContent).not.toContain("相关片段 · 当前旅程");
-    buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    buttonAt(state.root, "开始看数据").fire("click");
     await vi.waitFor(() => expect(state.profile.research_process.at(-1)?.shown).not.toBeNull());
     expect(state.profile.research_process.at(-1)?.helpUsed).toBe("self");
     buttonAt(state.root, "作答").fire("click");
@@ -511,16 +684,16 @@ describe("research UI help and next steps", () => {
     expect(find(state.root, (item) => item.tag === "option" && item.attributes.value === "lantern-b")?.textContent).toContain("未见");
     buttonAt(state.root, "作答").fire("click");
     expect(buttonAt(state.root, "自主尝试").attributes["aria-pressed"]).toBe("true");
-    change(selectAt(state.root, "本案例结果相对同期基准"), attempt.shown!.primary.direction);
+    change(selectAt(state.root, "这段历史比同期市场怎样？"), attempt.shown!.primary.direction);
     const shown = state.profile.research_process.at(-1)!.shown!;
     const difference = shown.other!.asset.gainCents > shown.primary.asset.gainCents ? "outperform" : shown.other!.asset.gainCents < shown.primary.asset.gainCents ? "underperform" : "equal";
-    change(selectAt(state.root, "另一段历史的结果相对第一段"), difference);
+    change(selectAt(state.root, "另一段比第一段怎样？"), difference);
     change(selectAt(state.root, "这些结果能说明什么"), "only_samples");
-    change(selectAt(state.root, "这次主要依据什么"), "根据同日期的数字比较");
+    change(selectAt(state.root, "你是怎么看出来的"), "根据同日期的数字比较");
     buttonAt(state.root, "提交这次研究").fire("click");
     expect(state.root.textContent).toContain("目前没有可用的未见片段");
     buttonAt(state.root, "复习已看过的片段").fire("click");
-    buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    buttonAt(state.root, "开始看数据").fire("click");
     await vi.waitFor(() => expect(state.profile.research_process.at(-1)?.shown).not.toBeNull());
     expect(state.profile.research_process).toHaveLength(2);
     expect(state.profile.research_process.at(-1)?.priorExposure).toBe(true);
@@ -531,20 +704,20 @@ describe("research UI help and next steps", () => {
     const { run, manifest } = await fixture();
     const state = harness(run, manifest, emptyResearchProfile());
     state.section = "D2"; state.render();
-    buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    buttonAt(state.root, "开始看数据").fire("click");
     await vi.waitFor(() => expect(state.profile.research_process.at(-1)?.shown).not.toBeNull());
     buttonAt(state.root, "作答").fire("click");
     expect(buttonAt(state.root, "自主尝试").attributes["aria-pressed"]).toBe("true");
     const attempt = state.profile.research_process.at(-1)!;
     expect(attempt.caseId).toBe("lantern-a");
     expect(attempt.helpUsed).toBe("self");
-    change(selectAt(state.root, "本案例结果相对同期基准"), attempt.shown!.primary.direction);
-    change(selectAt(state.root, "这次主要依据什么"), "根据同日期的数字比较");
+    change(selectAt(state.root, "这段历史比同期市场怎样？"), attempt.shown!.primary.direction);
+    change(selectAt(state.root, "你是怎么看出来的"), "根据同日期的数字比较");
     buttonAt(state.root, "提交这次研究").fire("click");
     expect(find(state.root, (item) => item.tag === "button" && item.textContent.startsWith("再查看另一段历史"))).toBeUndefined();
     expect(state.root.textContent).toContain("本题资料已固定");
     buttonAt(state.root, "继续 · 未见历史片段").fire("click");
-    buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    buttonAt(state.root, "开始看数据").fire("click");
     await vi.waitFor(() => expect(state.profile.research_process.at(-1)?.shown).not.toBeNull());
     expect(state.profile.research_process).toHaveLength(2);
     expect(state.profile.research_process.at(-1)).toMatchObject({ caseId: "lantern-b", priorExposure: false });
@@ -569,19 +742,19 @@ describe("research UI help and next steps", () => {
     run = reduceRun(run, { type: "upgrade-card", cardInstanceId: upgrade.instanceId });
     run = reduceRun(run, { type: "purchase-attempted", purchase: "upgrade-card", cardInstanceId: later.instanceId });
     const state = harness(run, fixtureState.manifest, emptyResearchProfile()); state.render();
-    let select = selectAt(state.root, "选择要核查的采购");
+    let select = selectAt(state.root, "选择一笔花费");
     const selected = find(select, (item) => item.tag === "option" && "selected" in item.attributes)!;
-    expect(selected.textContent).toContain("原局尝试但未支付的采购");
-    const first = find(select, (item) => item.tag === "option" && item.textContent.includes("实际采购"))!;
+    expect(selected.textContent).toContain("原局想买但金币不够的东西");
+    const first = find(select, (item) => item.tag === "option" && item.textContent.includes("购买历史档案"))!;
     change(select, first.attributes.value!);
-    select = selectAt(state.root, "选择要核查的采购");
+    select = selectAt(state.root, "选择一笔花费");
     expect(find(select, (item) => item.tag === "option" && "selected" in item.attributes)?.attributes.value).toBe(first.attributes.value);
-    const attempted = find(select, (item) => item.tag === "option" && item.textContent.includes("原局尝试但未支付"))!;
+    const attempted = find(select, (item) => item.tag === "option" && item.textContent.includes("原局想买但金币不够"))!;
     change(select, attempted.attributes.value!);
-    const moneyLabel = find(state.root, (item) => item.tag === "label" && item.textContent.startsWith("试算的参与金额"))!;
+    const moneyLabel = find(state.root, (item) => item.tag === "label" && item.textContent.startsWith("一开始拿多少金币参与"))!;
     const money = find(moneyLabel, (item) => item.tag === "input")!;
     change(money, "1000");
-    select = selectAt(state.root, "选择要核查的采购");
+    select = selectAt(state.root, "选择一笔花费");
     const derived = fundingScenarioFromRun(run)!;
     const unpaid = simulateFundingPlan(derived.scenario, { ...derived.plan, participationCents: derived.scenario.startingCashCents }).rows.find((row) => row.canPay === false)!;
     expect(find(select, (item) => item.tag === "option" && "selected" in item.attributes)?.attributes.value).toBe(unpaid.id);
@@ -600,11 +773,11 @@ describe("research UI help and next steps", () => {
     });
     const state = harness(run, manifest, emptyResearchProfile());
     state.section = "D2"; state.render();
-    buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    buttonAt(state.root, "开始看数据").fire("click");
     await vi.waitFor(() => expect(state.profile.research_process.at(-1)?.shown).not.toBeNull());
     const attempt = state.profile.research_process.at(-1)!;
-    change(selectAt(state.root, "本案例结果相对同期基准"), attempt.shown!.primary.direction);
-    change(selectAt(state.root, "这次主要依据什么"), "根据同日期的数字比较");
+    change(selectAt(state.root, "这段历史比同期市场怎样？"), attempt.shown!.primary.direction);
+    change(selectAt(state.root, "你是怎么看出来的"), "根据同日期的数字比较");
     buttonAt(state.root, "再查看另一段历史（未见）").fire("click");
     expect(buttonAt(state.root, "提交这次研究").attributes.disabled).toBe("");
     buttonAt(state.root, "提交这次研究").fire("click");
@@ -617,7 +790,7 @@ describe("research UI help and next steps", () => {
     const { run, manifest } = await fixture();
     const state = harness(run, manifest, emptyResearchProfile(false));
     state.render(); buttonAt(state.root, "分步说明").fire("click"); await flush();
-    expect(state.root.textContent).toContain("先找采购前的可用金币");
+    expect(state.root.textContent).toContain("先找买东西前手里能花的金币");
     buttonAt(state.root, "可以支付").fire("click");
     buttonAt(state.root, "提交判断并查看核查").fire("click");
     expect(state.profile.funding_exposure).toHaveLength(0);
@@ -642,8 +815,8 @@ describe("research data presentation while backgrounded or obscured", () => {
     await vi.waitFor(() => expect(state.profile.research_process[0]?.shown).not.toBeNull());
     const attempt = state.profile.research_process[0]!;
     expect(attempt).toMatchObject({ id: "locked-before-external", schedule, initialClaim: "underperform", priorExposure: false, exposedCaseIdsAfterLock: ["lantern-a"] });
-    change(selectAt(state.root, "本案例结果相对同期基准"), attempt.shown!.primary.direction);
-    change(selectAt(state.root, "这次主要依据什么"), "根据同日期的数字比较");
+    change(selectAt(state.root, "这段历史比同期市场怎样？"), attempt.shown!.primary.direction);
+    change(selectAt(state.root, "你是怎么看出来的"), "根据同日期的数字比较");
     buttonAt(state.root, "提交这次研究").fire("click");
     expect(state.profile.knowledge_evidence.find((item) => item.dimension === "K1")).toMatchObject({ priorExposure: false, counted: false, independent: false, exclusion_reason: expect.stringContaining("锁题后在其他入口展示") });
     expect(state.root.textContent).toContain("锁题后在其他入口展示过相关资料");
@@ -665,11 +838,11 @@ describe("research data presentation while backgrounded or obscured", () => {
     await vi.waitFor(() => expect(state.profile.research_process[0]?.shown?.other).toBeDefined());
     const shown = state.profile.research_process[0]!.shown!;
     expect(shown.otherPriorExposure).toBe(true);
-    change(selectAt(state.root, "本案例结果相对同期基准"), shown.primary.direction);
+    change(selectAt(state.root, "这段历史比同期市场怎样？"), shown.primary.direction);
     const difference = shown.other!.asset.gainCents > shown.primary.asset.gainCents ? "outperform" : shown.other!.asset.gainCents < shown.primary.asset.gainCents ? "underperform" : "equal";
-    change(selectAt(state.root, "另一段历史的结果相对第一段"), difference);
+    change(selectAt(state.root, "另一段比第一段怎样？"), difference);
     change(selectAt(state.root, "这些结果能说明什么"), "only_samples");
-    change(selectAt(state.root, "这次主要依据什么"), "查看了不同片段的差异");
+    change(selectAt(state.root, "你是怎么看出来的"), "查看了不同片段的差异");
     buttonAt(state.root, "提交这次研究").fire("click");
     expect(state.profile.knowledge_evidence.find((item) => item.dimension === "K1")).toMatchObject({ counted: true, independent: true });
     expect(state.profile.knowledge_evidence.find((item) => item.dimension === "K2")).toMatchObject({ counted: false, independent: false, exclusion_reason: expect.stringContaining("其他入口") });
@@ -677,12 +850,12 @@ describe("research data presentation while backgrounded or obscured", () => {
 
   it("does not record the task's own first display as external exposure", async () => {
     const { run, manifest } = await fixture(); const state = harness(run, manifest, emptyResearchProfile());
-    state.section = "D2"; state.render(); buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    state.section = "D2"; state.render(); buttonAt(state.root, "开始看数据").fire("click");
     await vi.waitFor(() => expect(state.profile.research_process[0]?.shown).not.toBeNull());
     const attempt = state.profile.research_process[0]!;
     expect(attempt.exposedCaseIdsAfterLock).toBeUndefined();
-    change(selectAt(state.root, "本案例结果相对同期基准"), attempt.shown!.primary.direction);
-    change(selectAt(state.root, "这次主要依据什么"), "根据同日期的数字比较");
+    change(selectAt(state.root, "这段历史比同期市场怎样？"), attempt.shown!.primary.direction);
+    change(selectAt(state.root, "你是怎么看出来的"), "根据同日期的数字比较");
     buttonAt(state.root, "提交这次研究").fire("click");
     expect(state.profile.knowledge_evidence.find((item) => item.dimension === "K1")).toMatchObject({ counted: true, independent: true });
   });
@@ -696,7 +869,7 @@ describe("research data presentation while backgrounded or obscured", () => {
     const fetchSpy = vi.fn(globalThis.fetch); vi.stubGlobal("fetch", fetchSpy);
     state.section = "D2"; state.render(); await flush();
     expect(state.root.textContent).toContain("历史对照台暂时等待结算");
-    expect(state.root.textContent).not.toContain("案例固定日程盈亏");
+    expect(state.root.textContent).not.toContain("这段历史的盈亏");
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(state.profile.research_process[0]).toMatchObject({ id: "legacy-locked", schedule, initialClaim: "underperform", priorExposure: false, shown: null });
     const settled = reduceRun(pending, { type: "apply-quote", quote: await loadMarketStage(pending.caseId, "exit-after-entry", true) });
@@ -731,7 +904,7 @@ describe("research data presentation while backgrounded or obscured", () => {
     const all = await loadMarketInitial();
     const manifest = { ...all, cases: all.cases.filter((item) => item.caseId === "lantern-a" || item.caseId === "lantern-b") };
     const state = harness(run, manifest, emptyResearchProfile());
-    state.section = "D2"; state.render(); buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    state.section = "D2"; state.render(); buttonAt(state.root, "开始看数据").fire("click");
     await vi.waitFor(() => expect(state.profile.research_process[0]?.shown).not.toBeNull());
     expect(state.profile.research_process[0]).toMatchObject({ caseId: "lantern-b", priorExposure: false });
     buttonAt(state.root, "再查看另一段历史（复习）").fire("click");
@@ -739,12 +912,12 @@ describe("research data presentation while backgrounded or obscured", () => {
     const attempt = state.profile.research_process[0]!;
     expect(attempt.shown?.other?.caseId).toBe("lantern-a");
     expect(attempt.shown?.otherPriorExposure).toBe(true);
-    change(selectAt(state.root, "本案例结果相对同期基准"), attempt.shown!.primary.direction);
+    change(selectAt(state.root, "这段历史比同期市场怎样？"), attempt.shown!.primary.direction);
     const shown = attempt.shown!;
     const difference = shown.other!.asset.gainCents > shown.primary.asset.gainCents ? "outperform" : shown.other!.asset.gainCents < shown.primary.asset.gainCents ? "underperform" : "equal";
-    change(selectAt(state.root, "另一段历史的结果相对第一段"), difference);
+    change(selectAt(state.root, "另一段比第一段怎样？"), difference);
     change(selectAt(state.root, "这些结果能说明什么"), "only_samples");
-    change(selectAt(state.root, "这次主要依据什么"), "查看了不同片段的差异");
+    change(selectAt(state.root, "你是怎么看出来的"), "查看了不同片段的差异");
     buttonAt(state.root, "提交这次研究").fire("click");
     expect(state.profile.knowledge_evidence.find((item) => item.dimension === "K1")).toMatchObject({ priorExposure: false, counted: true });
     expect(state.profile.knowledge_evidence.find((item) => item.dimension === "K2")).toMatchObject({ priorExposure: true, counted: false });
@@ -755,8 +928,8 @@ describe("research data presentation while backgrounded or obscured", () => {
     const gate = await delayedCase("lantern-a");
     const state = harness(run, manifest, setHelpPreference(emptyResearchProfile(), "help", "step"));
     state.section = "D2"; state.render();
-    change(selectAt(state.root, "初步判断"), "underperform");
-    buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    change(selectAt(state.root, "你猜这段历史比同期市场怎样？"), "underperform");
+    buttonAt(state.root, "开始看数据").fire("click");
     await vi.waitFor(() => expect(gate.requested).toHaveBeenCalledOnce());
     const locked = structuredClone(state.profile.research_process[0]!);
     expect(locked).toMatchObject({ initialClaim: "underperform", priorExposure: false, shown: null });
@@ -764,14 +937,14 @@ describe("research data presentation while backgrounded or obscured", () => {
     state.render(); gate.release();
     await vi.waitFor(() => expect(gate.decoded).toHaveBeenCalledOnce()); await flush();
     state.ui.resumePendingPresentation(); await flush();
-    expect(state.root.textContent).not.toContain("案例固定日程盈亏");
+    expect(state.root.textContent).not.toContain("这段历史的盈亏");
     expect(state.profile.research_process[0]?.shown).toBeNull();
     expect(state.profile.research_process[0]?.helpUsed).toBe("self");
     expect(state.seen.has("lantern-a")).toBe(false);
 
     state.inert = false; state.hidden = false; state.render(); state.ui.resumePendingPresentation();
     await vi.waitFor(() => expect(state.profile.research_process[0]?.shown).not.toBeNull());
-    expect(state.root.textContent).toContain("案例固定日程盈亏");
+    expect(state.root.textContent).toContain("这段历史的盈亏");
     expect(state.profile.research_process).toHaveLength(1);
     expect(state.profile.research_process[0]).toMatchObject({ id: locked.id, caseId: locked.caseId, schedule: locked.schedule, initialClaim: locked.initialClaim, priorExposure: false });
     expect(state.seen.has("lantern-a")).toBe(true);
@@ -788,7 +961,7 @@ describe("research data presentation while backgrounded or obscured", () => {
   it.each([false, true])("keeps primary visible while a second case waits and captures actual previous exposure (%s)", async (alreadySeen) => {
     const { run, manifest } = await fixture();
     const state = harness(run, manifest, emptyResearchProfile());
-    state.section = "D2"; state.render(); buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    state.section = "D2"; state.render(); buttonAt(state.root, "开始看数据").fire("click");
     await vi.waitFor(() => expect(state.profile.research_process[0]?.shown).not.toBeNull());
     const primary = structuredClone(state.profile.research_process[0]!.shown!.primary);
     const gate = await delayedCase("lantern-b");
@@ -798,8 +971,8 @@ describe("research data presentation while backgrounded or obscured", () => {
     await vi.waitFor(() => expect(gate.decoded).toHaveBeenCalledOnce()); await flush();
     expect(state.profile.research_process[0]?.shown?.primary).toEqual(primary);
     expect(state.profile.research_process[0]?.shown?.other).toBeUndefined();
-    expect(state.root.textContent).toContain("案例固定日程盈亏");
-    expect(state.root.textContent).not.toContain("另一段历史的结果相对第一段");
+    expect(state.root.textContent).toContain("这段历史的盈亏");
+    expect(state.root.textContent).not.toContain("另一段比第一段怎样？");
     expect(state.seen.has("lantern-b")).toBe(false);
     if (alreadySeen) state.seen.add("lantern-b");
     state.inert = false; state.render(); state.ui.resumePendingPresentation();
@@ -816,7 +989,7 @@ describe("research data presentation while backgrounded or obscured", () => {
     const { run, manifest } = await fixture();
     const gate = await delayedCase("lantern-a");
     const state = harness(run, manifest, emptyResearchProfile());
-    state.section = "D2"; state.render(); buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    state.section = "D2"; state.render(); buttonAt(state.root, "开始看数据").fire("click");
     await vi.waitFor(() => expect(gate.requested).toHaveBeenCalledOnce());
     const locked = structuredClone(state.profile.research_process[0]!);
     state.ui.leave(); state.section = "D1"; state.render(); gate.release();
@@ -835,7 +1008,7 @@ describe("research data presentation while backgrounded or obscured", () => {
     const { run, manifest } = await fixture();
     const gate = await delayedCase("lantern-a");
     const state = harness(run, manifest, emptyResearchProfile());
-    state.section = "D2"; state.render(); buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    state.section = "D2"; state.render(); buttonAt(state.root, "开始看数据").fire("click");
     await vi.waitFor(() => expect(gate.requested).toHaveBeenCalledOnce());
     state.run = createRun({ seed: 44 }); gate.release();
     await vi.waitFor(() => expect(gate.decoded).toHaveBeenCalledOnce()); await flush();
@@ -848,7 +1021,7 @@ describe("research data presentation while backgrounded or obscured", () => {
     const { run, manifest } = await fixture();
     const gate = await delayedCase("lantern-a");
     const state = harness(run, manifest, emptyResearchProfile());
-    state.section = "D2"; state.render(); buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    state.section = "D2"; state.render(); buttonAt(state.root, "开始看数据").fire("click");
     await vi.waitFor(() => expect(gate.requested).toHaveBeenCalledOnce());
     const id = state.profile.research_process[0]!.id;
     state.inert = true; state.render(); gate.release();
@@ -858,8 +1031,8 @@ describe("research data presentation while backgrounded or obscured", () => {
     await vi.waitFor(() => expect(state.profile.research_process[0]?.shown).not.toBeNull());
     expect(state.profile.research_process[0]).toMatchObject({ id, priorExposure: false });
     expect(state.profile.prior_exposure_disclosures).toHaveLength(1);
-    change(selectAt(state.root, "本案例结果相对同期基准"), state.profile.research_process[0]!.shown!.primary.direction);
-    change(selectAt(state.root, "这次主要依据什么"), "根据同日期的数字比较");
+    change(selectAt(state.root, "这段历史比同期市场怎样？"), state.profile.research_process[0]!.shown!.primary.direction);
+    change(selectAt(state.root, "你是怎么看出来的"), "根据同日期的数字比较");
     buttonAt(state.root, "提交这次研究").fire("click");
     expect(state.profile.knowledge_evidence.find((item) => item.id === `${id}:K1`)).toMatchObject({ priorExposure: true, counted: false });
   });
@@ -869,14 +1042,14 @@ describe("research data presentation while backgrounded or obscured", () => {
     const gate = await delayedCase("lantern-a");
     const state = harness(run, manifest, emptyResearchProfile(false));
     const original = JSON.stringify(state.profile);
-    state.section = "D2"; state.render(); buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    state.section = "D2"; state.render(); buttonAt(state.root, "开始看数据").fire("click");
     await vi.waitFor(() => expect(gate.requested).toHaveBeenCalledOnce());
     state.hidden = true; state.render(); gate.release();
     await vi.waitFor(() => expect(gate.decoded).toHaveBeenCalledOnce()); await flush();
-    expect(state.root.textContent).not.toContain("案例固定日程盈亏");
+    expect(state.root.textContent).not.toContain("这段历史的盈亏");
     expect(state.seen.has("lantern-a")).toBe(false);
     state.hidden = false; state.render(); state.ui.resumePendingPresentation();
-    await vi.waitFor(() => expect(state.root.textContent).toContain("案例固定日程盈亏"));
+    await vi.waitFor(() => expect(state.root.textContent).toContain("这段历史的盈亏"));
     expect(state.seen.has("lantern-a")).toBe(true);
     expect(JSON.stringify(state.profile)).toBe(original);
   });

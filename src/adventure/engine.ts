@@ -183,6 +183,7 @@ export function availableActions(run: Run): ActionAvailability[] {
   const upgradable = run.deck.some((card) => !card.upgraded);
   const cheapBase = run.deck.some((card) => !card.upgraded && Number(card.cardId.slice(1)) <= 6);
   const canFree = campReady && run.node !== 'N2' && !run.camp?.freeChoiceUsed;
+  const archiveAttemptAvailable = run.phase === 'camp' && !!run.camp && !run.archiveOwned && run.wallet.cashCents < PRICES.archiveCents;
   const entries: ActionAvailability[] = [
     { type: 'play-card', enabled: run.phase === 'battle' && !!run.battle?.hand.some((id) => canPlayCard(run, id).enabled) },
     { type: 'end-turn', enabled: run.phase === 'battle' },
@@ -192,9 +193,9 @@ export function availableActions(run: Run): ActionAvailability[] {
     { type: 'upgrade-card', enabled: supply && upgradable && run.wallet.cashCents >= PRICES.upgradeCents },
     { type: 'free-rest', enabled: !!canFree },
     { type: 'free-upgrade', enabled: !!canFree && cheapBase },
-    { type: 'buy-archive', enabled: campReady && !run.archiveOwned && run.wallet.cashCents >= PRICES.archiveCents },
+    { type: 'buy-archive', enabled: run.phase === 'camp' && !!run.camp && !run.archiveOwned && run.wallet.cashCents >= PRICES.archiveCents },
     { type: 'open-archive', enabled: run.phase === 'camp' && run.archiveOwned },
-    { type: 'purchase-attempted', enabled: supply },
+    { type: 'purchase-attempted', enabled: supply, ...(archiveAttemptAvailable ? { archiveAttemptAvailable: true, ...(!supply ? { reason: '普通补给尚未开放；金币不足时仍可单独尝试购买档案。' } : {}) } : {}) },
     { type: 'set-supply-plan', enabled: run.phase === 'camp' },
     { type: 'submit-entry', enabled: run.phase === 'camp' && run.node === 'N2' && !run.market.entryCommitted },
     { type: 'submit-redemption', enabled: run.phase === 'camp' && (run.node === 'N4' || run.node === 'N6') && run.camp?.decision === 'not-submitted' },
@@ -397,9 +398,20 @@ function executeQuote(run: Run, quote: MarketQuote): void {
     return;
   }
   if (order?.kind === 'sell') {
+    const additional = order.additionalEntryCents ?? 0;
+    requireCents(additional);
+    must(!additional || (!order.automatic && run.status === 'active' && run.camp?.decision === 'awaiting-execution'
+      && ((run.node === 'N4' && quote.step === 't1-exec') || (run.node === 'N6' && quote.step === 't2-exec'))), '当前订单不能追加参与。');
+    must(run.wallet.reservedCents >= additional, '预留资金不足。');
     const settled = settleSale(run.wallet, order.shareUnits, quote.price, nextId(run), run.node);
     proceedsCents = settled.proceedsCents;
-    event(run, 'market', 'apply-quote', order.automatic ? '结束后的自动回收已按实际开盘价到账。' : '回收按实际开盘价到账。', { stage: quote.step, price: quote.price, date: quote.date, proceedsCents, pnlCents: settled.pnlCents, automatic: order.automatic, shareUnits: order.shareUnits });
+    const additionalUnits = additional ? settleEntry(run.wallet, additional, quote.price) : '0';
+    const sold = /[1-9]/.test(order.shareUnits);
+    const message = order.automatic ? '结束后的自动回收已按实际开盘价到账。'
+      : additional && sold ? '原份额回收与追加参与按同一开盘价执行。'
+      : additional ? '追加参与按实际开盘价换为份额，本次没有回收份额。'
+      : sold ? '回收按实际开盘价到账。' : '本次没有回收或追加份额。';
+    event(run, 'market', 'apply-quote', message, { stage: quote.step, price: quote.price, date: quote.date, proceedsCents, pnlCents: settled.pnlCents, automatic: order.automatic, shareUnits: order.shareUnits, ...(additional ? { additionalEntryCents: additional, additionalShareUnits: additionalUnits } : {}) });
     run.market.order = null; run.market.referenceValueCents = centsForShares(run.wallet.shareUnits, quote.price);
     if (run.status !== 'active') { endImmediately(run); return; }
     if (!run.camp) throw new Error('营地状态缺失。');
@@ -471,18 +483,18 @@ export function reduceRun(previous: Run, action: RunAction): Run {
       if (run.camp) run.camp.freeChoiceUsed = true; break;
     }
     case 'buy-archive': {
-      ensureSupply(run); must(run.phase === 'camp' && !run.archiveOwned, '档案已拥有或当前不在营地。');
+      must(run.phase === 'camp' && !!run.camp && !run.archiveOwned, '档案已拥有或当前不在营地。');
       must(run.wallet.cashCents >= PRICES.archiveCents, '可用金币不足。');
       logChoice(run, action.type, '购买历史档案。', { amountCents: PRICES.archiveCents });
       spendCash(run.wallet, PRICES.archiveCents, nextId(run), run.node, '购买历史档案'); run.archiveOwned = true; break;
     }
     case 'open-archive': {
       must(run.phase === 'camp' && run.archiveOwned, '需要先拥有档案，才能免费查看。');
-      if (!run.history.some((item) => item.action === 'open-archive')) logChoice(run, action.type, '打开已拥有的历史档案。');
+      if (!run.history.some((item) => item.action === 'open-archive' && item.node === run.node)) logChoice(run, action.type, '打开已拥有的历史档案。');
       break;
     }
     case 'purchase-attempted': {
-      ensureSupply(run);
+      if (action.purchase !== 'buy-archive') ensureSupply(run);
       const price = action.purchase === 'heal' ? PRICES.healCents : action.purchase === 'upgrade-card' ? PRICES.upgradeCents : action.purchase === 'buy-card' ? PRICES.cardCents : PRICES.archiveCents;
       must(run.wallet.cashCents < price, '可支付的购买应直接提交购买操作。');
       if (action.purchase === 'heal') must(run.hp < run.maxHp, '生命已经全满。');
@@ -512,9 +524,14 @@ export function reduceRun(previous: Run, action: RunAction): Run {
     case 'submit-redemption': {
       must(run.phase === 'camp' && (run.node === 'N4' || run.node === 'N6') && run.camp?.decision === 'not-submitted', '当前不能提交回收选择。');
       must([0, 50, 100].includes(action.percent), '回收比例无效。');
+      const additional = action.additionalEntryCents ?? 0;
+      const preview = previewEntry(run, additional); must(preview.affordable, preview.reason ?? '金额无效。');
       const shareUnits = sharesForPercent(run.wallet.shareUnits, action.percent);
-      logChoice(run, action.type, action.percent === 0 ? '选择继续持有。' : `提交回收 ${action.percent}% 的份额。`, { percent: action.percent, shareUnits });
-      run.market.order = { id: `sell-${run.history.length}`, kind: 'sell', shareUnits, automatic: false };
+      const message = additional ? '提交原份额回收选择并预留追加参与金额。' : action.percent === 0 ? '选择继续持有。' : `提交回收 ${action.percent}% 的份额。`;
+      logChoice(run, action.type, message, { percent: action.percent, shareUnits, ...(action.additionalEntryCents === undefined ? {} : { additionalEntryCents: additional }) });
+      const id = `sell-${run.history.length}`;
+      if (additional) reserveEntry(run.wallet, additional, id, run.node);
+      run.market.order = { id, kind: 'sell', shareUnits, automatic: false, ...(additional ? { additionalEntryCents: additional } : {}) };
       if (run.camp) run.camp.decision = 'awaiting-execution';
       requestQuote(run, run.node === 'N4' ? 't1-exec' : 't2-exec'); break;
     }

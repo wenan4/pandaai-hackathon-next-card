@@ -318,7 +318,7 @@ describe("game feedback and confirmation", () => {
     expect(find(root, (item) => item.attributes.class === "game-receipt")).toBeUndefined();
     page(root, "archive");
     expect(savedRun(storage).archiveOwned).toBe(true);
-    expect(root.textContent).toContain("正在加载本局已固定案例的历史档案");
+    expect(root.textContent).toContain("正在整理截至这一站的档案");
     page(root, "supplies"); key(root, "upgrade").fire("click"); expect(root.textContent).toContain("可用金币不足，这次购买没有完成");
     button(root, "评委面板").fire("click"); button(root, "从这里分叉").fire("click");
     expect(root.textContent).not.toContain("可用金币不足，这次购买没有完成");

@@ -48,7 +48,7 @@ export interface MarketQuote { caseId: string; step: MarketStage; date: string; 
 export interface MarketRequest { caseId: string; stage: MarketStage; unlocked: true }
 export type Order =
   | { id: string; kind: 'entry'; amountCents: number }
-  | { id: string; kind: 'sell'; shareUnits: string; automatic: boolean };
+  | { id: string; kind: 'sell'; shareUnits: string; automatic: boolean; additionalEntryCents?: number };
 export interface LedgerEntry {
   id: string;
   node: NodeId;
@@ -85,7 +85,11 @@ export interface CampState {
 }
 export interface RewardState { choices: CardId[]; coinsCents: number }
 export interface RouteOption { enemyId: EnemyId; name: string; description: string; rewardCents: number }
-export interface ActionAvailability { type: RunAction['type']; enabled: boolean; reason?: string }
+export interface ActionAvailability {
+  type: RunAction['type']; enabled: boolean; reason?: string;
+  /** An archive attempt may be legal before the ordinary supply gate opens. */
+  archiveAttemptAvailable?: boolean;
+}
 
 export interface DecisionSnapshot {
   node: NodeId;
@@ -164,7 +168,7 @@ export type RunAction = ActionIdentity & (
   | { type: 'purchase-attempted'; purchase: 'heal' | 'upgrade-card' | 'buy-card' | 'buy-archive'; cardId?: CardId; cardInstanceId?: string }
   | { type: 'set-supply-plan'; amountCents: number | null }
   | { type: 'submit-entry'; amountCents: number }
-  | { type: 'submit-redemption'; percent: 0 | 50 | 100 }
+  | { type: 'submit-redemption'; percent: 0 | 50 | 100; additionalEntryCents?: number }
   | { type: 'continue' }
   | { type: 'choose-route'; enemyId: EnemyId }
   | { type: 'return-home' }

@@ -2,6 +2,12 @@
 [hidden] { display: none !important; }
 .mobile-menu { display: none; }
 .menu-grid { display: grid; gap: 10px; }
+.preference-goals { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.preference-helps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.preference-panel .choice { display: grid; gap: 5px; padding: 10px; text-align: left; }
+.preference-panel .choice strong { font-size: .82rem; }
+.preference-panel .choice span { font-size: .7rem; line-height: 1.45; font-weight: 400; }
+.camp-allocation-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .journey-shell .page-grid { grid-template-columns: minmax(0, 1fr); }
 .journey-tools { display: flex; align-items: center; gap: 6px; margin: 9px 0; }
 .journey-tools .button { min-height: 34px; padding: 6px 9px; font-size: .74rem; }

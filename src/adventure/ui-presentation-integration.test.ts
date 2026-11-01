@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CAMP_STOCK } from "./content";
-import { createRun, reduceRun } from "./engine";
+import { canPlayCard, createRun, reduceRun } from "./engine";
+import { centsForShares, sharesForCents } from "./ledger";
 import { emptyResearchProfile, startHistory, type ResearchProfile } from "./research";
 import { chooseAdventureCase, hasSeenRelatedCase } from "./ui-case";
 import { SAVE_KEY, SEEN_KEY } from "./ui-storage";
@@ -15,6 +16,7 @@ class FakeNode {
   append(...items: (FakeNode | string)[]): void { for (const item of items) { if (item instanceof FakeNode) item.parent = this; this.children.push(item); } }
   replaceChildren(...items: (FakeNode | string)[]): void { for (const item of this.children) if (item instanceof FakeNode) item.parent = null; this.children = []; this.append(...items); }
   get textContent(): string { return this.children.map((item) => typeof item === "string" ? item : item.textContent).join(""); }
+  set textContent(value: string) { this.replaceChildren(value); }
   querySelectorAll(selector: string): FakeElement[] {
     const found: FakeElement[] = [];
     const visit = (node: FakeNode): void => {
@@ -69,6 +71,11 @@ function button(node: FakeNode, text: string): FakeElement {
   if (!result) throw new Error(`button missing: ${text}`);
   return result;
 }
+function key(node: FakeNode, value: string): FakeElement {
+  const result = find(node, (item) => item.attributes["data-focus-key"] === value);
+  if (!result) throw new Error(`element missing: ${value}`);
+  return result;
+}
 function page(node: FakeNode, name: string): void {
   const tab = find(node, (item) => item.attributes["data-focus-key"] === `page-${name}`);
   if (!tab) throw new Error(`page missing: ${name}`);
@@ -99,6 +106,37 @@ function entryPending(amountCents = 2000, caseId = "lantern-a"): Run {
   return reduceRun(run, { type: "continue" });
 }
 const quote = (stage: MarketStage, date = "20220105"): MarketQuote => ({ caseId: "lantern-a", step: stage, date, price: 1_000_000 });
+const actualQuote = (caseId: string, stage: MarketStage): MarketQuote => JSON.parse(readFileSync(`public/data/adventure/stages/${caseId}/${stage}.json`, "utf8")) as MarketQuote;
+
+/** Advance between the camps with legal reducer actions and the actual stage files. */
+function battleToNextQuote(route: Run): Run {
+  let run = reduceRun(route, { type: "choose-route", enemyId: "moss" });
+  for (let turn = 0; turn < 120 && run.phase === "battle"; turn++) {
+    const battle = run.battle!;
+    const playable = battle.hand.map((id) => run.deck.find((card) => card.instanceId === id)!)
+      .filter((card) => canPlayCard(run, card.instanceId).enabled);
+    const get = (id: string) => playable.find((card) => card.cardId === id);
+    const attack = get("C01");
+    const block = get("C02") ?? get("C06");
+    const incoming = battle.enemy.intent.kind === "attack" ? battle.enemy.intent.amount : 0;
+    const selected = (attack && battle.enemy.hp + battle.enemy.shield <= 6 ? attack : undefined)
+      ?? (incoming > battle.shield ? block : undefined) ?? attack ?? get("C03") ?? get("C04") ?? get("C05");
+    run = selected ? reduceRun(run, { type: "play-card", cardInstanceId: selected.instanceId }) : reduceRun(run, { type: "end-turn" });
+  }
+  if (run.phase !== "reward") throw new Error("fixture did not reach the next reward");
+  return reduceRun(run, { type: "choose-reward", cardId: null });
+}
+
+function firstCampAfterInvestment(amountCents: number): Run {
+  const route = reduceRun(entryPending(amountCents), { type: "apply-quote", quote: actualQuote("lantern-a", "entry") });
+  return reduceRun(battleToNextQuote(route), { type: "apply-quote", quote: actualQuote("lantern-a", "t1") });
+}
+const firstCampAfterZero = (): Run => firstCampAfterInvestment(0);
+
+function replaceSavedRun(storage: MemoryStorage, run: Run): void {
+  const previous = JSON.parse(storage.values.get(SAVE_KEY)!) as Record<string, unknown>;
+  storage.values.set(SAVE_KEY, JSON.stringify({ ...previous, run }));
+}
 function t1Pending(caseId = "lantern-a"): Run {
   let run = reduceRun(entryPending(2000, caseId), { type: "apply-quote", quote: { ...quote("entry", "20220103"), caseId } });
   run.node = "N3"; run.phase = "reward"; run.reward = { choices: ["C08", "C12", "C06"], coinsCents: 1200 };
@@ -233,7 +271,7 @@ describe("visible presentation coordination", () => {
     const storage = storageFor(run); const pending = deferred<unknown>();
     const { root } = await boot(storage, async () => { throw new Error("unexpected request"); }, { research: () => pending.promise });
     button(root, "查看上次旅程").fire("click"); button(root, "打开历史对照台").fire("click");
-    button(root, "锁定并查看同期资料").fire("click");
+    button(root, "开始看数据").fire("click");
     const before = JSON.parse(storage.values.get(SAVE_KEY)!) as { priorExposure?: boolean; profile: ResearchProfile };
     const attempt = before.profile.research_process.at(-1)!;
     expect(attempt.caseId).toBe("lantern-a"); expect(attempt.priorExposure).toBe(false); expect(attempt.shown).toBeNull();
@@ -359,17 +397,225 @@ describe("visible presentation coordination", () => {
     expect((other as unknown as { exposedCaseIdsAfterLock?: string[] }).exposedCaseIdsAfterLock).toEqual(["lantern-b"]);
   });
 
+  it("allows a zero-entry player to buy the archive before arranging a later investment", async () => {
+    const initial = camp(); initial.observationEnabled = true;
+    const storage = storageFor(initial, emptyResearchProfile(true));
+    const execution = deferred<MarketQuote>();
+    const loader = vi.fn(async (caseId: string, stage: MarketStage) => stage === "t1-exec" ? execution.promise : actualQuote(caseId, stage));
+    let app = await boot(storage, loader, { initialCase: true });
+    resume(app.root);
+    key(app.root, "entry-submit").fire("click");
+    expect(savedRun(storage).market.order).toMatchObject({ kind: "entry", amountCents: 0 });
+    expect(savedRun(storage).wallet.cashCents).toBe(6000);
+    key(app.root, "camp-continue").fire("click");
+    await vi.waitFor(() => expect(savedRun(storage).phase).toBe("route"));
+    expect(savedRun(storage).wallet.shareUnits).toBe("0");
+
+    const pendingClose = battleToNextQuote(savedRun(storage));
+    replaceSavedRun(storage, pendingClose);
+    vi.resetModules(); app = await boot(storage, loader, { initialCase: true });
+    resume(app.root);
+    await vi.waitFor(() => expect(savedRun(storage).node).toBe("N4"));
+    expect(savedRun(storage).camp?.decision).toBe("not-submitted");
+    const beforeArchive = savedRun(storage).wallet.cashCents;
+    page(app.root, "archive");
+    key(app.root, "archive").fire("click");
+    expect(savedRun(storage).archiveOwned).toBe(true);
+    expect(savedRun(storage).wallet.cashCents).toBe(beforeArchive - 400);
+    expect(savedRun(storage).camp?.decision).toBe("not-submitted");
+
+    page(app.root, "allocation");
+    const beforeChoice = storage.values.get(SAVE_KEY);
+    const amount = key(app.root, "additional-entry-amount");
+    amount.value = "12"; amount.fire("input");
+    expect(storage.values.get(SAVE_KEY)).toBe(beforeChoice);
+    expect(savedRun(storage).wallet.shareUnits).toBe("0");
+    key(app.root, "camp-allocation-submit").fire("click");
+    await vi.waitFor(() => expect(loader.mock.calls.some((call) => call[1] === "t1-exec")).toBe(true));
+    const pending = savedRun(storage);
+    expect(pending.phase).toBe("market");
+    expect(pending.wallet.cashCents).toBe(beforeArchive - 400 - 1200);
+    expect(pending.wallet.reservedCents).toBe(1200);
+    expect(pending.wallet.shareUnits).toBe("0");
+    expect(pending.market.order).toMatchObject({ kind: "sell", shareUnits: "0", additionalEntryCents: 1200 });
+
+    const pendingSave = storage.values.get(SAVE_KEY);
+    button(app.root, "我的交易风格").fire("click");
+    expect(app.root.textContent).toContain("累计已执行 0 金币");
+    expect(app.root.textContent).toContain("12 金币已预留、待下一报价执行");
+    button(app.root, "返回旅程").fire("click");
+    expect(storage.values.get(SAVE_KEY)).toBe(pendingSave);
+    app.setVisible(false);
+    execution.resolve(actualQuote("lantern-a", "t1-exec"));
+    await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    expect(storage.values.get(SAVE_KEY)).toBe(pendingSave);
+    expect(savedRun(storage).wallet.reservedCents).toBe(1200);
+    app.setVisible(true);
+    await vi.waitFor(() => expect(savedRun(storage).phase).toBe("camp"));
+    const settled = savedRun(storage);
+    expect(settled.wallet.reservedCents).toBe(0);
+    expect(BigInt(settled.wallet.shareUnits)).toBeGreaterThan(0n);
+    expect(settled.wallet.investedCents).toBe(1200);
+    expect(settled.history.filter((event) => event.action === "submit-redemption")).toHaveLength(1);
+    expect(settled.history.filter((event) => event.action === "apply-quote" && event.data.stage === "t1-exec")).toHaveLength(1);
+    expect(loader.mock.calls.some((call) => call[1] === "t1-exec")).toBe(true);
+    button(app.root, "我的交易风格").fire("click");
+    expect(app.root.textContent).toContain("累计已执行 12 金币");
+    expect(app.root.textContent).toContain("中途选择追加 12 金币");
+    key(app.root, "report-open-choices").fire("click");
+    key(app.root, "report-evidence-资金取舍").fire("click");
+    const detail = find(app.root, (item) => item.attributes["aria-label"] === "资金取舍 · 本局记录")!;
+    expect(detail.textContent).toContain("选择参与 0 金币");
+    expect(detail.textContent).toContain("选择追加 12 金币");
+  });
+
+  it("records an unaffordable archive attempt before camp settlement without making a purchase", async () => {
+    const run = firstCampAfterZero(); run.wallet.cashCents = 300; run.observationEnabled = true;
+    const storage = storageFor(run, emptyResearchProfile(true));
+    const app = await boot(storage, async (caseId, stage) => actualQuote(caseId, stage), { initialCase: true });
+    resume(app.root); page(app.root, "archive");
+    expect(key(app.root, "archive").disabled).toBe(false);
+    key(app.root, "archive").fire("click");
+    const after = savedRun(storage);
+    expect(after.archiveOwned).toBe(false); expect(after.wallet.cashCents).toBe(300);
+    expect(after.camp?.decision).toBe("not-submitted");
+    expect(after.history.filter((event) => event.action === "purchase-attempted" && event.data.purchase === "buy-archive")).toHaveLength(1);
+    expect(after.history.some((event) => event.action === "buy-archive")).toBe(false);
+    expect(seen(storage)).toEqual([]);
+  });
+
+  it("submits one combined arrangement against existing shares and executes both at the next quote", async () => {
+    const before = firstCampAfterInvestment(2000);
+    const storage = storageFor(before); const execution = deferred<MarketQuote>();
+    const app = await boot(storage, async (caseId, stage) => stage === "t1-exec" ? execution.promise : actualQuote(caseId, stage));
+    resume(app.root);
+    const unchanged = storage.values.get(SAVE_KEY);
+    const amount = key(app.root, "additional-entry-amount"); amount.value = "5"; amount.fire("input");
+    const percent = key(app.root, "redemption-percent"); percent.value = "100"; percent.fire("change");
+    expect(storage.values.get(SAVE_KEY)).toBe(unchanged);
+    key(app.root, "camp-allocation-submit").fire("click");
+    const pending = savedRun(storage);
+    expect(pending.wallet.cashCents).toBe(before.wallet.cashCents - 500);
+    expect(pending.wallet.reservedCents).toBe(500);
+    expect(pending.wallet.shareUnits).toBe(before.wallet.shareUnits);
+    expect(pending.market.order).toMatchObject({ kind: "sell", shareUnits: before.wallet.shareUnits, additionalEntryCents: 500 });
+
+    const opening = actualQuote("lantern-a", "t1-exec"); execution.resolve(opening);
+    await vi.waitFor(() => expect(savedRun(storage).phase).toBe("camp"));
+    const settled = savedRun(storage);
+    expect(settled.wallet.cashCents).toBe(before.wallet.cashCents - 500 + centsForShares(before.wallet.shareUnits, opening.price));
+    expect(settled.wallet.shareUnits).toBe(sharesForCents(500, opening.price));
+    expect(settled.wallet.costBasisCents).toBe(500);
+    expect(settled.wallet.reservedCents).toBe(0);
+    expect(settled.history.filter((event) => event.action === "submit-redemption")).toHaveLength(1);
+    expect(settled.history.filter((event) => event.action === "apply-quote" && event.data.stage === "t1-exec")).toHaveLength(1);
+  });
+
+  it("shows real zero-participation choices in the report without inventing a trading type", async () => {
+    const run = firstCampAfterZero(); run.observationEnabled = true;
+    const storage = storageFor(run, emptyResearchProfile(true));
+    const app = await boot(storage, async (caseId, stage) => actualQuote(caseId, stage));
+    resume(app.root); key(app.root, "camp-allocation-submit").fire("click");
+    await vi.waitFor(() => expect(savedRun(storage).camp?.decision).toBe("settled"));
+    expect(savedRun(storage).wallet.shareUnits).toBe("0");
+    button(app.root, "我的交易风格").fire("click");
+    expect(app.root.textContent).toContain("累计已执行 0 金币");
+    key(app.root, "report-open-choices").fire("click");
+    key(app.root, "report-evidence-资金取舍").fire("click");
+    const detail = find(app.root, (item) => item.attributes["aria-label"] === "资金取舍 · 本局记录")!;
+    expect(detail.textContent).toContain("选择参与 0 金币");
+    expect(detail.textContent).toContain("选择追加 0 金币");
+    expect(detail.textContent).not.toContain("稳健投资者");
+  });
+
+  it("waits for the current archive data, then records separate openings at N4 and N6", async () => {
+    let run = firstCampAfterZero(); run.observationEnabled = true;
+    run = reduceRun(run, { type: "buy-archive" });
+    const storage = storageFor(run, emptyResearchProfile(true));
+    const firstSegment = deferred<MarketQuote>();
+    const loader = vi.fn(async (caseId: string, stage: MarketStage) => stage === "t1" ? firstSegment.promise : actualQuote(caseId, stage));
+    let app = await boot(storage, loader, { initialCase: true });
+    resume(app.root);
+    expect(loader).not.toHaveBeenCalled();
+    page(app.root, "archive");
+    await vi.waitFor(() => expect(loader.mock.calls.some((call) => call[1] === "t1")).toBe(true));
+    expect(find(app.root, (item) => item.attributes["data-archive-view"] === "true")).toBeUndefined();
+    expect(seen(storage)).toEqual([]);
+    expect(savedRun(storage).history.some((event) => event.action === "open-archive")).toBe(false);
+
+    page(app.root, "cards");
+    firstSegment.resolve(actualQuote("lantern-a", "t1"));
+    await vi.waitFor(() => expect(find(app.root, (item) => item.attributes["data-archive-view"] === "true")).toBeDefined());
+    let view = find(app.root, (item) => item.attributes["data-archive-view"] === "true")!;
+    expect(view.closest("[hidden]")).not.toBeNull();
+    expect(seen(storage)).toEqual([]);
+    expect(savedRun(storage).history.some((event) => event.action === "open-archive")).toBe(false);
+    page(app.root, "archive");
+    view = find(app.root, (item) => item.attributes["data-archive-view"] === "true")!;
+    expect(view.textContent).toContain("2025-12-01"); expect(view.textContent).toContain("已加入 1 段");
+    view.open = true; view.fire("toggle");
+    expect(seen(storage)).toEqual(["lantern-a"]);
+    expect(savedRun(storage).history.filter((event) => event.action === "open-archive").map((event) => event.node)).toEqual(["N4"]);
+
+    run = reduceRun(savedRun(storage), { type: "submit-redemption", percent: 0 });
+    run = reduceRun(run, { type: "apply-quote", quote: actualQuote("lantern-a", "t1-exec") });
+    if (run.hp < run.maxHp) run = reduceRun(run, { type: "heal" });
+    run = reduceRun(run, { type: "continue" });
+    run = battleToNextQuote(run);
+    run = reduceRun(run, { type: "apply-quote", quote: actualQuote("lantern-a", "t2") });
+    expect(run.node).toBe("N6");
+    replaceSavedRun(storage, run);
+    vi.resetModules();
+    const laterLoader = vi.fn(async (caseId: string, stage: MarketStage) => actualQuote(caseId, stage));
+    app = await boot(storage, laterLoader, { initialCase: true });
+    resume(app.root); page(app.root, "archive");
+    await vi.waitFor(() => expect(find(app.root, (item) => item.attributes["data-archive-view"] === "true")).toBeDefined());
+    view = find(app.root, (item) => item.attributes["data-archive-view"] === "true")!;
+    expect(view.textContent).toContain("2025-12-29"); expect(view.textContent).toContain("已加入 2 段");
+    expect(laterLoader.mock.calls.map((call) => call[1]).sort()).toEqual(["t1", "t2"]);
+    view.open = true; view.fire("toggle");
+    expect(savedRun(storage).history.filter((event) => event.action === "open-archive").map((event) => event.node)).toEqual(["N4", "N6"]);
+    expect(savedRun(storage).history.filter((event) => event.action === "buy-archive")).toHaveLength(1);
+  });
+
+  it("keeps the menu and optional preferences clear without recording a choice until selected", async () => {
+    const run = camp(); run.observationEnabled = true;
+    const storage = storageFor(run, emptyResearchProfile(true));
+    const app = await boot(storage, async () => { throw new Error("unexpected request"); });
+    resume(app.root);
+    const original = storage.values.get(SAVE_KEY);
+    button(app.root, "菜单").fire("click");
+    const menu = find(app.root, (item) => item.attributes["aria-label"] === "旅程菜单")!;
+    expect(menu).toBeDefined(); expect(menu.textContent).not.toContain("回到旅程");
+    button(menu, "目标与帮助").fire("click");
+    const preferences = find(app.root, (item) => item.attributes["aria-label"] === "练习内容与提示")!;
+    expect(preferences.textContent).toContain("不改变战斗难度，也不花金币");
+    expect(preferences.textContent).toContain("进入练习后还能切换");
+    expect(storage.values.get(SAVE_KEY)).toBe(original); expect(storage.writes).toEqual([]);
+    button(preferences, "完成").fire("click");
+    expect(storage.values.get(SAVE_KEY)).toBe(original); expect(storage.writes).toEqual([]);
+
+    button(app.root, "菜单").fire("click");
+    const reopenedMenu = find(app.root, (item) => item.attributes["aria-label"] === "旅程菜单")!;
+    button(reopenedMenu, "目标与帮助").fire("click");
+    key(app.root, "preference-goal-funding").fire("click");
+    key(app.root, "preference-help-step").fire("click");
+    const saved = JSON.parse(storage.values.get(SAVE_KEY)!) as { run: Run; profile: ResearchProfile };
+    expect(saved.profile.stated_interest.at(-1)?.goal).toBe("funding");
+    expect(saved.profile.help_preference.at(-1)?.help).toBe("step");
+    expect(saved.profile.funding_exposure).toEqual([]);
+    expect(saved.run.history).toEqual(run.history);
+  });
+
   it("records an archive only when it is open on the visible camp tab", async () => {
     const run = camp(); run.archiveOwned = true;
     const storage = storageFor(run); const original = storage.values.get(SAVE_KEY);
     const { root } = await boot(storage, async () => { throw new Error("unexpected request"); }, { initialCase: true });
     resume(root);
+    expect(find(root, (item) => item.attributes["data-archive-view"] === "true")).toBeUndefined();
+    page(root, "archive");
     await vi.waitFor(() => expect(find(root, (item) => item.attributes["data-archive-view"] === "true")).toBeDefined());
     let view = find(root, (item) => item.attributes["data-archive-view"] === "true")!;
-    expect(view.closest("[hidden]")).not.toBeNull();
-    view.fire("toggle");
-    page(root, "archive");
-    view = find(root, (item) => item.attributes["data-archive-view"] === "true")!;
     expect(view.closest("[hidden]")).toBeNull(); expect(view.open).toBe(false);
     expect(seen(storage)).toEqual([]); expect(storage.values.get(SAVE_KEY)).toBe(original);
 
@@ -393,8 +639,8 @@ describe("visible presentation coordination", () => {
     const run = camp(); run.archiveOwned = true;
     const storage = storageFor(run); const { root } = await boot(storage, async () => { throw new Error("unexpected request"); }, { initialCase: true });
     resume(root);
-    await vi.waitFor(() => expect(find(root, (item) => item.attributes["data-archive-view"] === "true")).toBeDefined());
     page(root, "archive");
+    await vi.waitFor(() => expect(find(root, (item) => item.attributes["data-archive-view"] === "true")).toBeDefined());
     const oldView = find(root, (item) => item.attributes["data-archive-view"] === "true")!; oldView.open = true;
     button(root, "设置").fire("click"); oldView.fire("toggle");
     expect(seen(storage)).toEqual([]); expect(savedRun(storage).history.some((event) => event.action === "open-archive")).toBe(false);

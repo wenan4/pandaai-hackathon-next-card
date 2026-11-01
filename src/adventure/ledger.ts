@@ -53,12 +53,16 @@ export function spendCash(wallet: Wallet, amountCents: number, id: string, node:
 
 export function reserveEntry(wallet: Wallet, amountCents: number, id: string, node: NodeId): void {
   requireCents(amountCents);
+  requireCents(wallet.reservedCents + amountCents);
   addEntry(wallet, id, node, 'entry-reserve', -amountCents, '契约参与金额预留，等待下一开盘价执行');
   wallet.reservedCents += amountCents;
 }
 
 export function settleEntry(wallet: Wallet, amountCents: number, price: number): string {
+  requireCents(amountCents);
   if (wallet.reservedCents < amountCents) throw new Error('预留资金不足。');
+  requireCents(wallet.costBasisCents + amountCents);
+  requireCents(wallet.investedCents + amountCents);
   const units = sharesForCents(amountCents, price);
   wallet.reservedCents -= amountCents;
   wallet.shareUnits = (BigInt(wallet.shareUnits) + BigInt(units)).toString();
@@ -79,6 +83,6 @@ export function settleSale(wallet: Wallet, soldUnits: string, price: number, id:
   wallet.proceedsCents += proceedsCents;
   const pnlCents = proceedsCents - costCents;
   wallet.realizedPnlCents += pnlCents;
-  addEntry(wallet, id, node, 'redemption', proceedsCents, '契约份额按实际开盘价回收到账');
+  if (sold > 0n) addEntry(wallet, id, node, 'redemption', proceedsCents, '契约份额按实际开盘价回收到账');
   return { proceedsCents, costCents, pnlCents };
 }

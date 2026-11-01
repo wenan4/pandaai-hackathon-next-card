@@ -40,7 +40,8 @@ function quote(value: unknown, expectedCase: unknown): boolean {
 function order(value: unknown): boolean {
   if (!object(value) || !text(value.id)) return false;
   return value.kind === 'entry' ? nonnegative(value.amountCents)
-    : value.kind === 'sell' && shares(value.shareUnits) && bool(value.automatic);
+    : value.kind === 'sell' && shares(value.shareUnits) && bool(value.automatic) && optional(value.additionalEntryCents, nonnegative)
+      && (!value.automatic || value.additionalEntryCents === undefined || value.additionalEntryCents === 0);
 }
 function market(value: unknown, expectedCase: unknown): boolean {
   return object(value) && bool(value.entryCommitted) && nullable(value.referenceValueCents, nonnegative)
@@ -80,7 +81,8 @@ function route(value: unknown): boolean {
   return object(value) && enemyId(value.enemyId) && string(value.name) && string(value.description) && nonnegative(value.rewardCents);
 }
 function actionAvailability(value: unknown): boolean {
-  return object(value) && member(value.type, actions) && bool(value.enabled) && optional(value.reason, string);
+  return object(value) && member(value.type, actions) && bool(value.enabled) && optional(value.reason, string)
+    && optional(value.archiveAttemptAvailable, bool);
 }
 function decision(value: unknown, expectedCase: unknown): boolean {
   if (!object(value) || !node(value.node) || !phase(value.phase) || !nonnegative(value.hp) || !positive(value.maxHp)
@@ -101,6 +103,10 @@ function gameEvent(value: unknown, expectedCase: unknown): boolean {
   if (value.type === 'market' && value.action === 'apply-quote'
     && (!stage(value.data.stage) || !positive(value.data.price) || typeof value.data.date !== 'string'
       || !(/^\d{8}$/.test(value.data.date) || /^\d{4}-\d{2}-\d{2}$/.test(value.data.date)))) return false;
+  if ((value.action === 'submit-redemption' || (value.type === 'market' && value.action === 'apply-quote'))
+    && !optional(value.data.additionalEntryCents, nonnegative)) return false;
+  if (value.type === 'market' && value.action === 'apply-quote' && (value.data.additionalEntryCents as number | undefined ?? 0) > 0
+    && !shares(value.data.additionalShareUnits)) return false;
   return Object.values(value.data).every(validDatum) && optional(value.snapshot, (item) => decision(item, expectedCase));
 }
 
@@ -112,6 +118,9 @@ function settlement(value: RecordValue): boolean {
   const order = market.order as RecordValue | null;
   if (order?.kind === 'entry' && (order.amountCents as number) > (wallet.reservedCents as number)) return false;
   if (order?.kind === 'sell' && BigInt(order.shareUnits as string) > BigInt(wallet.shareUnits as string)) return false;
+  if (order?.kind === 'sell' && (order.additionalEntryCents as number | undefined ?? 0) > (wallet.reservedCents as number)) return false;
+  if (order?.kind === 'sell' && (order.additionalEntryCents as number | undefined ?? 0) > 0
+    && (value.phase !== 'market' || value.status !== 'active' || !object(value.camp) || value.camp.decision !== 'awaiting-execution')) return false;
   if (value.phase !== 'market') return true;
 
   const pending = market.pending as RecordValue;
@@ -121,6 +130,8 @@ function settlement(value: RecordValue): boolean {
   }
   if (order.kind === 'entry') return pending.stage === 'entry' && value.status === 'active';
   if (!member(pending.stage, ['t1-exec', 't2-exec', 'final-exec', 'exit-after-entry', 'exit-after-t1-exec', 'exit-after-t2-exec'])) return false;
+  if ((order.additionalEntryCents as number | undefined ?? 0) > 0
+    && !((value.node === 'N4' && pending.stage === 't1-exec') || (value.node === 'N6' && pending.stage === 't2-exec'))) return false;
   return value.status !== 'active' || (object(value.camp) && value.camp.node === value.node);
 }
 

@@ -24,14 +24,18 @@ function validQuote(stage: unknown, date: unknown, price: unknown): stage is Mar
 }
 
 function eventQuote(event: GameEvent): ShownQuote | null {
-  const { stage, date, price, amountCents, shareUnits, automatic } = event.data;
+  const { stage, date, price, amountCents, shareUnits, automatic, additionalEntryCents, additionalShareUnits } = event.data;
   if (event.type !== "market" || event.action !== "apply-quote" || !validQuote(stage, date, price)) return null;
   const isExecution = stage !== "t1" && stage !== "t2" && stage !== "t3";
   let description = stageNames[stage];
   if (stage === "entry") {
     if (amountCents === 0) description = "参与金额为零（T0 后的下一开盘仅推进时间）";
   } else if (isExecution) {
-    description += typeof shareUnits === "string" && /^0+$/.test(shareUnits) ? "（未回收份额，仅推进时间）"
+    const added = typeof additionalEntryCents === "number" && Number.isSafeInteger(additionalEntryCents) && additionalEntryCents > 0;
+    const bought = typeof additionalShareUnits === "string" && /^\d+$/.test(additionalShareUnits) && /[1-9]/.test(additionalShareUnits);
+    const sold = typeof shareUnits === "string" && /^\d+$/.test(shareUnits) && /[1-9]/.test(shareUnits);
+    description += added ? bought ? `（${sold ? "回收旧份额，并" : ""}新增投入 ${additionalEntryCents / 100} 金币已成交）` : "（记录了新增投入，成交份额资料不全）"
+      : typeof shareUnits === "string" && /^0+$/.test(shareUnits) ? "（未回收份额，仅推进时间）"
       : automatic === true ? "（自动回收结算）" : "（回收安排结算）";
   }
   return { stage, date: date as string, price: price as number, description };

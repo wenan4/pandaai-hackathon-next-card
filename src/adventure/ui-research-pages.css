@@ -1,5 +1,12 @@
 .research-page { display: grid; gap: 10px; max-width: 920px; margin: auto; padding-top: 14px; }
 .research-page .task-title h1 { font-size: 1.35rem; line-height: 1.2; }
+.research-page .task-title > div { min-width: 0; flex: 1; }
+.research-subtitle { margin-top: 2px; color: #718573; font-size: .72rem; line-height: 1.25; }
+.research-intro { color: #526e59; font-size: .81rem; line-height: 1.5; }
+.research-example, .research-schedule { padding: 9px 11px; border-radius: 10px; color: #526e59; background: #f1f7ea; font-size: .8rem; line-height: 1.45; }
+.research-example strong { display: block; margin-bottom: 3px; color: #41654a; }
+.research-answer-actions { gap: 7px; }
+.research-answer-actions > .button { flex: 1 1 auto; }
 .research-steps { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 5px; }
 .research-steps .research-step-tab { min-width: 0; min-height: 44px; padding: 7px 3px; border: 1px solid #d6e2ce; border-radius: 10px; background: #f5f8ed; box-shadow: none; color: #607967; font-size: .78rem; line-height: 1.25; }
 .research-steps .research-step-tab[aria-pressed="true"] { border-color: #4e7959; background: #4e7959; color: #fffdf3; }
@@ -28,7 +35,7 @@
 .research-help details summary { font-size: .72rem; }
 @media (max-width: 540px) {
   .research-page { gap: 8px; padding-top: 8px; }
-  .research-page .task-title h1 { font-size: 1.17rem; }
+  .research-page .task-title h1 { font-size: clamp(.96rem, 4.2vw, 1.17rem); }
   .research-page .task-badge { width: 34px; height: 34px; flex-basis: 34px; }
   .research-steps { gap: 4px; }
   .research-steps .research-step-tab { font-size: .7rem; }
