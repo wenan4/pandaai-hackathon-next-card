@@ -1,0 +1,33 @@
+.battle-pile-counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.battle-pile-button { display: flex; min-width: 0; min-height: 44px; align-items: center; justify-content: center; gap: 5px; padding: 6px; border: 1px solid #d6e5d5; border-radius: 10px; color: #466e5d; background: #f0f8f3; font-size: .72rem; cursor: pointer; }
+.battle-pile-button b { color: #315e49; font-size: .82rem; }
+.battle-pile-button:hover { background: #e4f1e8; }
+.game-card[data-retain] .card-foot { color: #496c4a; font-weight: 700; }
+.pile-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.battle-energy-summary { margin: 0; color: #59715b; font-size: .73rem; line-height: 1.4; }
+.pile-view { display: grid; gap: 12px; min-width: 0; }
+.pile-intro, .pile-warning, .pile-empty { margin: 0; color: #657567; font-size: .78rem; line-height: 1.5; }
+.pile-warning { color: #8b6638; }
+.pile-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.pile-tab { min-width: 0; min-height: 44px; padding: 7px 5px; border: 1px solid #d7e2d0; border-radius: 10px; color: #526d56; background: #f7faf2; font-size: .74rem; font-weight: 700; cursor: pointer; }
+.pile-tab.selected { border-color: #8cac87; color: #315b3d; background: #e5f1dd; }
+.pile-content { display: grid; gap: 9px; min-width: 0; }
+.pile-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.pile-heading h3 { color: #49684e; font-size: .96rem; }
+.pile-heading span { color: #6d806e; font-size: .75rem; }
+.pile-card-list { display: grid; gap: 7px; max-height: min(39vh, 320px); overflow-y: auto; margin: 0; padding: 2px 4px 4px 0; list-style: none; overscroll-behavior: contain; }
+.pile-card { display: flex; align-items: start; justify-content: space-between; gap: 10px; min-width: 0; padding: 9px 10px; border: 1px solid #e5e7d8; border-radius: 11px; background: #fffcf1; }
+.pile-card-copy { min-width: 0; }
+.pile-card-title { display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px 9px; }
+.pile-card strong { color: #526b4c; font-size: .81rem; }
+.pile-card-cost { color: #577f73; font-size: .7rem; font-weight: 700; }
+.pile-card p { margin-top: 3px; color: #6e7c69; font-size: .72rem; line-height: 1.45; }
+.pile-card .pile-retain { color: #607b4d; font-weight: 700; }
+.pile-card-count { flex: 0 0 auto; color: #9a7942; font: 700 .8rem "IBM Plex Mono", monospace; }
+@media (max-width: 540px) {
+  .battle-pile-button { font-size: .68rem; }
+  .battle-energy-summary { font-size: .68rem; }
+  .pile-view { gap: 9px; }
+  .pile-tab { font-size: .7rem; }
+  .pile-card-list { max-height: 35vh; }
+}

@@ -1,0 +1,572 @@
+import { h, type Child } from "../ui/dom";
+import "./ui-research-pages.css";
+import { loadMarketStage, loadResearchCase, type MarketManifest, type ResearchMarketCase } from "./market";
+import { PRICES } from "./content";
+import { attachFundingFinalQuote, calibrationForDisplay, compareRecommendationPlans, compareSchedule, emptyResearchProfile, evaluateFundingPractice, evaluateHistoryPractice, fundingQuestionKey, fundingScenarioFromRun, guidanceForTask, mechanicalFundingExample, markFundingHelp, markHistoryHelp, recommendationPlan, recordCalibrationAction, recordCalibrationFeeling, saveForecast, showHistoryEvidence, simulateFundingPlan, startHistory, submitFunding, submitHistory, type BoundaryAnswer, type CalibrationContext, type ContractAction, type Direction, type Feeling, type FixedSchedule, type FundingFeedback, type FundingPlan, type FundingScenario, type FundingTimeline, type HelpPreference, type HistoryComparison, type HistoryFeedback, type KnowledgeEvidence, type Percent, type ProfileChange, type RecommendationPlan, type ResearchProfile } from "./research";
+import type { MarketQuote, Run, RunAction } from "./types";
+import { button, coins, dateText, details, metric, note, panel, pill } from "./ui-components";
+import { casesAreRelated, hasAppliedNonEntryQuote } from "./ui-case";
+import { taskAvailability } from "./ui-availability";
+import { otherResearchCase, researchCaseChoices } from "./ui-research-cases";
+import { fundingRowLabel, researchStageLabel } from "./ui-research-labels";
+
+interface Context { getRun: () => Run; getProfile: () => ResearchProfile; setProfile: (profile: ResearchProfile) => void; getManifest: () => MarketManifest | null; retryManifest: () => void; manifestLoading: () => boolean; manifestError: () => string | null; back: () => void; openTask?: (task: "D1" | "D2") => void; refresh: () => void; canPresentData: (task: "D1" | "D2") => boolean; revealResult?: (task: "D1" | "D2") => void; notify: (message: string) => void; uid: (prefix: string) => string; isCaseKnown?: (caseId: string) => boolean; wasCaseSeen?: (caseId: string) => boolean; markCaseSeen?: (caseId: string, excludeAttemptId?: string) => void }
+interface PlanChange { before: RecommendationPlan; after: RecommendationPlan }
+type ResearchTaskId = "D1" | "D2";
+type FundingPage = "plan" | "question" | "revision" | "result";
+type HistoryPage = "setup" | "data" | "other" | "answer" | "result";
+interface NextAction { label: string; click: () => void; disabled?: boolean }
+interface FundingState { scenario: FundingScenario; plan: FundingPlan; revised: FundingPlan; target: string; answer: boolean | null; help: HelpPreference; preferenceId: string; shownHelp: Record<string, HelpPreference>; answerExposed: boolean; loading: boolean; error: string | null; result: { feedback: FundingFeedback; changes: ProfileChange[]; recommendation: PlanChange; timeline: FundingTimeline; revised: FundingTimeline; attemptId?: string } | null }
+interface HistoryState { id: string; caseId: string; otherId: string; caseWasSeen: boolean | null; schedule: FixedSchedule; claim: Direction | "unknown"; locked: boolean; loading: boolean; error: string | null; errorOther: boolean; primary: ResearchMarketCase | null; other: ResearchMarketCase | null; shown: HistoryComparison | null; otherShown: HistoryComparison | null; help: HelpPreference; preferenceId: string; comparison: Direction | ""; difference: Direction | ""; boundary: BoundaryAnswer | ""; reason: string; submitted: boolean; changes: ProfileChange[]; recommendation: PlanChange | null; feedback: HistoryFeedback | null }
+interface PendingHistoryPresentation { state: HistoryState; run: Run; epoch: number; primary: ResearchMarketCase; second: ResearchMarketCase | null; otherRequested: boolean }
+interface PendingFundingPresentation { state: FundingState; run: Run; epoch: number; quote: MarketQuote }
+const statuses: Record<string, string> = { unobserved: "尚未观察", independent: "本任务独立完成", assisted: "借助提示完成", needs_confirmation: "结论待确认", conflicting: "不同情境表现不同" };
+const feelings: [Feeling, string][] = [["low", "不太在意"], ["mild", "轻微在意"], ["noticeable", "明显在意"], ["strong", "强烈在意"], ["unknown", "说不清"]];
+const actionNames: [ContractAction, string][] = [["continue", "继续"], ["half", "回收一半"], ["all", "全部回收"], ["unknown", "还不知道"]];
+const helpNames: Record<HelpPreference, string> = { self: "自主尝试", hint: "提示", step: "分步说明" };
+const helpRank: Record<HelpPreference, number> = { self: 0, hint: 1, step: 2 };
+const option = (value: string, label: string, selected = false): HTMLOptionElement => h("option", { value, selected }, label);
+function onValue(event: Event): string { return (event.currentTarget as HTMLSelectElement | HTMLInputElement | HTMLTextAreaElement).value; }
+function awaitsRelatedSettlement(run: Run, caseId: string): boolean { return run.phase !== "ended" && casesAreRelated(run.caseId, caseId); }
+function updateBlock(changes: ProfileChange[], evidence: KnowledgeEvidence[], summaries: Partial<Record<"K1" | "K2" | "K3", string>> = {}): HTMLElement {
+  if (!changes.length) return note("本次练习即时反馈已显示，不保存人物观察。");
+  const names = { K1: "同期比较", K2: "样本边界", K3: "可用现金" };
+  return h("div", { class: "update-flow" }, changes.flatMap((change) => [
+    h("div", { class: "update-step" }, h("small", null, `${names[change.dimension]} · 此前观察`), h("p", null, statuses[change.before] ?? change.before)),
+    h("div", { class: "update-step" }, h("small", null, "新增依据"), (() => { const item = evidence.find((entry) => entry.id === change.addedEvidence); return item ? h("div", null, h("p", null, summaries[change.dimension] ?? item.detail.replaceAll("outperform", "更高").replaceAll("underperform", "更低").replaceAll("equal", "相同")), h("p", null, item.help === "self" ? "这一步自主作答。" : item.help === "hint" ? "这一步查看过提示。" : "这一步查看过分步说明。"), details("查看技术依据", h("p", { class: "fineprint" }, item.evidence_ids.join("、")))) : h("p", null, "本次任务提交的判断已记录，可在观察依据中查看。"); })()),
+    h("div", { class: "update-step" }, h("small", null, "现在观察"), h("p", null, statuses[change.after] ?? change.after)),
+    h("div", { class: "update-step" }, h("small", null, "下一步为何变化或不变"), h("p", null, change.explanation)),
+  ]));
+}
+function selectPercent(value: Percent, update: (value: Percent) => void, label: string, disabled = false, focusKey?: string): HTMLElement {
+  return h("label", { class: "field" }, label, h("select", { disabled, "data-focus-key": focusKey, onchange: (event: Event) => update(Number(onValue(event)) as Percent) }, [0, 50, 100].map((pct) => option(String(pct), pct === 0 ? "先不取回" : pct === 50 ? "取回一半" : "全部取回", pct === value))));
+}
+function purchaseLabel(label: string): string {
+  return label === "原局尝试但未支付的采购（作为固定需求）" ? "原局想买但金币不够的东西" : label.replace(/^实际采购：/, "");
+}
+function fundingTimeline(timeline: FundingTimeline): HTMLElement {
+  return h("div", { class: "timeline" }, timeline.rows.map((row) => h("div", { class: "timeline-item" }, h("strong", null, `${purchaseLabel(fundingRowLabel(row.label) ?? row.label)}${row.canPay === false ? " · 暂停" : ""}`), h("p", null, `可用 ${coins(row.cashCents)} 金币 · 份额参考价值 ${row.referenceValueCents === null ? "尚未揭晓" : `${coins(row.referenceValueCents)} 金币`}`))), h("p", { class: "fineprint" }, timeline.note));
+}
+function resultPanel(task: "D1" | "D2", title: string, ...content: Child[]): HTMLElement {
+  const section = panel(title, null, ...content);
+  section.setAttribute("id", `research-${task.toLowerCase()}-result`);
+  section.setAttribute("data-focus-key", `research-${task.toLowerCase()}-result`);
+  section.setAttribute("tabindex", "-1");
+  section.setAttribute("aria-label", title);
+  section.setAttribute("style", "scroll-margin-top: 16px");
+  return section;
+}
+function fundingFeedback(feedback: FundingFeedback, revisedTimeline: FundingTimeline): HTMLElement {
+  const { target, revised, revisedTarget } = feedback;
+  const difference = Math.abs(target.cashBeforeCents - target.amountCents);
+  const gap = target.actualCanPay ? difference ? `支付后剩余 ${coins(difference)} 金币` : "恰好够支付" : `还差 ${coins(difference)} 金币`;
+  const additionBlocked = revised.status === "blocked" && revisedTimeline.rows.find((row) => row.id === revised.id)?.kind === "additional-reserve";
+  const revisedSummary = revised.status === "blocked"
+    ? `调整后的计划在“${purchaseLabel(revised.label)}”暂停：${additionBlocked ? "这次追加" : "这笔花费"}需要 ${coins(revised.amountCents)} 金币，当时可用 ${coins(revised.cashBeforeCents)} 金币，还差 ${coins(revised.shortfallCents)} 金币。`
+    : revised.status === "pending-additional-quote" ? "追加金额已预留，这次操作还未执行，新增份额等待下一开盘报价。"
+      : revised.status === "pending-final-quote" ? "调整后的计划在等待结束报价，回收金额尚未到账。" : "调整后的计划完成了固定日程核查。";
+  const targetSummary = revisedTarget.status === "not-reached" ? "调整后的计划尚未到达本次核查的采购，不能判断这一笔是否可支付。"
+    : revised.status === "blocked" && revised.id === target.id ? null
+      : `调整后的计划到达本次采购时，可用 ${coins(revisedTarget.cashBeforeCents)} 金币，需要 ${coins(revisedTarget.amountCents)} 金币，${revisedTarget.canPay ? "可以支付" : "不能支付"}。`;
+  return h("div", { class: "notice" }, h("strong", null, purchaseLabel(target.label)),
+    h("p", null, `你选择：${target.selected ? "可以支付" : "不能支付"}。账本显示：${target.actualCanPay ? "可以支付" : "不能支付"}；${target.correct ? "与判断一致" : "这一步需要再核查"}。`),
+    h("p", null, `采购前可用 ${coins(target.cashBeforeCents)} 金币，需要 ${coins(target.amountCents)} 金币，${gap}。`),
+    h("p", null, revisedSummary), targetSummary ? h("p", null, targetSummary) : null);
+}
+function historyFeedback(feedback: HistoryFeedback): HTMLElement {
+  const direction: Record<Direction, string> = { outperform: "更高", underperform: "更低", equal: "相同" };
+  const boundary: Record<BoundaryAnswer, string> = { only_samples: "只说明这两段历史，不能预测未来", predicts_future: "说明未来必然得到相同结果" };
+  const comparison = feedback.comparison; const difference = feedback.historyDifference; const limit = feedback.boundary;
+  return h("div", { class: "notice" },
+    comparison ? h("p", null, h("strong", null, "同期比较："), `你选这段历史${direction[comparison.selected]}；这段盈亏 ${coins(comparison.assetGainCents)} 金币，同期市场 ${coins(comparison.benchmarkGainCents)} 金币，这段历史${direction[comparison.expected]}。${comparison.correct ? "这一步与数据一致。" : "这一步需要再核查。"}`) : null,
+    difference ? h("p", null, h("strong", null, "两段比较："), `你选另一段${direction[difference.selected]}；第一段盈亏 ${coins(difference.primaryGainCents)} 金币，另一段 ${coins(difference.otherGainCents)} 金币，另一段${direction[difference.expected]}。${difference.correct ? "这一步与数据一致。" : "这一步需要再核查。"}`) : null,
+    limit ? h("p", null, h("strong", null, "关于未来："), `你选“${boundary[limit.selected]}”；这些数据只能说明所示历史，不能据此断言未来一定如此。${limit.correct ? "这一步与数据一致。" : "这一步需要再核查。"}`) : null);
+}
+function preferredPurchase(rows: FundingTimeline["rows"]): string {
+  return rows.find((row) => row.canPay === false && row.id.startsWith("attempt-"))?.id
+    ?? rows.find((row) => row.canPay === false)?.id ?? rows[0]?.id ?? "";
+}
+function researchPage(id: string, active: boolean, ...children: Child[]): HTMLElement {
+  return h("div", { class: "research-page-step", id: `research-page-${id}`, "data-research-page": id, hidden: !active, inert: !active }, children);
+}
+export class ResearchUI {
+  private ctx: Context;
+  private funding: FundingState | null = null;
+  private history: HistoryState | null = null;
+  private historyStart: HTMLElement | null = null;
+  private pendingHistoryPresentation: PendingHistoryPresentation | null = null;
+  private pendingFundingPresentation: PendingFundingPresentation | null = null;
+  private fundingPage: FundingPage = "plan";
+  private historyPage: HistoryPage = "setup";
+  private revisedInput: HTMLInputElement | null = null;
+  private activeStepTabs: Partial<Record<ResearchTaskId, HTMLButtonElement>> = {};
+  private epoch = 0;
+  private skipPendingHistory = false;
+  private helpSelections: Partial<Record<"D1" | "D2", { runId: string; preferenceId: string; help: HelpPreference }>> = {};
+  private forecastDraftKey = "";
+  private forecastFeeling: Feeling | "" = "";
+  private forecastAction: ContractAction | "" = "";
+  constructor(ctx: Context) { this.ctx = ctx; }
+  leave(): void { this.epoch++; this.funding = null; this.history = null; this.historyStart = null; this.revisedInput = null; this.activeStepTabs = {}; this.fundingPage = "plan"; this.historyPage = "setup"; this.pendingHistoryPresentation = null; this.pendingFundingPresentation = null; this.skipPendingHistory = false; }
+  private selectFundingPage(page: FundingPage): void { this.fundingPage = page; this.ctx.refresh(); this.activeStepTabs.D1?.focus({ preventScroll: true }); this.resumePendingPresentation(); }
+  private selectHistoryPage(page: HistoryPage): void { this.historyPage = page; this.ctx.refresh(); this.activeStepTabs.D2?.focus({ preventScroll: true }); }
+  private steps<T extends string>(task: ResearchTaskId, current: T, entries: { id: T; label: string; enabled: boolean }[], select: (id: T) => void): HTMLElement {
+    return h("nav", { class: "research-steps", "aria-label": `${task} 任务步骤` }, entries.map(({ id, label, enabled }) => {
+      const item = button(label, () => select(id), "research-step-tab", !enabled, `research-${task.toLowerCase()}-${id}`);
+      item.setAttribute("aria-pressed", String(current === id)); item.setAttribute("aria-controls", `research-page-${task.toLowerCase()}-${id}`);
+      if (current === id) this.activeStepTabs[task] = item;
+      return item;
+    }));
+  }
+  private fail(error: unknown): void { this.ctx.notify(error instanceof Error ? error.message : "这一步没有完成，请重试。"); }
+  private preferenceKey(profile: ResearchProfile): string { return profile.enabled ? profile.help_preference.at(-1)?.id ?? profile.user_reasons.at(-1)?.id ?? "" : ""; }
+  private initialHelp(task: "D1" | "D2"): HelpPreference {
+    const profile = this.ctx.getProfile(); const guidance = guidanceForTask(profile, task);
+    const saved = this.helpSelections[task];
+    if (profile.enabled && saved?.runId === this.ctx.getRun().id && saved.preferenceId === this.preferenceKey(profile)) return saved.help;
+    return guidance.explicit ? guidance.help : "self";
+  }
+  private chooseHelp(task: "D1" | "D2", s: FundingState | HistoryState, help: HelpPreference): void {
+    s.help = help;
+    const profile = this.ctx.getProfile();
+    if (profile.enabled) this.helpSelections[task] = { runId: this.ctx.getRun().id, preferenceId: this.preferenceKey(profile), help };
+    this.ctx.refresh();
+  }
+  private syncPreference(task: "D1" | "D2", s: FundingState | HistoryState): void {
+    const preferenceId = this.preferenceKey(this.ctx.getProfile());
+    if (preferenceId !== s.preferenceId) { s.preferenceId = preferenceId; s.help = this.initialHelp(task); }
+  }
+  private guidance(task: "D1" | "D2", selected: HelpPreference, ready: boolean, set: (help: HelpPreference) => void): { panel: HTMLElement; shown: HTMLElement | null } {
+    const recommendation = guidanceForTask(this.ctx.getProfile(), task);
+    const text = task === "D1"
+      ? selected === "hint" ? "用手里能花的金币和价格比较；份额没卖出到账前不能付款。" : "先找买东西前手里能花的金币，再看价格。份额没卖出到账前不能付款；买不起就先停在这里。"
+      : selected === "hint" ? "先比较同一时间里历史案例和市场赚了多少；过去的结果不能保证未来。" : "先比较这段历史和同期市场的盈亏，再比较另一段历史。两段过去的结果不能保证未来一样。";
+    const shown = ready && selected !== "self" ? h("div", { class: "notice", role: "note" }, h("p", null, text)) : null;
+    return { shown, panel: h("section", { class: "research-help", "aria-label": "本任务帮助" },
+      h("div", { class: "research-help-actions", role: "group", "aria-label": "选择本次帮助方式" }, (["self", "hint", "step"] as HelpPreference[]).map((mode) => h("button", { type: "button", class: `choice${selected === mode ? " selected" : ""}`, "aria-pressed": String(selected === mode), "data-focus-key": `${task}-help-${mode}`, onclick: () => set(mode) }, helpNames[mode]))),
+      selected !== "self" && !ready ? h("p", { class: "fineprint" }, "题目准备好后显示所选帮助；目前尚未记录帮助暴露。") : null,
+      shown, details("帮助与记录规则", h("p", { class: "hint" }, `${recommendation.explicit ? "你的默认偏好" : "建议"}：${helpNames[recommendation.help]}。${recommendation.reason}`), h("p", { class: "fineprint" }, this.ctx.getProfile().enabled ? "随时可切换；已经看过的帮助会保留在本题记录中，并影响本题观察。" : "随时可切换；本练习不保存观察。"))) };
+  }
+  private recordFundingExposureWhenShown(s: FundingState, shown: HTMLElement | null, page: FundingPage, mode: HelpPreference, stillVisible: () => boolean = () => true): void {
+    if (!shown || !s.target || mode === "self") return;
+    const epoch = this.epoch; const key = fundingQuestionKey(s.scenario, s.target, "d1-v1", s.plan);
+    queueMicrotask(() => {
+      if (this.fundingPage !== page || !this.ctx.canPresentData("D1") || !shown.isConnected || shown.closest("[inert]") || !stillVisible() || epoch !== this.epoch || this.funding !== s || !s.target || fundingQuestionKey(s.scenario, s.target, "d1-v1", s.plan) !== key) return;
+      if (helpRank[s.shownHelp[key] ?? "self"] < helpRank[mode]) s.shownHelp[key] = mode;
+      const profile = this.ctx.getProfile(); if (!profile.enabled || s.scenario.caseId === "manual-example") return;
+      const already = (profile.funding_exposure ?? []).some((item) => (item.questionKey === key || (!item.questionKey && item.caseId === s.scenario.caseId)) && helpRank[item.help] >= helpRank[mode]);
+      if (!already) this.ctx.setProfile(markFundingHelp(profile, key, mode));
+    });
+  }
+  private recordFundingHelpWhenShown(s: FundingState, shown: HTMLElement | null): void {
+    const mode = s.help;
+    this.recordFundingExposureWhenShown(s, shown, "question", mode, () => s.help === mode);
+  }
+  private recordHistoryHelpWhenShown(s: HistoryState, shown: HTMLElement | null): void {
+    if (!shown || s.help === "self" || s.submitted || !this.ctx.getProfile().enabled) return;
+    const epoch = this.epoch; const mode = s.help;
+    queueMicrotask(() => {
+      if (this.historyPage !== "answer" || !this.ctx.canPresentData("D2") || !shown.isConnected || shown.closest("[inert]") || epoch !== this.epoch || this.history !== s || s.help !== mode || s.submitted) return;
+      const profile = this.ctx.getProfile(); const attempt = profile.research_process.find((item) => item.id === s.id);
+      if (!profile.enabled || !attempt || attempt.submitted || helpRank[attempt.helpUsed] >= helpRank[mode]) return;
+      try { this.ctx.setProfile(markHistoryHelp(profile, s.id, mode)); } catch (error) { this.fail(error); }
+    });
+  }
+  private caseChoices() {
+    const run = this.ctx.getRun(); const profile = this.ctx.getProfile();
+    return researchCaseChoices(this.ctx.getManifest()?.cases ?? [], run, profile.enabled ? profile : emptyResearchProfile(false, run.source), this.ctx.wasCaseSeen);
+  }
+  private plan(profile: ResearchProfile = this.ctx.getProfile()): RecommendationPlan {
+    return recommendationPlan(profile, taskAvailability(this.ctx.getRun(), profile, this.ctx.getManifest(), this.ctx.wasCaseSeen));
+  }
+  private sourceBadge(): Child {
+    const source = this.ctx.getRun().source;
+    return source === "real" ? null : pill(source === "fork" ? "模拟 · 分叉" : "模拟 · 预设", "gold");
+  }
+  private nextStep(change: PlanChange): HTMLElement {
+    const current = this.plan(); const recommendation = current.recommendation;
+    const name = recommendation.task_id === "D1" ? "资金安排台" : recommendation.task_id === "D2" ? "历史对照台" : null;
+    const enabled = this.ctx.getProfile().enabled;
+    return h("div", { class: "stack" }, h("p", { class: "hint" }, enabled ? `${name ? `当前建议：${name}。` : "当前可以自行选择。"}${recommendation.reason}` : "接下来可以自行选择练习，或返回旅程。"),
+      h("p", { class: "fineprint" }, `资金安排：${current.offers.D1}`), h("p", { class: "fineprint" }, `历史对照：${current.offers.D2}`),
+      enabled ? details("推荐为何变化或维持", h("p", { class: "hint" }, `提交时：${compareRecommendationPlans(change.before, change.after).explanation}`), current.continuity ? h("p", { class: "hint" }, current.continuity) : null, h("p", { class: "fineprint" }, `当前帮助建议：${recommendation.help_reason}`)) : null);
+  }
+  private resultActions(from: ResearchTaskId, revisedInput?: HTMLInputElement, nextUnseenCase?: string): HTMLElement {
+    const profile = this.ctx.getProfile(); const availability = taskAvailability(this.ctx.getRun(), profile, this.ctx.getManifest(), this.ctx.wasCaseSeen);
+    const recommended = profile.enabled ? this.plan().recommendation.task_id : null;
+    const cases = this.caseChoices();
+    const funding: NextAction | null = from === "D1" && revisedInput ? { label: "调整这份计划", click: () => { this.selectFundingPage("revision"); this.revisedInput?.focus({ preventScroll: true }); this.revisedInput?.scrollIntoView({ behavior: "auto", block: "center" }); } }
+      : availability.funding !== "unavailable" && this.ctx.openTask ? { label: "切换 · 资金安排台", click: () => this.ctx.openTask?.("D1") } : null;
+    let history: NextAction | null = null;
+    if (availability.history === "pending") {
+      history = from === "D2" ? { label: "继续已锁定的历史研究", click: () => this.resumePendingHistory() }
+        : this.ctx.openTask ? { label: "继续 · 已锁定历史研究", click: () => this.ctx.openTask?.("D2") } : null;
+    } else if (!this.ctx.getManifest()) {
+      history = { label: this.ctx.manifestLoading() ? "正在加载案例目录…" : "重新加载案例目录", click: this.ctx.retryManifest, disabled: this.ctx.manifestLoading() };
+    } else if (cases.length) {
+      if (from === "D1" && this.ctx.openTask) history = { label: availability.history === "unseen" ? "继续 · 历史对照台" : "复习 · 历史对照台", click: () => this.ctx.openTask?.("D2") };
+      if (from === "D2") history = { label: nextUnseenCase ? "继续 · 未见历史片段" : "复习已看过的片段", click: () => this.restartHistory(nextUnseenCase) };
+    }
+    const actions: { task: ResearchTaskId; action: NextAction | null }[] = [{ task: "D1", action: funding }, { task: "D2", action: history }];
+    if (recommended === "D2") actions.reverse();
+    return h("div", { class: "button-row" }, actions.map(({ task, action }) => action ? button(action.label, action.click, recommended === task ? "gold" : "secondary", action.disabled) : null),
+      button(this.ctx.getRun().status === "active" ? "返回营地" : "回到旅程报告", this.ctx.back, "secondary"));
+  }
+  private get fundingState(): FundingState {
+    if (!this.funding) {
+      const derived = fundingScenarioFromRun(this.ctx.getRun());
+      const base = derived?.scenario.events.some((e) => e.kind === "purchase") ? derived : mechanicalFundingExample();
+      this.funding = { scenario: base.scenario, plan: structuredClone(base.plan), revised: structuredClone(base.plan), target: "", answer: null, help: this.initialHelp("D1"), preferenceId: this.preferenceKey(this.ctx.getProfile()), shownHelp: {}, answerExposed: false, loading: false, error: null, result: null };
+    }
+    return this.funding;
+  }
+  private get historyState(): HistoryState {
+    if (!this.history) {
+      const run = this.ctx.getRun(); const available = this.caseChoices();
+      const caseId = available[0]?.summary.caseId ?? "";
+      const otherId = otherResearchCase(available, caseId);
+      const entry = run.history.find((e) => e.action === "submit-entry");
+      const cash = entry?.snapshot?.cashCents ?? 7200; const invested = typeof entry?.data.amountCents === "number" ? entry.data.amountCents : 0;
+      this.history = { id: this.ctx.uid("history"), caseId, otherId, caseWasSeen: null, schedule: { startingCashCents: cash, participationCents: Math.min(cash, invested || 2000), t1: 0, t2: 0 }, claim: "unknown", locked: false, loading: false, error: null, errorOther: false, primary: null, other: null, shown: null, otherShown: null, help: this.initialHelp("D2"), preferenceId: this.preferenceKey(this.ctx.getProfile()), comparison: "", difference: "", boundary: "", reason: "", submitted: false, changes: [], recommendation: null, feedback: null };
+      const profile = this.ctx.getProfile();
+      const pending = this.skipPendingHistory || !profile.enabled ? undefined : [...profile.research_process].reverse().find((x) => !x.submitted);
+      this.skipPendingHistory = false;
+      if (pending) {
+        this.history.id = pending.id; this.history.caseId = pending.caseId; this.history.otherId = pending.shown?.other?.caseId ?? otherResearchCase(available, pending.caseId);
+        this.history.schedule = { ...pending.schedule }; this.history.claim = pending.initialClaim; this.history.locked = true; this.history.caseWasSeen = pending.priorExposure;
+        this.history.shown = pending.shown?.primary ?? null; this.history.otherShown = pending.shown?.other ?? null;
+        this.historyPage = this.history.shown ? "data" : "setup";
+      }
+    }
+    return this.history;
+  }
+  renderFunding(): HTMLElement {
+    let s: FundingState;
+    try { s = this.fundingState; } catch { return panel("资金安排台", "本局账本暂时无法准备。", note("请返回旅程，稍后再试。", true), button("返回", this.ctx.back, "secondary")); }
+    this.syncPreference("D1", s); const enabled = this.ctx.getProfile().enabled;
+    let timeline;
+    try { timeline = simulateFundingPlan(s.scenario, s.plan); } catch (error) { return panel("资金安排台", "请调整计划。", note(error instanceof Error ? error.message : "计划无效", true), button("返回", this.ctx.back, "secondary")); }
+    const purchases = timeline.rows.filter((row) => row.kind === "purchase");
+    const previousExposure = (target: string): boolean => {
+      if (!target || !this.ctx.getProfile().enabled) return false;
+    const key = fundingQuestionKey(s.scenario, target, "d1-v1", s.plan);
+      return this.ctx.getProfile().funding_exposure.some((item) => (item.questionKey === key || (!item.questionKey && item.caseId === s.scenario.caseId)) && item.answerExposed);
+    };
+    if (!purchases.some((row) => row.id === s.target)) { s.target = preferredPurchase(purchases); s.answer = null; s.answerExposed = previousExposure(s.target); }
+    const target = purchases.find((row) => row.id === s.target); const index = timeline.rows.findIndex((row) => row.id === s.target); const before = index > 0 ? timeline.rows[index - 1] : undefined;
+    const planChanged = (kind: "plan" | "revised"): void => {
+      s.result = null;
+      if (kind === "plan") {
+        const reachable = simulateFundingPlan(s.scenario, s.plan).rows.filter((row) => row.kind === "purchase");
+        if (!reachable.some((row) => row.id === s.target)) s.target = preferredPurchase(reachable);
+        s.answer = null; s.answerExposed = previousExposure(s.target);
+      }
+      this.ctx.refresh();
+    };
+    const setMoney = (kind: "plan" | "revised", input: HTMLInputElement): void => { const amount = Math.max(0, Math.min(s.scenario.startingCashCents, Math.round((Number(input.value) || 0) * 100))); if (s[kind].participationCents === amount) { input.value = String(amount / 100); return; } s[kind].participationCents = amount; planChanged(kind); };
+    const recoveries = s.scenario.events.filter((event) => event.kind === "recovery" && !event.automatic);
+    const additions = s.scenario.events.filter((event) => event.kind === "additional-reserve");
+    const fixedAdditions = additions.length ? `本局后续追加按原金额保留：${additions.map((event) => coins(event.amountCents)).join("、")} 金币；手里不够时会暂停。` : null;
+    const automatic = s.scenario.events.some((event) => event.kind === "recovery" && event.automatic);
+    const moneyInput = (kind: "plan" | "revised"): HTMLInputElement => h("input", { type: "number", min: 0, max: s.scenario.startingCashCents / 100, step: .01, value: s[kind].participationCents / 100, "data-focus-key": `funding-${kind}-amount`, onchange: (e: Event) => setMoney(kind, e.currentTarget as HTMLInputElement) });
+    const currentInput = moneyInput("plan"); const revisedInput = moneyInput("revised");
+    const planFields = (kind: "plan" | "revised"): Child[] => [h("label", { class: "field" }, kind === "plan" ? "一开始拿多少金币参与？" : "一开始改拿多少金币参与？", kind === "plan" ? currentInput : revisedInput),
+      ...recoveries.map((event) => selectPercent(s[kind].recovery[event.id] ?? 0, (value) => { if ((s[kind].recovery[event.id] ?? 0) === value) return; s[kind].recovery[event.id] = value; planChanged(kind); }, `${fundingRowLabel(event.label)}，取回多少？`))];
+    const needsFinal = !!s.scenario.pendingFinal && (timeline.pendingFinal !== null || simulateFundingPlan(s.scenario, s.revised).pendingFinal !== null);
+    const answeredPurchase = s.result?.timeline.rows.find((row) => row.id === s.target);
+    const purchaseSummary = answeredPurchase ? `这次采购需要 ${coins(answeredPurchase.amountCents)} 金币，当时可用 ${coins(answeredPurchase.cashBeforeCents)} 金币，因此${answeredPurchase.canPay ? "可以支付" : "不能支付"}。` : undefined;
+    const guidance = this.guidance("D1", s.help, !!target, (mode) => this.chooseHelp("D1", s, mode));
+    if (this.fundingPage === "question") this.recordFundingHelpWhenShown(s, guidance.shown);
+    if (!s.result && this.fundingPage === "result") this.fundingPage = "question";
+    this.revisedInput = revisedInput;
+    const navigation = this.steps<FundingPage>("D1", this.fundingPage, [
+      { id: "plan", label: "开始", enabled: true }, { id: "question", label: "判断", enabled: true },
+      { id: "revision", label: "调整", enabled: true }, { id: "result", label: "结果", enabled: !!s.result },
+    ], (page) => this.selectFundingPage(page));
+    const planRule = h("p", { class: "hint" }, "参与是先拿出金币；取回是卖出份额换回金币。只有到账的金币才能花。");
+    const planDetails = details("可选：调整最初的参与和取回", planRule,
+      h("div", { class: "research-form-grid funding-form-grid" }, planFields("plan")), h("p", { class: "fineprint" }, "一开始手里有 " + coins(s.scenario.startingCashCents) + " 金币。" + (automatic ? " 结束时剩余份额自动取回。" : "")), fixedAdditions ? h("p", { class: "fineprint" }, "后续追加保持原金额；不会提前使用还没到账的回收款。") : null);
+    planDetails.addEventListener("toggle", () => {
+      if (planDetails.open) this.recordFundingExposureWhenShown(s, planRule, "plan", "hint", () => planDetails.open);
+    });
+    const revisionRule = h("p", { class: "research-intro" }, "参与是先拿出金币；取回是卖出份额，到账后才能花。这里只是试算。");
+    if (this.fundingPage === "revision") this.recordFundingExposureWhenShown(s, revisionRule, "revision", "hint");
+    const planPage = researchPage("d1-plan", this.fundingPage === "plan",
+      panel("先看一笔花费", null,
+        h("p", { class: "research-intro" }, "这是练习，不会扣游戏金币。先判断够不够买东西，再换种安排看看结果。"),
+        h("div", { class: "research-example" }, h("strong", null, "比如买一张牌"), h("p", null, `牌要 ${coins(PRICES.cardCents)} 金币，手里有 ${coins(Math.max(0, PRICES.cardCents - 500))} 金币，另有价值约 10 金币的份额还没卖出。现在能买牌吗？`)),
+        h("p", { class: "fineprint" }, s.scenario.caseId === "manual-example" ? "接下来用一段示例账本练习。" : "接下来用本局的一笔花费练习。"),
+        fixedAdditions ? h("p", { class: "fineprint" }, fixedAdditions) : null,
+        planDetails,
+        details("了解练习依据", h("p", { class: "hint" }, s.scenario.assumptions), h("p", { class: "fineprint" }, this.plan().offers.D1), !enabled ? h("p", { class: "fineprint" }, "本练习只显示即时反馈，离开后不保存研究观察。") : null),
+        !target ? note(timeline.stoppedAt === "pending-additional-quote" ? "原局追加还在等待开盘报价，先完成游戏里的结算，再来判断后续花费。" : "当前安排在这笔花费前就暂停了。可以减少最初参与金额，再继续判断。", true) : null,
+        button("开始判断", () => this.selectFundingPage("question"), "gold", !target)));
+    const questionPage = researchPage("d1-question", this.fundingPage === "question",
+      panel("这笔钱够用吗？", null,
+        h("label", { class: "field" }, "选择一笔花费", h("select", { onchange: (e: Event) => { s.target = onValue(e); s.answer = null; s.answerExposed = previousExposure(s.target); s.result = null; this.ctx.refresh(); } }, purchases.map((row) => option(row.id, purchaseLabel(row.label), row.id === s.target)))),
+        target ? h("div", { class: "notice" }, h("strong", null, purchaseLabel(target.label)), h("p", null, "需要 " + coins(target.amountCents) + " 金币；当时手里有 " + coins(before?.cashCents ?? s.scenario.startingCashCents) + " 金币。" + (before?.referenceValueCents ? " 还有约 " + coins(before.referenceValueCents) + " 金币的份额价值尚未到账。" : ""))) : note("这段账本没有可判断的花费。"),
+        h("p", { class: "hint strong" }, "手里能花的金币够吗？"),
+        h("div", { class: "selection-row" }, ([[true, "可以支付"], [false, "不能支付"]] as const).map(([value, label]) => h("button", { type: "button", class: "choice" + (s.answer === value ? " selected" : ""), "aria-pressed": String(s.answer === value), onclick: () => { if (s.answer !== value) s.result = null; s.answer = value; this.ctx.refresh(); } }, label))),
+        details("查看此前的时间线", h("div", { class: "timeline" }, timeline.rows.slice(0, Math.max(index, 0)).map((row) => h("div", { class: "timeline-item" }, h("strong", null, purchaseLabel(fundingRowLabel(row.label) ?? row.label)), h("p", null, "可用 " + coins(row.cashCents) + " 金币 · 份额参考价值 " + (row.referenceValueCents === null ? "尚未揭晓" : coins(row.referenceValueCents)) + " 金币"))))),
+        guidance.panel, button("下一步：试试调整", () => this.selectFundingPage("revision"), "gold", s.answer === null || !target)));
+    const revisionPage = researchPage("d1-revision", this.fundingPage === "revision",
+      panel("换一种安排试试", null,
+        revisionRule,
+        fixedAdditions ? h("p", { class: "fineprint" }, fixedAdditions) : null,
+        h("div", { class: "research-form-grid funding-form-grid" }, planFields("revised")),
+        details("了解这份计划", h("p", { class: "hint" }, "这是固定外部日程的账本练习，不保证改变选择后战斗经过不变。")),
+        needsFinal ? h("div", { class: "stack" }, note("调整后结束时仍有份额，下一执行报价尚未加载，尚未到账。"), s.error ? note(s.error, true) : null, button(s.loading ? "正在加载结束报价…" : "加载结束后的执行报价", () => void this.loadFundingFinal(), "small secondary", s.loading)) : null,
+        button(enabled ? "提交判断并保存计划" : "提交判断并查看核查", () => this.submitFunding(), "gold", s.answer === null || !s.target)));
+    const resultPage = researchPage("d1-result", this.fundingPage === "result",
+      s.result ? resultPanel("D1", "这次核查的结果", fundingFeedback(s.result.feedback, s.result.revised),
+        details("查看试算的完整时间线", fundingTimeline(s.result.timeline)), details("查看调整后的时间线", fundingTimeline(s.result.revised)),
+        details("查看观察与推荐依据", updateBlock(s.result.changes, enabled ? this.ctx.getProfile().knowledge_evidence : [], { K3: purchaseSummary }), this.nextStep(s.result.recommendation)),
+        enabled && s.result.attemptId && this.ctx.getProfile().funding_attempts.some((attempt) => attempt.id === s.result!.attemptId) ? h("p", { class: "hint" }, "可在本局旅程报告中回看最近一次资金核查。") : null,
+        this.resultActions("D1", revisedInput)) : null);
+    return h("main", { class: "research-page", id: "main-content" }, h("div", { class: "task-title" }, h("span", { class: "task-badge" }, "D1"), h("div", null, h("h1", null, "金币够不够用？"), h("p", { class: "research-subtitle" }, "资金安排台")), this.sourceBadge(), !enabled ? pill("练习模式", "blue") : null),
+      navigation, planPage, questionPage, revisionPage, resultPage, button("返回", this.ctx.back, "small ghost"));
+  }
+  private submitFunding(): void {
+    const s = this.fundingState; if (s.answer === null || !s.target) return;
+    try {
+      const before = this.plan();
+      const questionKey = fundingQuestionKey(s.scenario, s.target, "d1-v1", s.plan);
+      const submission = { id: this.ctx.uid("funding"), questionVersion: "d1-v1", plan: structuredClone(s.plan), purchaseId: s.target, canPay: s.answer, revisedPlan: structuredClone(s.revised), help: s.shownHelp[questionKey] ?? "self", answerExposed: s.answerExposed, priorExposure: this.ctx.getRun().source !== "real" || (this.ctx.isCaseKnown?.(s.scenario.caseId) ?? false) };
+      if (this.ctx.getProfile().enabled) {
+        const result = submitFunding(this.ctx.getProfile(), s.scenario, submission);
+        s.result = { feedback: result.feedback, changes: [result.change], recommendation: { before, after: this.plan(result.profile) }, timeline: result.timeline, revised: result.revisedTimeline, attemptId: submission.id }; s.answerExposed = true; this.fundingPage = "result"; this.ctx.setProfile(result.profile);
+      } else { const result = evaluateFundingPractice(s.scenario, submission); s.result = { feedback: result.feedback, changes: [], recommendation: { before, after: this.plan() }, timeline: result.timeline, revised: result.revisedTimeline }; s.answerExposed = true; this.fundingPage = "result"; this.ctx.refresh(); }
+      this.ctx.revealResult?.("D1");
+    } catch (error) { this.fail(error); }
+  }
+  private async loadFundingFinal(): Promise<void> {
+    const s = this.fundingState; const pending = s.scenario.pendingFinal; if (!pending || s.loading || this.fundingPage !== "revision" || !this.ctx.canPresentData("D1")) return; const epoch = this.epoch; const run = this.ctx.getRun();
+    s.loading = true; s.error = null; this.ctx.refresh();
+    try {
+      const quote = await loadMarketStage(s.scenario.caseId, pending.stage, true);
+      if (epoch !== this.epoch || this.funding !== s || this.ctx.getRun() !== run) return;
+      this.pendingFundingPresentation = { state: s, run, epoch, quote };
+    } catch (error) { if (epoch === this.epoch && this.funding === s && this.ctx.getRun() === run) s.error = error instanceof Error ? error.message : "报价加载失败，请重试。"; }
+    finally { if (epoch === this.epoch && this.funding === s && this.ctx.getRun() === run) {
+      if (this.pendingFundingPresentation) this.resumePendingFundingPresentation();
+      else { s.loading = false; this.ctx.refresh(); }
+    } }
+  }
+  private resumePendingFundingPresentation(): void {
+    const pending = this.pendingFundingPresentation; if (!pending) return;
+    const { state: s, run, epoch, quote } = pending;
+    if (epoch !== this.epoch || this.funding !== s || this.ctx.getRun() !== run) { this.pendingFundingPresentation = null; return; }
+    if (this.fundingPage !== "revision" || !this.ctx.canPresentData("D1")) return;
+    this.pendingFundingPresentation = null;
+    try { s.scenario = attachFundingFinalQuote(s.scenario, quote); s.result = null; }
+    catch (error) { s.error = error instanceof Error ? error.message : "报价加载失败，请重试。"; }
+    s.loading = false; this.ctx.refresh();
+  }
+  renderHistory(): HTMLElement {
+    const s = this.historyState; this.syncPreference("D2", s); const enabled = this.ctx.getProfile().enabled; const run = this.ctx.getRun(); const manifest = this.ctx.getManifest(); const cases = this.caseChoices();
+    const primaryWaiting = s.locked && awaitsRelatedSettlement(run, s.caseId);
+    const otherWaiting = s.locked && !!s.otherShown && awaitsRelatedSettlement(run, s.otherShown.caseId);
+    if (primaryWaiting || otherWaiting) return h("main", { class: "stack", id: "main-content", style: "padding-top:24px;max-width:920px;margin:auto" },
+      panel("历史对照台暂时等待结算", "这道题的判断、日程和已保存资料都保留着。请先完成本局结束后的报价与回收，再继续查看关联片段。",
+        !primaryWaiting && s.shown ? this.comparisonCard(s.shown) : null, button("返回旅程", this.ctx.back, "secondary")));
+    if (!s.locked && cases.length && !cases.some((item) => item.summary.caseId === s.caseId)) { s.caseId = cases[0]!.summary.caseId; s.otherId = otherResearchCase(cases, s.caseId); }
+    if (s.locked && !s.otherShown && !s.otherId && cases.length) s.otherId = otherResearchCase(cases, s.caseId);
+    const chooseDirection = (label: string, value: Direction | "", set: (value: Direction) => void): HTMLElement => h("label", { class: "field" }, label, h("select", { onchange: (e: Event) => set(onValue(e) as Direction) }, option("", "请选择", value === ""), option("outperform", "更高", value === "outperform"), option("underperform", "更低", value === "underperform"), option("equal", "相同", value === "equal")));
+    const guidance = this.guidance("D2", s.help, !!s.shown && !s.submitted, (mode) => this.chooseHelp("D2", s, mode));
+    if (this.historyPage === "answer") this.recordHistoryHelpWhenShown(s, guidance.shown);
+    const unseenNext = cases.find(({ summary, seen }) => !seen && (!s.shown || !casesAreRelated(summary.caseId, s.shown.caseId)) && (!s.otherShown || !casesAreRelated(summary.caseId, s.otherShown.caseId)));
+    const attempt = enabled && s.locked ? this.ctx.getProfile().research_process.find((item) => item.id === s.id) : undefined;
+    const primaryExposedAfter = !!attempt?.exposedCaseIdsAfterLock?.some((id) => casesAreRelated(id, s.caseId));
+    const caseLabel = (caseId: string, seen: boolean): string => s.locked && caseId === s.caseId && primaryExposedAfter
+      ? (s.caseWasSeen ? "锁题前已见" : "锁题时未见") + " · 锁题后已在其他入口展示" : (s.locked && caseId === s.caseId ? s.caseWasSeen ?? seen : seen) ? "已看过 · 复习" : "未见";
+    const recoveryText = (pct: Percent): string => pct === 0 ? "不取回" : pct === 50 ? "取回一半" : "全部取回";
+    const startPanel = panel("先看一段历史", null,
+      h("p", { class: "research-intro" }, "这是练习，不会扣游戏金币。用同样的金币和时间，比较一段历史与同期市场；先猜一猜，再看结果，有其他片段时还能比较。"),
+      h("label", { class: "field" }, "想看哪段历史？", h("select", { disabled: s.locked, onchange: (e: Event) => { s.caseId = onValue(e); s.otherId = otherResearchCase(cases, s.caseId); this.ctx.refresh(); } }, cases.map(({ summary, seen }) => option(summary.caseId, summary.title + "（" + caseLabel(summary.caseId, seen) + "）", summary.caseId === s.caseId)))),
+      h("label", { class: "field" }, "你猜这段历史比同期市场怎样？", h("select", { disabled: s.locked, onchange: (e: Event) => { s.claim = onValue(e) as Direction | "unknown"; } }, option("unknown", "暂时不猜也可以", s.claim === "unknown"), option("outperform", "更高", s.claim === "outperform"), option("underperform", "更低", s.claim === "underperform"), option("equal", "相同", s.claim === "equal"))),
+      h("p", { class: "research-schedule" }, `每边各用 ${coins(s.schedule.participationCents)} 金币；途中第一次${recoveryText(s.schedule.t1)}，第二次${recoveryText(s.schedule.t2)}，最后取回剩余部分。`),
+      details("可选：调整投入和途中取回", h("p", { class: "hint" }, "参与是先拿出金币；取回是卖出份额换回金币。每次取回按当时剩余份额计算。"),
+        h("label", { class: "field" }, "每边拿多少金币？（一开始有 " + coins(s.schedule.startingCashCents) + "）", h("input", { type: "number", "data-focus-key": "history-amount", disabled: s.locked, min: .01, max: s.schedule.startingCashCents / 100, step: .01, value: s.schedule.participationCents / 100, onchange: (e: Event) => { s.schedule.participationCents = Math.round(Number(onValue(e)) * 100); this.ctx.refresh(); } })),
+        h("div", { class: "choice-grid" }, selectPercent(s.schedule.t1, (v) => { if (!s.locked) { s.schedule.t1 = v; this.ctx.refresh(); } }, "第一次途中", s.locked, "history-recovery-1"), selectPercent(s.schedule.t2, (v) => { if (!s.locked) { s.schedule.t2 = v; this.ctx.refresh(); } }, "第二次途中", s.locked, "history-recovery-2"))),
+      details("了解研究规则", h("p", { class: "hint" }, run.status === "active" ? "锁定后加载另一段历史，本局尚未揭晓的未来不会在这里展示。" : "判断与日程锁定后才加载历史片段。"), h("p", { class: "fineprint" }, this.plan().offers.D2), !enabled ? h("p", { class: "fineprint" }, "本练习只显示即时反馈，离开后不保存研究观察。") : null),
+      s.locked ? pill("猜想和安排已记录", "blue") : button("开始看数据", () => void this.lockHistory(), "gold", !cases.length || s.loading));
+    startPanel.setAttribute("tabindex", "-1"); startPanel.setAttribute("data-focus-key", "history-task-start"); startPanel.setAttribute("style", "scroll-margin-top: 16px"); this.historyStart = startPanel;
+    const navigation = this.steps<HistoryPage>("D2", this.historyPage, [
+      { id: "setup", label: "开始", enabled: true }, { id: "data", label: "案例", enabled: !!s.shown },
+      { id: "other", label: "对照", enabled: !!s.otherShown }, { id: "answer", label: "作答", enabled: !!s.shown && !s.submitted },
+      { id: "result", label: "结果", enabled: s.submitted },
+    ], (page) => this.selectHistoryPage(page));
+    const status = (): Child => s.error && !s.submitted ? h("div", { class: "stack" }, note(s.error, true), button("重试加载资料", () => void this.loadHistory(s.errorOther), "small secondary", s.loading))
+      : s.loading ? h("div", { class: "notice", role: "status" }, "正在加载锁定日程后的历史资料……") : null;
+    const setupPage = researchPage("d2-setup", this.historyPage === "setup",
+      !manifest ? h("section", { class: "panel stack" }, note(this.ctx.manifestLoading() ? "案例目录正在加载；已有锁定题的记录仍保留。" : this.ctx.manifestError() ? "案例目录加载失败：" + this.ctx.manifestError() + " 已有锁定题的记录仍保留。" : "案例目录尚未加载；已有锁定题的记录仍保留。", !!this.ctx.manifestError()), button(this.ctx.manifestLoading() ? "正在加载案例目录…" : "重新加载案例目录", this.ctx.retryManifest, "small secondary", this.ctx.manifestLoading())) : !cases.length && !s.locked ? note("当前没有可选的历史片段，可以先返回旅程或切换任务。") : null,
+      startPanel, status(),
+      s.locked && !s.shown && !s.error && !s.loading && !s.submitted ? button("继续加载已锁定资料", () => void this.loadHistory(false), "secondary") : null);
+    const dataPage = researchPage("d2-data", this.historyPage === "data",
+      s.shown ? panel("这段历史与同期市场", null, this.comparisonCard(s.shown),
+        details("如何看回撤", h("p", { class: "hint" }, "持有部分最大回撤描述持有期间价格的高点到后续低点；回收本身不算价格下跌。")),
+        !s.otherShown ? (s.submitted ? h("p", { class: "fineprint" }, "本题资料已固定；可以在下一题继续查看其他片段。") : s.otherId ? button("再查看另一段历史" + (cases.find((choice) => choice.summary.caseId === s.otherId)?.seen ? "（复习）" : "（未见）"), () => void this.loadHistory(true), "small secondary", s.loading) : h("p", { class: "fineprint" }, "冒险结束后，可以继续比较本局的历史片段。")) : button("查看另一段历史", () => this.selectHistoryPage("other"), "small secondary"),
+        status(), !s.submitted ? button("下一步：作答", () => this.selectHistoryPage("answer"), "gold") : null) : null);
+    const otherPage = researchPage("d2-other", this.historyPage === "other",
+      s.otherShown ? panel("另一段历史", null, this.comparisonCard(s.otherShown),
+        !s.submitted ? button("下一步：作答", () => this.selectHistoryPage("answer"), "gold") : null) : null);
+    const answerPage = researchPage("d2-answer", this.historyPage === "answer",
+      s.shown && !s.submitted ? panel("看完后，你怎么想？", null, chooseDirection("这段历史比同期市场怎样？", s.comparison, (value) => { s.comparison = value; }),
+        s.otherShown ? h("div", { class: "research-form-grid" }, chooseDirection("另一段比第一段怎样？", s.difference, (value) => { s.difference = value; }), h("label", { class: "field" }, "这些结果能说明什么？", h("select", { onchange: (e: Event) => { s.boundary = onValue(e) as BoundaryAnswer | ""; } }, option("", "请选择", !s.boundary), option("only_samples", "只说明这两段历史，不能预测未来", s.boundary === "only_samples"), option("predicts_future", "说明未来必然得到相同结果", s.boundary === "predicts_future")))) : null,
+        h("label", { class: "field" }, "你是怎么看出来的？（可不填）", h("select", { onchange: (e: Event) => { s.reason = onValue(e); } }, option("", "不填写也可以", !s.reason), option("根据同日期的数字比较", "比较了同一天的数据", s.reason === "根据同日期的数字比较"), option("查看了不同片段的差异", "看了两段历史的差别", s.reason === "查看了不同片段的差异"), option("仍不确定，想继续核查", "还不确定，想再看看", s.reason === "仍不确定，想继续核查"))),
+        guidance.panel, s.error ? status() : null, h("div", { class: "button-row research-answer-actions" },
+          !s.otherShown && s.otherId ? button(s.loading ? "正在加载…" : "再看另一段", () => void this.loadHistory(true), "small secondary", s.loading) : null,
+          button("提交这次研究", () => this.submitHistory(), "gold", s.loading))) : null);
+    const resultPage = researchPage("d2-result", this.historyPage === "result",
+      s.submitted ? resultPanel("D2", "研究后的观察", s.feedback ? historyFeedback(s.feedback) : null,
+        details("查看观察与推荐依据", updateBlock(s.changes, enabled ? this.ctx.getProfile().knowledge_evidence : [], { K1: s.shown ? "同一日程下，案例盈亏 " + coins(s.shown.asset.gainCents) + " 金币，同期基准盈亏 " + coins(s.shown.benchmark.gainCents) + " 金币。" : undefined, K2: s.shown && s.otherShown ? "固定日程下，第一段盈亏 " + coins(s.shown.asset.gainCents) + " 金币，另一段盈亏 " + coins(s.otherShown.asset.gainCents) + " 金币；它们只能说明这两段历史。" : undefined }), s.recommendation ? this.nextStep(s.recommendation) : null),
+        h("p", { class: "hint" }, !manifest ? "案例目录尚未加载，加载后才能判断可用片段。" : !cases.length ? "当前没有可选的历史片段，可以先返回旅程或切换任务。" : unseenNext ? "还有尚未见过的历史片段，可以继续核查。" : "目前没有可用的未见片段；再次打开是复习，不作为新情境。"),
+        this.resultActions("D2", undefined, unseenNext?.summary.caseId)) : null);
+    return h("main", { class: "research-page", id: "main-content" }, h("div", { class: "task-title" }, h("span", { class: "task-badge" }, "D2"), h("div", null, h("h1", null, "这次涨跌，真的说明什么？"), h("p", { class: "research-subtitle" }, "历史对照台")), this.sourceBadge(), !enabled ? pill("练习模式", "blue") : null),
+      navigation, setupPage, dataPage, otherPage, answerPage, resultPage, button("返回", this.ctx.back, "small ghost"));
+  }
+  private focusHistoryStart(): void { this.historyStart?.focus({ preventScroll: true }); this.historyStart?.scrollIntoView({ behavior: "auto", block: "start" }); }
+  private restartHistory(preferredCase?: string): void {
+    this.epoch++; this.history = null; this.historyPage = "setup"; this.pendingHistoryPresentation = null; this.skipPendingHistory = true;
+    const cases = this.caseChoices();
+    if (preferredCase && cases.some((item) => item.summary.caseId === preferredCase)) { const next = this.historyState; next.caseId = preferredCase; next.otherId = otherResearchCase(cases, preferredCase); }
+    this.ctx.refresh(); this.focusHistoryStart();
+  }
+  private resumePendingHistory(): void {
+    if (!this.ctx.getProfile().enabled || !this.ctx.getProfile().research_process.some((item) => !item.submitted)) return;
+    this.epoch++; this.history = null; this.historyPage = "setup"; this.pendingHistoryPresentation = null; this.skipPendingHistory = false; this.ctx.refresh(); this.focusHistoryStart();
+  }
+  private comparisonCard(c: HistoryComparison): HTMLElement {
+    return h("div", { class: "stack" }, h("div", { class: "row" }, pill(c.title, "blue"), h("span", { class: "fineprint" }, `${dateText(c.dates[0])} 至 ${dateText(c.dates[1])}`)), h("div", { class: "metric-grid" }, metric("这段历史的盈亏", `${coins(c.asset.gainCents)} 金币`), metric("同期市场的盈亏", `${coins(c.benchmark.gainCents)} 金币`), metric("持有时最大跌幅", c.asset.heldPriceMaxDrawdown === null ? "无持有" : `${(c.asset.heldPriceMaxDrawdown * 100).toFixed(1)}%`)), h("p", { class: "fineprint" }, "盈亏是赚或亏的金额；负数表示亏损。"),
+      details("计算与样本边界", h("p", { class: "fineprint" }, c.explanation)), details("查看可用现金时间线", h("div", { class: "timeline" }, c.asset.timeline.map((row) => h("div", { class: "timeline-item" }, h("strong", null, `${dateText(row.date)} · ${researchStageLabel(row.step)}`), h("p", null, `可用 ${coins(row.cashCents)} 金币 · 参考价值 ${coins(row.referenceValueCents)} 金币`))))));
+  }
+  private async lockHistory(): Promise<void> {
+    const s = this.historyState; if (s.locked || s.loading) return;
+    try {
+      if (s.schedule.participationCents <= 0 || s.schedule.participationCents > s.schedule.startingCashCents) throw new Error("参与金额需大于 0 且不超过起点可用金币。");
+      const run = this.ctx.getRun(); const priorExposure = run.source !== "real" || (this.caseChoices().find((item) => item.summary.caseId === s.caseId)?.seen ?? true);
+      s.caseWasSeen = priorExposure;
+      if (this.ctx.getProfile().enabled) {
+        const updated = startHistory(this.ctx.getProfile(), { id: s.id, caseId: s.caseId, questionVersion: "d2-v1", schedule: { ...s.schedule }, initialClaim: s.claim, priorExposure });
+        s.caseWasSeen = updated.research_process.find((item) => item.id === s.id)?.priorExposure ?? true;
+        this.ctx.setProfile(updated);
+      }
+      s.locked = true; await this.loadHistory(false);
+    } catch (error) { this.fail(error); }
+  }
+  /** Commit a loaded comparison only while its original locked question is actually presentable. */
+  resumePendingPresentation(): void {
+    this.resumePendingFundingPresentation();
+    const pending = this.pendingHistoryPresentation;
+    if (!pending) return;
+    const { state: s, run, epoch, primary, second, otherRequested } = pending;
+    if (epoch !== this.epoch || this.history !== s || this.ctx.getRun() !== run || s.submitted) {
+      this.pendingHistoryPresentation = null;
+      return;
+    }
+    if (awaitsRelatedSettlement(run, primary.caseId) || (!!second && awaitsRelatedSettlement(run, second.caseId))) {
+      this.pendingHistoryPresentation = null; s.loading = false; s.errorOther = otherRequested;
+      s.error = "请先完成本局结算，再查看关联历史片段。"; this.ctx.refresh(); return;
+    }
+    if (!this.ctx.canPresentData("D2")) return;
+    // Clear first: setProfile/refresh may synchronously render and call this hook again.
+    this.pendingHistoryPresentation = null;
+    try {
+      // A restored or already visible comparison is a saved fact, not a fresh calculation.
+      const shown = s.shown ?? compareSchedule(primary, s.schedule);
+      const otherShown = s.otherShown ?? (second ? compareSchedule(second, s.schedule) : null);
+      const previousProfile = this.ctx.getProfile();
+      const existingAttempt = previousProfile.research_process.find((item) => item.id === s.id);
+      const existing = existingAttempt?.shown;
+      const otherPriorExposure = second ? existing?.other?.caseId === second.caseId ? (existing.otherPriorExposure ?? true)
+        : run.source !== "real" || (this.ctx.wasCaseSeen?.(second.caseId) ?? false)
+          || !!existingAttempt?.exposedCaseIdsAfterLock?.some((id) => casesAreRelated(id, second.caseId))
+          || (casesAreRelated(run.caseId, second.caseId) && hasAppliedNonEntryQuote(run)) : false;
+      s.primary = primary; s.other = second; s.shown = shown; s.otherShown = otherShown; s.loading = false;
+      // A finished request selects and renders its actual data page before exposure is recorded.
+      this.historyPage = otherRequested && second ? "other" : "data";
+      this.ctx.refresh();
+      this.activeStepTabs.D2?.focus({ preventScroll: true });
+      if (otherRequested && second) this.ctx.markCaseSeen?.(second.caseId, s.id);
+      else this.ctx.markCaseSeen?.(primary.caseId, s.id);
+      const profile = this.ctx.getProfile();
+      if (profile.enabled) this.ctx.setProfile(showHistoryEvidence(profile, s.id, primary, second ?? undefined, otherPriorExposure));
+      this.ctx.refresh();
+    } catch (error) {
+      s.loading = false; s.errorOther = otherRequested;
+      s.error = error instanceof Error ? error.message : "资料加载失败。";
+      this.ctx.refresh();
+    }
+  }
+  private async loadHistory(other: boolean): Promise<void> {
+    const s = this.historyState; if (!s.locked || s.loading || s.submitted) return; const epoch = this.epoch; const run = this.ctx.getRun();
+    if (awaitsRelatedSettlement(run, s.caseId) || (other && awaitsRelatedSettlement(run, s.otherId))) {
+      s.errorOther = other; s.error = "请先完成本局结算，再查看关联历史片段。"; this.ctx.refresh(); return;
+    }
+    s.loading = true; s.error = null; this.ctx.refresh();
+    try {
+      const primary = s.primary ?? await loadResearchCase(s.caseId, true); const second = other ? await loadResearchCase(s.otherId, true) : s.other;
+      if (epoch !== this.epoch || this.history !== s || this.ctx.getRun() !== run || s.submitted) return;
+      this.pendingHistoryPresentation = { state: s, run, epoch, primary, second, otherRequested: other };
+    } catch (error) { if (epoch === this.epoch && this.history === s && this.ctx.getRun() === run) { s.errorOther = other; s.error = error instanceof Error ? error.message : "资料加载失败。"; } }
+    finally {
+      if (epoch === this.epoch && this.history === s && this.ctx.getRun() === run) {
+        if (this.pendingHistoryPresentation) this.resumePendingPresentation();
+        else { s.loading = false; this.ctx.refresh(); }
+      }
+    }
+  }
+  private submitHistory(): void {
+    const s = this.historyState;
+    if (s.loading || s.submitted) return;
+    const run = this.ctx.getRun();
+    if (awaitsRelatedSettlement(run, s.caseId) || (!!s.otherShown && awaitsRelatedSettlement(run, s.otherShown.caseId))) return;
+    if (!s.comparison) { this.ctx.notify("请选择这段历史与同期市场的比较结果。"); return; }
+    if (s.otherShown && (!s.difference || !s.boundary)) { this.ctx.notify("请比较另一片段并选择样本边界。"); return; }
+    try {
+      const before = this.plan();
+      const answers = { comparison: s.comparison, ...(s.difference ? { historyDifference: s.difference } : {}), ...(s.boundary ? { boundary: s.boundary } : {}), reason: s.reason };
+      if (this.ctx.getProfile().enabled) {
+        const result = submitHistory(this.ctx.getProfile(), s.id, answers); s.changes = result.changes; s.feedback = result.feedback; s.submitted = true; s.recommendation = { before, after: this.plan(result.profile) }; this.historyPage = "result"; this.ctx.setProfile(result.profile);
+      } else {
+        if (!s.primary) throw new Error("请先加载资料。");
+        const result = evaluateHistoryPractice(s.primary, s.other, s.schedule, answers); s.feedback = result.feedback; s.submitted = true; s.recommendation = { before, after: this.plan() }; this.historyPage = "result"; this.ctx.refresh();
+      }
+      this.ctx.revealResult?.("D2");
+    } catch (error) { this.fail(error); }
+  }
+  campExtras(): Child {
+    const run = this.ctx.getRun(); const profile = this.ctx.getProfile(); if (!profile.enabled || run.phase !== "camp" || !run.camp) return null;
+    const active = [...profile.forecasts].reverse().find((f) => f.caseId === run.caseId && !f.withdrawn);
+    if (run.node === "N2" && run.market.entryCommitted && run.market.order?.kind === "entry" && run.market.order.amountCents > 0 && !active) {
+      const amount = run.market.order.amountCents;
+      const draftKey = `${run.id}:${amount}`;
+      if (this.forecastDraftKey !== draftKey) { this.forecastDraftKey = draftKey; this.forecastFeeling = ""; this.forecastAction = ""; }
+      const feeling = h("select", { "aria-label": "预想的感受", "data-focus-key": "forecast-feeling", onchange: (event: Event) => { this.forecastFeeling = onValue(event) as Feeling | ""; } }, option("", "不回答", !this.forecastFeeling), ...feelings.map(([id, label]) => option(id, label, id === this.forecastFeeling)));
+      const prediction = h("select", { "aria-label": "预想的行动", "data-focus-key": "forecast-action", onchange: (event: Event) => { this.forecastAction = onValue(event) as ContractAction | ""; } }, option("", "不回答", !this.forecastAction), ...actionNames.map(([id, label]) => option(id, label, id === this.forecastAction)));
+      return h("section", { class: "panel forecast-panel" }, details("可选：留给下一营地的预期", h("div", { class: "stack" }, h("p", { class: "hint" }, `假设契约价值相对投入减少 10%–20%（约 ${coins(Math.round(amount * .1))}–${coins(Math.round(amount * .2))} 金币），且届时至少有 10 金币、生命至少一半，你预计会怎样？这只是预测，不是承诺。`),
+        h("label", { class: "field" }, "你预计会多在意？", feeling), h("label", { class: "field" }, "届时可能如何安排？", prediction), button("留下一份预期", () => { try { this.ctx.setProfile(saveForecast(profile, { id: this.ctx.uid("forecast"), caseId: run.caseId, amountCents: amount, lossMin: .1, lossMax: .2, minCashCents: 1000, minHealthRatio: .5, feeling: (feeling.value || null) as Feeling | null, action: (prediction.value || null) as ContractAction | null, priorExposure: this.ctx.isCaseKnown?.(run.caseId) ?? false, beforeFuture: true })); this.ctx.notify("预期已保存；之后改变主意也完全可以。"); } catch (error) { this.fail(error); } }, "small secondary"))));
+    }
+    if (run.node === "N4" && run.camp.decision === "not-submitted" && active && !profile.calibration.some((c) => c.forecastId === active.id) && run.market.referenceValueCents !== null) {
+      const feeling = h("select", { "aria-label": "现在的感受" }, option("", "不回答"), ...feelings.map(([id, label]) => option(id, label)));
+      const context: CalibrationContext = { caseId: run.caseId, node: run.node, amountCents: run.wallet.investedCents, referenceValueCents: run.market.referenceValueCents, cashCents: run.wallet.cashCents, health: run.hp, maxHealth: run.maxHp, priorExposure: this.ctx.isCaseKnown?.(run.caseId) ?? false, autonomousChoice: true, pendingSettlement: false, forcedOrAutomatic: false, changedGoalOrUnderstanding: profile.user_reasons.length > 0, afterCloseBeforeExecution: run.market.lastQuote?.step === "t1", sameShareBasis: !run.history.some((e) => e.action === "submit-redemption") };
+      return h("section", { class: "panel stack" }, h("h3", null, "这一刻的感受"), pill("可跳过", "gold"), h("p", { class: "hint" }, run.source === "fork" ? "原局的事前预期已保留作模拟参考；这次分叉不作为可比的新观察。可以记录此刻感受，再自行选择契约操作。" : "如果愿意，先记录现在的感受，再自行选择契约操作。系统不会先展示之前的回答。"), h("label", { class: "field" }, "此刻有多在意？", feeling), button("记录此刻感受", () => { try { this.ctx.setProfile(recordCalibrationFeeling(profile, active.id, context, (feeling.value || null) as Feeling | null)); this.ctx.notify("已记录。接下来按你的想法安排份额。"); } catch (error) { this.fail(error); } }, "small secondary"));
+    }
+    return null;
+  }
+  afterAction(action: RunAction): void {
+    if (action.type !== "submit-redemption") return;
+    const profile = this.ctx.getProfile(); if (!profile.enabled) return;
+    const pending = [...profile.calibration].reverse().find((item) => item.action === null);
+    if (!pending) return;
+    const choice: ContractAction = action.percent === 0 ? "continue" : action.percent === 50 ? "half" : "all";
+    try { this.ctx.setProfile(recordCalibrationAction(profile, pending.forecastId, choice, undefined, { additionalEntryCents: action.additionalEntryCents ?? 0 })); } catch (error) { this.fail(error); }
+  }
+  calibrationReport(): Child {
+    const item = calibrationForDisplay(this.ctx.getProfile()).at(-1); if (!item) return null;
+    const forecast = this.ctx.getProfile().forecasts.find((f) => f.id === item.forecastId);
+    const feelingText = (value: Feeling | null): string => feelings.find(([id]) => id === value)?.[1] ?? "没有回答";
+    const actionText = (value: ContractAction | null): string => actionNames.find(([id]) => id === value)?.[1] ?? "没有回答";
+    return details("回看这次预期", h("p", { class: "hint" }, `事前预计：${feelingText(forecast?.feeling ?? null)}，倾向${actionText(forecast?.action ?? null)}。`), h("p", { class: "hint" }, `这次自报：${feelingText(item.feeling)}，实际选择${actionText(item.action)}。`), h("p", { class: "hint" }, item.comparison === "matched" ? `符合预先条件。本次感受对照：${item.affectComparison === "stronger" ? "比预计更强" : item.affectComparison === "weaker" ? "比预计更轻" : item.affectComparison === "similar" ? "与预计接近" : "信息不足"}；行动：${item.actionComparison === "same" ? "与预测相同" : item.actionComparison === "different" ? "与预测不同" : "信息不足"}。` : `这次条件不同，不能直接比较：${(item.unavailableReason ?? "信息不足").replace(/（依据 [^）]+）/g, "")}。`), h("p", { class: "fineprint" }, "感受来自本人填写，行动来自本局选择；这不说明现实中的财务承受能力。"));
+  }
+}

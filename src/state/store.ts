@@ -149,18 +149,16 @@ export function emit<T extends GameEvent["type"]>(s: State, round_id: string, st
   } as GameEvent);
 }
 
-/** 清除本游戏在本机存储的全部内容，回到开局告知。 */
-export function clearAll(): void {
+/** Clear only the legacy record; the adventure has its own storage namespace. */
+export function clearAll(): boolean {
   try {
-    for (let i = localStorage.length - 1; i >= 0; i--) {
-      const k = localStorage.key(i);
-      if (k?.startsWith("nextcard:")) localStorage.removeItem(k);
-    }
+    localStorage.removeItem(STORAGE_KEY);
   } catch {
-    // 同上
+    return false;
   }
   state = freshState();
   for (const l of listeners) l();
+  return true;
 }
 
 export function go(screen: Screen): void {

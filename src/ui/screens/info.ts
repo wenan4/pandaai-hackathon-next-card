@@ -49,7 +49,9 @@ function clearButton(): HTMLElement {
     {
       class: "btn-text",
       onclick: () => {
-        if (window.confirm("清除本局的全部记录？已翻的牌、判断和人物卡都会删除，无法恢复。")) clearAll();
+        if (window.confirm("清除旧版本局的全部记录？已翻的牌、判断和人物卡都会删除，无法恢复。晨光小城的冒险记录不受影响。") && !clearAll()) {
+          window.alert("未能清除旧版记录，请检查浏览器存储设置后重试。原来的进度仍保留。");
+        }
       },
     },
     "清除本局记录",

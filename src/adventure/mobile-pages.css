@@ -1,0 +1,155 @@
+/* One activity at a time; details stay reachable through a named control. */
+[hidden] { display: none !important; }
+.mobile-menu { display: none; }
+.menu-grid { display: grid; gap: 10px; }
+.preference-goals { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.preference-helps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.preference-panel .choice { display: grid; gap: 5px; padding: 10px; text-align: left; }
+.preference-panel .choice strong { font-size: .82rem; }
+.preference-panel .choice span { font-size: .7rem; line-height: 1.45; font-weight: 400; }
+.camp-allocation-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.journey-shell .page-grid { grid-template-columns: minmax(0, 1fr); }
+.journey-tools { display: flex; align-items: center; gap: 6px; margin: 9px 0; }
+.journey-tools .button { min-height: 34px; padding: 6px 9px; font-size: .74rem; }
+.screen-tabs, .camp-stage { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.screen-tabbar { display: flex; gap: 5px; overflow-x: auto; padding: 2px 2px 8px; scrollbar-width: thin; }
+.screen-tab { flex: 0 0 auto; min-height: 42px; border: 1px solid #d9e1cc; border-radius: 12px; padding: 8px 14px; background: #f9fcf1; color: #557357; }
+.screen-tab.selected { background: #426e50; color: #fffdf1; border-color: #426e50; }
+.screen-tabpage { min-width: 0; }
+.stage-actions { padding-top: 8px; display: grid; gap: 8px; }
+.shop-card-rail, .deck-card-rail { display: flex; overflow-x: auto; gap: 14px; padding: 12px 8px; scroll-snap-type: x mandatory; }
+.shop-card-offer { display: grid; gap: 12px; flex: 0 0 175px; scroll-snap-align: start; }
+.shop-card-offer .game-card { width: 100%; filter: none; opacity: 1; }
+.deck-card-rail > .game-card { flex: 0 0 170px; filter: none; opacity: 1; scroll-snap-align: start; }
+.guidebook { display: grid; gap: 14px; }
+.guide-topics { display: flex; gap: 6px; overflow-x: auto; padding: 3px 2px 8px; }
+.guide-topics .button { flex: 0 0 auto; }
+.guide-topics [aria-pressed="true"] { background: #426e50; color: #fffdf1; }
+.guide-page { display: grid; gap: 14px; }
+.guide-page h3 { font-size: 1.15rem; }
+.guide-page p { line-height: 1.65; }
+.guide-example { padding: 13px; border-radius: 12px; background: #f5edda; color: #795f38; line-height: 1.65; font-size: .88rem; }
+.guide-paging { justify-content: space-between; }
+
+@media (max-width: 540px) {
+  html, body, #app, .adventure { min-height: 100svh; }
+  .adventure .app-shell, .adventure .intro { padding: 0 10px 8px; }
+  .adventure .topbar { min-height: 46px; height: 46px; gap: 6px; }
+  .adventure .brand-mark { width: 28px; height: 28px; border-width: 2px; }
+  .adventure .brand { gap: 6px; }
+  .adventure .brand-name { font-size: .95rem; }
+  .adventure .brand-sub { display: none; }
+  .adventure .top-actions { flex-wrap: nowrap; gap: 5px; }
+  .adventure .top-actions > .link-button:not(.mobile-menu) { display: none; }
+  .adventure .top-actions > .button { padding: 6px 9px; min-height: 36px; font-size: .75rem; }
+  .adventure .mobile-menu { display: inline-flex; align-items: center; min-height: 40px; }
+  .adventure .panel { padding: 12px; border-radius: 15px; }
+  .adventure .panel h2 { font-size: 1.1rem; }
+  .adventure .panel h3 { font-size: 1rem; }
+  .adventure .panel-head { margin-bottom: 0; }
+  .adventure .stack { gap: 10px; }
+  .adventure .hint { font-size: .78rem; line-height: 1.5; }
+  .adventure .fineprint { font-size: .7rem; line-height: 1.45; }
+  .adventure .button { min-height: 42px; padding: 8px 11px; }
+  .adventure input, .adventure select { min-height: 42px; font-size: 16px; }
+  .adventure .field { gap: 5px; font-size: .77rem; }
+  .adventure .notice { padding: 10px; font-size: .78rem; line-height: 1.5; }
+  .adventure .intro { height: 100svh; display: flex; flex-direction: column; }
+  .adventure .intro-hero { flex: 1; min-height: 0; margin-top: 8px; background-position: 57% 35%; }
+  .adventure .intro-content { min-height: 0; height: 100%; padding: 18px; justify-content: end; }
+  .adventure .intro h1 { font-size: clamp(2.6rem, 7vh, 3.6rem); margin: 10px 0; }
+  .adventure .intro-lead { font-size: .82rem; line-height: 1.6; }
+  .adventure .intro-actions { margin-top: 14px; gap: 9px; }
+  .adventure .intro-note { font-size: .68rem; line-height: 1.5; margin-top: 14px; }
+  .adventure .intro-bottom { display: flex; overflow-x: auto; gap: 7px; flex: 0 0 82px; margin-top: 8px; scroll-snap-type: x mandatory; }
+  .adventure .intro-feature { flex: 0 0 88%; min-width: 0; padding: 12px; scroll-snap-align: start; }
+  .adventure .intro-feature strong { font-size: .84rem; margin-bottom: 3px; }
+  .adventure .intro-feature span { font-size: .7rem; }
+
+  .screen-game > div:first-child { display: flex; flex-direction: column; min-height: 100svh; }
+  .screen-game > div:first-child > .app-shell:first-child { width: 100%; padding-bottom: 0; }
+  .adventure .journey-shell { width: 100%; flex: 1; min-height: 0; padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+  .adventure .journey-strip { padding-top: 6px; gap: 5px; align-items: center; }
+  .adventure .journey-title { gap: 6px; }
+  .adventure .journey-title h1 { font-size: 1.05rem; }
+  .adventure .journey-number { font-size: .59rem; letter-spacing: 0; }
+  .adventure .resource-row { gap: 4px; }
+  .adventure .resource { min-height: 27px; padding: 4px 6px; font-size: .64rem; }
+  .adventure .resource b { font-size: .69rem; }
+  .adventure .journey-tools { gap: 3px; margin: 4px 0; }
+  .adventure .journey-tools .button { min-height: 32px; padding: 4px 7px; font-size: .7rem; }
+  .adventure .journey-shell .page-grid { display: block; padding-top: 0; }
+  .adventure .journey-shell .main-column { gap: 6px; }
+  .screen-tabbar { gap: 4px; padding-bottom: 5px; }
+  .screen-tab { min-height: 40px; padding: 7px 10px; font-size: .76rem; }
+  .screen-tabs, .camp-stage { gap: 7px; }
+  .stage-actions { padding-top: 5px; gap: 7px; }
+  .stage-actions > .button-row .button { flex: 1; }
+  .adventure .item { gap: 7px; padding: 10px; }
+  .adventure .item strong { font-size: .82rem; }
+  .adventure .item p { font-size: .72rem; line-height: 1.5; }
+  .adventure .shop-card-offer { flex-basis: 158px; gap: 10px; }
+  .adventure .shop-card-rail { gap: 12px; padding: 10px 5px; }
+  .adventure .shop-card-offer .game-card { min-height: 180px; }
+  .adventure .route-grid { display: flex; overflow-x: auto; gap: 10px; scroll-snap-type: x mandatory; padding: 3px 2px 8px; }
+  .adventure .route-card { flex: 0 0 92%; padding: 13px; gap: 8px; scroll-snap-align: start; }
+  .adventure .route-card .hint { font-size: .74rem; }
+  .adventure .route-enemy-summary { padding: 8px; }
+  .adventure .route-enemy-summary p { font-size: .72rem; }
+  .adventure .game-receipt { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 8px; padding: 6px 9px; margin-bottom: 6px; }
+  .adventure .game-receipt p { margin: 0; }
+  .adventure .game-receipt p { font-size: .7rem; line-height: 1.4; }
+  .adventure .game-receipt strong { font-size: .75rem; }
+  .adventure .phase-reward .reward-selection { min-height: 0; padding: 7px 9px; }
+  .adventure .phase-reward .reward-choices { padding-top: 9px; padding-bottom: 10px; }
+  .adventure .phase-reward .reward-choices .game-card { min-height: 165px; }
+  .adventure .phase-reward .reward-actions { gap: 8px; }
+
+  .adventure.battle-active > div:first-child { height: 100svh; min-height: 0; }
+  .adventure.battle-active .journey-shell { display: flex; flex-direction: column; min-height: 0; }
+  .adventure.battle-active .page-grid, .adventure.battle-active .main-column { flex: 1; min-height: 0; height: 100%; }
+  .adventure.battle-active .battle-stage { display: flex; height: 100%; min-height: 0; gap: 5px; }
+  .adventure.battle-active .battle-board { flex: 1 1 130px; min-height: 110px; max-height: 200px; padding: 5px; }
+  .adventure.battle-active .avatar.player { width: 60px; height: 78px; }
+  .adventure.battle-active .avatar.enemy { width: 72px; height: 72px; }
+  .adventure.battle-active .combat-label { font-size: .61rem; padding: 3px 5px; }
+  .adventure.battle-active .intent-plan-button { min-height: 32px; padding: 3px; }
+  .adventure.battle-active .battle-status { flex: 0 0 auto; }
+  .adventure.battle-active .battle-stat { padding: 5px 2px; }
+  .adventure.battle-active .combat-feedback { flex: 0 0 auto; min-height: 0; padding: 4px 7px; }
+  .adventure.battle-active .combat-feedback > .button { width: 100%; min-height: 34px; font-size: .74rem; padding: 5px; }
+  .adventure.battle-active .combat-feedback-line { font-size: .69rem; }
+  .adventure.battle-active .battle-energy-summary { margin: 0; font-size: .65rem; }
+  .adventure.battle-active .battle-hand-panel { flex: 0 0 auto; padding: 8px; gap: 4px; }
+  .adventure.battle-active .battle-hand-panel .panel-head { display: none; }
+  .adventure.battle-active .battle-hand-panel > .button { display: none; }
+  .adventure.battle-active .battle-pile-counts { gap: 5px; }
+  .adventure.battle-active .battle-pile-button { min-height: 32px; padding: 4px 6px; }
+  .adventure.battle-active .battle-hand-panel .game-card { flex-basis: 114px; min-width: 114px; min-height: 128px; padding: 9px 6px 7px; }
+  .adventure.battle-active .battle-hand-panel .hand { padding: 7px 3px 9px; }
+  .adventure.battle-active .card-symbol { width: 26px; height: 26px; margin-bottom: 3px; }
+  .adventure.battle-active .card-foot { padding-top: 4px; }
+  .adventure.battle-active .battle-dock { position: static; flex: 0 0 auto; padding: 7px 8px; border: 1px solid #d5dfca; border-radius: 12px; gap: 4px 7px; }
+  .adventure.battle-active .dock-info > strong { font-size: .73rem; }
+  .adventure.battle-active .dock-buttons { gap: 4px; }
+  .adventure.battle-active .dock-buttons .button { min-height: 44px; padding: 6px 8px; }
+  .adventure.battle-active .battle-dock .card-play-preview { padding: 0; border: 0; background: none; max-height: none; overflow: visible; }
+  .adventure.battle-active .battle-dock .card-play-preview > strong { display: none; }
+  .adventure.battle-active .battle-dock .card-play-preview ul { margin: 2px 0 0; font-size: .65rem; }
+  .adventure.battle-active .battle-dock .retain-field { font-size: .65rem; gap: 4px; }
+  .adventure.battle-active .battle-dock .retain-field select { min-height: 34px; font-size: .75rem; }
+  .adventure .modal-backdrop { padding: 10px; }
+  .adventure .modal { padding: 16px; max-height: calc(100svh - 20px); }
+  .adventure .modal h2 { font-size: 1.18rem; margin-bottom: 2px; }
+  .adventure .modal .button-row { margin-top: 6px; }
+  .guide-page { gap: 12px; }
+  .guide-page h3 { font-size: 1.04rem; }
+  .guide-page > p, .guide-example { font-size: .83rem; }
+  .guide-topics .button { min-height: 38px; font-size: .72rem; }
+  .guide-example { padding: 11px; }
+  .adventure .pile-tabs { display: flex; overflow-x: auto; }
+  .adventure .pile-tab { flex: 0 0 auto; padding: 7px 10px; }
+  .adventure .pile-card-list { display: flex; overflow-x: auto; max-height: none; scroll-snap-type: x mandatory; }
+  .adventure .pile-card { flex: 0 0 88%; min-height: 125px; scroll-snap-align: start; }
+  .adventure .research-page { gap: 6px; padding-top: 6px; }
+}

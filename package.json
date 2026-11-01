@@ -1,8 +1,8 @@
 {
   "name": "pandaai-hackathon-next-card",
-  "version": "0.1.0",
+  "version": "0.4.1",
   "private": true,
-  "description": "下一张牌：三轮翻牌短决策，从找证据的方式形成有依据的画像，并当场给出一关研究任务。PandaAI 苏客松赛道。",
+  "description": "下一张牌：晨光小城卡牌冒险，结合历史契约、研究观察与可操作的个性化任务。PandaAI 苏客松赛道。",
   "type": "module",
   "scripts": {
     "dev": "vite --host",
