@@ -41,3 +41,6 @@ logs/
 output/playwright/
 output/demo/
 output/recording-tools/
+
+# 本地赛事提交包（由已提交源码生成）
+output/submission/
