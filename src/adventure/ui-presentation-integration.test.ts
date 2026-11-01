@@ -43,13 +43,14 @@ class FakeElement extends FakeNode {
     this.attributes[name] = value;
     if (name === "value") this.value = value;
     if (name === "disabled") this.disabled = true;
+    if (name === "inert") this.inert = true;
     if (name.startsWith("data-")) this.dataset[name.slice(5).replace(/-([a-z])/g, (_match, letter: string) => letter.toUpperCase())] = value;
   }
   addEventListener(name: string, listener: (event: { currentTarget: FakeElement; target: FakeElement }) => void): void { this.listeners[name] = listener; }
-  fire(name: string): void { if (!(name === "click" && this.disabled)) this.listeners[name]?.({ currentTarget: this, target: this }); }
+  fire(name: string): void { if (!(name === "click" && (this.disabled || this.closest("[hidden]") || this.closest("[inert]")))) this.listeners[name]?.({ currentTarget: this, target: this }); }
   closest(selector: string): FakeElement | null {
     for (let current: FakeNode | null = this; current; current = current.parent) {
-      if (current instanceof FakeElement && ((selector === "[inert]" && current.inert) || selector === current.tag)) return current;
+      if (current instanceof FakeElement && ((selector === "[hidden]" && "hidden" in current.attributes) || (selector === "[inert]" && current.inert) || selector === current.tag)) return current;
     }
     return null;
   }
@@ -67,6 +68,11 @@ function button(node: FakeNode, text: string): FakeElement {
   const result = find(node, (item) => item.tag === "button" && item.textContent === text);
   if (!result) throw new Error(`button missing: ${text}`);
   return result;
+}
+function page(node: FakeNode, name: string): void {
+  const tab = find(node, (item) => item.attributes["data-focus-key"] === `page-${name}`);
+  if (!tab) throw new Error(`page missing: ${name}`);
+  tab.fire("click");
 }
 class MemoryStorage {
   values = new Map<string, string>(); writes: string[] = []; failSeen = false; failSave = false;
@@ -340,7 +346,7 @@ describe("visible presentation coordination", () => {
     let profile = startHistory(emptyResearchProfile(true), { ...inputs, id: "other" });
     profile = startHistory(profile, { ...inputs, id: "current" });
     const storage = storageFor(run, profile); const { root } = await boot(storage, async () => { throw new Error("unexpected request"); });
-    resume(root); button(root, "试试历史比较").fire("click"); button(root, "继续加载已锁定资料").fire("click");
+    resume(root); page(root, "insight"); button(root, "试试历史比较").fire("click"); button(root, "继续加载已锁定资料").fire("click");
     await vi.waitFor(() => {
       const saved = JSON.parse(storage.values.get(SAVE_KEY)!) as { profile: ResearchProfile };
       expect(saved.profile.research_process.find((item) => item.id === "current")?.shown).not.toBeNull();
@@ -353,11 +359,42 @@ describe("visible presentation coordination", () => {
     expect((other as unknown as { exposedCaseIdsAfterLock?: string[] }).exposedCaseIdsAfterLock).toEqual(["lantern-b"]);
   });
 
+  it("records an archive only when it is open on the visible camp tab", async () => {
+    const run = camp(); run.archiveOwned = true;
+    const storage = storageFor(run); const original = storage.values.get(SAVE_KEY);
+    const { root } = await boot(storage, async () => { throw new Error("unexpected request"); }, { initialCase: true });
+    resume(root);
+    await vi.waitFor(() => expect(find(root, (item) => item.attributes["data-archive-view"] === "true")).toBeDefined());
+    let view = find(root, (item) => item.attributes["data-archive-view"] === "true")!;
+    expect(view.closest("[hidden]")).not.toBeNull();
+    view.fire("toggle");
+    page(root, "archive");
+    view = find(root, (item) => item.attributes["data-archive-view"] === "true")!;
+    expect(view.closest("[hidden]")).toBeNull(); expect(view.open).toBe(false);
+    expect(seen(storage)).toEqual([]); expect(storage.values.get(SAVE_KEY)).toBe(original);
+
+    page(root, "cards");
+    view = find(root, (item) => item.attributes["data-archive-view"] === "true")!;
+    expect(view.closest("[hidden]")).not.toBeNull();
+    view.open = true; view.fire("toggle");
+    expect(seen(storage)).toEqual([]); expect(storage.values.get(SAVE_KEY)).toBe(original);
+    expect(savedRun(storage).history.some((event) => event.action === "open-archive")).toBe(false);
+
+    page(root, "archive");
+    view = find(root, (item) => item.attributes["data-archive-view"] === "true")!;
+    expect(view.closest("[hidden]")).toBeNull(); expect(view.open).toBe(false);
+    expect(seen(storage)).toEqual([]);
+    view.open = true; view.fire("toggle");
+    expect(seen(storage)).toEqual(["lantern-a"]);
+    expect(savedRun(storage).history.filter((event) => event.action === "open-archive")).toHaveLength(1);
+  });
+
   it("ignores a detached archive toggle and records an open archive when the dialog closes", async () => {
     const run = camp(); run.archiveOwned = true;
     const storage = storageFor(run); const { root } = await boot(storage, async () => { throw new Error("unexpected request"); }, { initialCase: true });
     resume(root);
     await vi.waitFor(() => expect(find(root, (item) => item.attributes["data-archive-view"] === "true")).toBeDefined());
+    page(root, "archive");
     const oldView = find(root, (item) => item.attributes["data-archive-view"] === "true")!; oldView.open = true;
     button(root, "设置").fire("click"); oldView.fire("toggle");
     expect(seen(storage)).toEqual([]); expect(savedRun(storage).history.some((event) => event.action === "open-archive")).toBe(false);

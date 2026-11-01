@@ -10,8 +10,9 @@ class FakeNode {
   children: (FakeNode | string)[] = [];
   parent: FakeNode | null = null;
   append(...items: (FakeNode | string)[]): void { for (const item of items) { if (item instanceof FakeNode) item.parent = this; this.children.push(item); } }
-  replaceChildren(...items: (FakeNode | string)[]): void { this.children = []; this.append(...items); }
+  replaceChildren(...items: (FakeNode | string)[]): void { for (const item of this.children) if (item instanceof FakeNode) item.parent = null; this.children = []; this.append(...items); }
   get textContent(): string { return this.children.map((child) => typeof child === "string" ? child : child.textContent).join(""); }
+  set textContent(value: string) { this.replaceChildren(value); }
   querySelectorAll(selector: string): FakeElement[] {
     if (selector !== "[data-scroll-key]") return [];
     const results: FakeElement[] = [];
@@ -33,12 +34,17 @@ class FakeElement extends FakeNode {
   isConnected = true; inert = false; value = ""; disabled = false; scrollLeft = 0; focusOptions?: FocusOptions;
   constructor(readonly tag: string) { super(); }
   setAttribute(name: string, value: string): void {
-    this.attributes[name] = value; if (name === "value") this.value = value; if (name === "disabled") this.disabled = true;
+    this.attributes[name] = value; if (name === "value") this.value = value; if (name === "disabled") this.disabled = true; if (name === "inert") this.inert = true;
     if (name.startsWith("data-")) this.dataset[name.slice(5).replace(/-([a-z])/g, (_match, letter: string) => letter.toUpperCase())] = value;
   }
   addEventListener(name: string, callback: (event: { currentTarget: FakeElement }) => void): void { this.listeners[name] = callback; }
-  fire(name: string): void { if (!(name === "click" && "disabled" in this.attributes)) this.listeners[name]?.({ currentTarget: this }); }
-  closest(): null { return null; }
+  fire(name: string): void { if (!(name === "click" && (this.disabled || this.closest("[hidden]") || this.closest("[inert]")))) this.listeners[name]?.({ currentTarget: this }); }
+  closest(selector: string): FakeElement | null {
+    for (let current: FakeNode | null = this; current; current = current.parent) {
+      if (current instanceof FakeElement && ((selector === "[hidden]" && "hidden" in current.attributes) || (selector === "[inert]" && current.inert) || selector === current.tag)) return current;
+    }
+    return null;
+  }
   contains(): boolean { return false; }
   focus(options?: FocusOptions): void { this.focusOptions = options; (document as unknown as { activeElement: FakeElement | null }).activeElement = this; }
   scrollIntoView(): void { /* no layout in this harness */ }
@@ -59,10 +65,11 @@ function button(node: FakeNode, label: string): FakeElement {
   return result;
 }
 function receipt(node: FakeNode): FakeElement {
-  const result = find(node, (item) => item.attributes.class === "game-receipt");
+  const result = find(node, (item) => item.attributes.class === "game-receipt" && !item.closest("[hidden]") && !item.closest("[inert]"));
   if (!result) throw new Error("receipt missing");
   return result;
 }
+function page(node: FakeNode, name: string): void { key(node, `page-${name}`).fire("click"); }
 class MemoryStorage {
   values = new Map<string, string>();
   writes: string[] = [];
@@ -173,6 +180,10 @@ describe("game feedback and confirmation", () => {
     expect(after.deck.at(-1)?.cardId).toBe("C07");
     expect(receipt(root).textContent).toContain("连刃已加入牌组");
     expect(receipt(root).attributes.role).toBe("status");
+    page(root, "cards");
+    expect(find(root, (item) => item.attributes.class === "game-receipt")).toBeUndefined();
+    expect(savedRun(storage).deck.at(-1)?.cardId).toBe("C07");
+    expect(savedRun(storage).history.filter((event) => event.action === "choose-reward")).toHaveLength(1);
   });
 
   it("can explicitly skip without choosing and reports the unchanged deck", async () => {
@@ -212,24 +223,86 @@ describe("game feedback and confirmation", () => {
     expect(storage.values.get(FUNDING_EXPOSURE_KEY)).toBe(original.find(([name]) => name === FUNDING_EXPOSURE_KEY)?.[1]);
   });
 
+  it("starts on allocation and lets the player defer or confirm a purchase before investing", async () => {
+    const run = campRun("N2"); const storage = storageFor(run); const original = storage.values.get(SAVE_KEY);
+    const root = await boot(storage);
+    expect(key(root, "page-allocation").attributes["aria-pressed"]).toBe("true");
+    expect(key(root, "page-cards").attributes["aria-pressed"]).toBe("false");
+    expect(key(root, "entry-submit").closest("[hidden]")).toBeNull();
+    expect(key(root, "buy-C08").closest("[hidden]")).not.toBeNull();
+    expect(key(root, "camp-continue").attributes.disabled).toBe("");
+
+    page(root, "cards"); key(root, "buy-C08").fire("click");
+    expect(root.textContent).toContain("花费 25 金币后剩 47");
+    expect(root.textContent).toContain("你还没决定留多少参与随行投资");
+    expect(storage.values.get(SAVE_KEY)).toBe(original); expect(storage.writes).toEqual([]);
+    button(root, "先安排金币").fire("click");
+    expect(key(root, "page-allocation").attributes["aria-pressed"]).toBe("true");
+    expect(storage.values.get(SAVE_KEY)).toBe(original); expect(storage.writes).toEqual([]);
+    expect(savedRun(storage).deck).toEqual(run.deck);
+
+    page(root, "cards"); key(root, "buy-C08").fire("click"); button(root, "继续购买").fire("click");
+    expect(savedRun(storage).wallet.cashCents).toBe(4700);
+    expect(savedRun(storage).market.entryCommitted).toBe(false);
+    expect(savedRun(storage).history.filter((event) => event.action === "buy-card")).toHaveLength(1);
+    expect(receipt(root).textContent).toContain("余烬已加入牌组，花费 25 金币；剩余 47 金币");
+  });
+
+  it("shows a below-budget purchase tradeoff and does not charge when the player keeps the coins", async () => {
+    let run = campRun("N2");
+    run = reduceRun(run, { type: "submit-entry", amountCents: 1000 });
+    run = reduceRun(run, { type: "set-supply-plan", amountCents: 5000 });
+    const storage = storageFor(run); const original = storage.values.get(SAVE_KEY); const root = await boot(storage);
+    page(root, "cards"); key(root, "buy-C08").fire("click");
+    expect(root.textContent).toContain("这次消费会低于补给预算");
+    expect(root.textContent).toContain("花费 25 金币后剩 37");
+    expect(root.textContent).toContain("此前希望留 50 给补给");
+    button(root, "先保留金币").fire("click");
+    expect(storage.values.get(SAVE_KEY)).toBe(original); expect(storage.writes).toEqual([]);
+    expect(savedRun(storage).deck).toEqual(run.deck);
+
+    key(root, "buy-C08").fire("click"); button(root, "继续购买").fire("click");
+    expect(savedRun(storage).wallet.cashCents).toBe(3700);
+    expect(savedRun(storage).wallet.reservedCents).toBe(1000);
+    expect(savedRun(storage).history.filter((event) => event.action === "buy-card")).toHaveLength(1);
+  });
+
+  it("can follow the reminder to invest first, then buy with the actual remaining balance", async () => {
+    const storage = storageFor(campRun("N2")); const root = await boot(storage);
+    page(root, "cards"); key(root, "buy-C08").fire("click"); button(root, "先安排金币").fire("click");
+    const entry = key(root, "entry-amount"); entry.value = "20"; entry.fire("input");
+    expect(key(root, "entry-submit").textContent).toBe("确认参与 20 金币");
+    key(root, "entry-submit").fire("click");
+    expect(savedRun(storage).wallet.cashCents).toBe(5200);
+    expect(savedRun(storage).wallet.reservedCents).toBe(2000);
+    page(root, "cards"); key(root, "buy-C08").fire("click");
+    expect(savedRun(storage).wallet.cashCents).toBe(2700);
+    expect(savedRun(storage).wallet.reservedCents).toBe(2000);
+    expect(savedRun(storage).history.filter((event) => ["submit-entry", "buy-card"].includes(event.action)).map((event) => event.action)).toEqual(["submit-entry", "buy-card"]);
+    expect(receipt(root).textContent).toContain("余烬已加入牌组，花费 25 金币；剩余 27 金币");
+  });
+
   it("shows real paid changes in the shop and keeps same-name card ordinals stable", async () => {
     const storage = storageFor(campRun("N2")); const root = await boot(storage);
+    page(root, "supplies");
     expect(key(root, "upgrade-select").textContent).toContain("敲击 · 第 1 张");
     key(root, "upgrade").fire("click");
+    button(root, "继续购买").fire("click");
     expect(receipt(root).textContent).toContain("敲击（第 1 张）已升级");
     expect(receipt(root).textContent).toContain("花费 20 金币；剩余 52 金币");
     expect(key(root, "upgrade-select").textContent).toContain("敲击 · 第 2 张");
     expect(key(root, "upgrade-select").textContent).not.toContain("敲击 · 第 1 张");
     key(root, "heal").fire("click");
+    button(root, "继续购买").fire("click");
     expect(receipt(root).textContent).toContain("生命 38 → 42，恢复 4 点");
     expect(receipt(root).textContent).toContain("花费 10 金币；剩余 42 金币");
-    key(root, "buy-C08").fire("click");
+    page(root, "cards"); key(root, "buy-C08").fire("click"); button(root, "继续购买").fire("click");
     expect(receipt(root).textContent).toContain(`${CARDS.C08.name}已加入牌组，花费 25 金币；剩余 17 金币`);
-    key(root, "archive").fire("click");
+    page(root, "archive"); key(root, "archive").fire("click");
     expect(receipt(root).textContent).toContain("历史档案已拥有，花费 4 金币；剩余 13 金币");
     expect(savedRun(storage).wallet.cashCents).toBe(1300);
-    key(root, "upgrade").fire("click");
-    expect(find(root, (item) => item.attributes.class === "game-receipt")).toBeUndefined();
+    page(root, "supplies"); key(root, "upgrade").fire("click");
+    expect(find(root, (item) => item.attributes.class === "game-receipt" && !item.closest("[hidden]"))).toBeUndefined();
     expect(root.textContent).toContain("可用金币不足，这次购买没有完成");
     expect(savedRun(storage).history.at(-1)?.action).toBe("purchase-attempted");
   });
@@ -237,14 +310,16 @@ describe("game feedback and confirmation", () => {
   it("clears a receipt when forking a simulation and restoring the real journey", async () => {
     const run = campRun("N2"); run.wallet.cashCents = 1000;
     const storage = storageFor(run); const root = await boot(storage);
-    key(root, "archive").fire("click"); expect(receipt(root).textContent).toContain("档案购买成功");
+    page(root, "archive"); key(root, "archive").fire("click"); expect(receipt(root).textContent).toContain("档案购买成功");
     button(root, "评委面板").fire("click"); button(root, "从这里分叉").fire("click");
     expect(find(root, (item) => item.attributes.class === "game-receipt")).toBeUndefined();
     expect(root.textContent).toContain("模拟");
     button(root, "评委面板").fire("click"); button(root, "恢复真实旅程").fire("click");
     expect(find(root, (item) => item.attributes.class === "game-receipt")).toBeUndefined();
-    expect(root.textContent).toContain("已拥有");
-    key(root, "upgrade").fire("click"); expect(root.textContent).toContain("可用金币不足，这次购买没有完成");
+    page(root, "archive");
+    expect(savedRun(storage).archiveOwned).toBe(true);
+    expect(root.textContent).toContain("正在加载本局已固定案例的历史档案");
+    page(root, "supplies"); key(root, "upgrade").fire("click"); expect(root.textContent).toContain("可用金币不足，这次购买没有完成");
     button(root, "评委面板").fire("click"); button(root, "从这里分叉").fire("click");
     expect(root.textContent).not.toContain("可用金币不足，这次购买没有完成");
   });
@@ -258,10 +333,15 @@ describe("game feedback and confirmation", () => {
     key(root, "reward-C08").fire("click"); key(root, "confirm-reward").fire("click");
     await vi.waitFor(() => expect(savedRun(storage).node).toBe("N4"));
     expect(savedRun(storage).phase).toBe("camp"); expect(receipt(root).textContent).toContain("余烬已加入牌组");
+    page(root, "free");
+    expect(find(root, (item) => item.attributes.class === "game-receipt")).toBeUndefined();
+    expect(savedRun(storage).deck.at(-1)?.cardId).toBe("C08");
+    expect(savedRun(storage).history.filter((event) => event.action === "choose-reward")).toHaveLength(1);
   });
 
   it.each(["N4", "N6"] as const)("shows and applies only the available free healing in %s", async (node) => {
     const storage = storageFor(campRun(node)); const root = await boot(storage);
+    page(root, "free");
     expect(key(root, "free-rest").textContent).toBe("休息，恢复 4 生命");
     key(root, "free-rest").fire("click");
     expect(receipt(root).textContent).toContain("生命 38 → 42，恢复 4 点；未花费金币");
@@ -271,7 +351,7 @@ describe("game feedback and confirmation", () => {
 
   it("does not spend a free choice after paid healing reaches full health", async () => {
     const storage = storageFor(campRun("N4")); const root = await boot(storage);
-    key(root, "heal").fire("click");
+    page(root, "supplies"); key(root, "heal").fire("click"); page(root, "free");
     expect(key(root, "free-rest").textContent).toBe("休息，恢复 0 生命");
     expect(key(root, "free-rest").attributes.disabled).toBe("");
     key(root, "free-rest").fire("click");
@@ -285,6 +365,7 @@ describe("game feedback and confirmation", () => {
   it("does not suggest an unavailable upgrade or departure before settlement", async () => {
     const run = campRun("N4", 42); run.camp!.decision = "not-submitted";
     const root = await boot(storageFor(run));
+    page(root, "free");
     expect(key(root, "free-rest").attributes.disabled).toBe("");
     expect(root.textContent).toContain("生命已满，暂不能休息；请先完成契约安排与结算");
     expect(root.textContent).not.toContain("你可以免费升级基础牌");

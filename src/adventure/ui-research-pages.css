@@ -1,0 +1,36 @@
+.research-page { display: grid; gap: 10px; max-width: 920px; margin: auto; padding-top: 14px; }
+.research-page .task-title h1 { font-size: 1.35rem; line-height: 1.2; }
+.research-steps { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 5px; }
+.research-steps .research-step-tab { min-width: 0; min-height: 44px; padding: 7px 3px; border: 1px solid #d6e2ce; border-radius: 10px; background: #f5f8ed; box-shadow: none; color: #607967; font-size: .78rem; line-height: 1.25; }
+.research-steps .research-step-tab[aria-pressed="true"] { border-color: #4e7959; background: #4e7959; color: #fffdf3; }
+.research-steps .research-step-tab:disabled { color: #a5afa1; background: #e8ece3; }
+.research-page-step { min-width: 0; }
+.research-page-step[hidden] { display: none; }
+.research-page-step > .panel { gap: 9px; padding: 15px; }
+.research-page-step .panel-head { margin-bottom: 0; }
+.research-page-step .panel h2 { font-size: 1.05rem; }
+.research-page-step .field { gap: 3px; font-size: .76rem; }
+.research-page-step .field input, .research-page-step .field select { min-height: 42px; padding: 7px 9px; }
+.research-page-step .choice-grid, .research-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.funding-form-grid > .field:first-child { grid-column: 1 / -1; }
+.research-page-step details { padding-top: 7px; }
+.research-page-step details > :not(summary) { margin-top: 8px; }
+.research-page-step .notice { padding: 8px 10px; font-size: .78rem; line-height: 1.45; }
+.research-page-step .metric-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+.research-page-step .metric { min-width: 0; padding: 8px 6px; }
+.research-page-step .metric b { font-size: .86rem; overflow-wrap: anywhere; }
+.research-page-step .metric span { line-height: 1.3; }
+.research-page-step .stack { gap: 8px; }
+.research-help { display: grid; gap: 6px; padding: 9px; border: 1px solid #dfead8; border-radius: 11px; background: #f8fbf3; }
+.research-help-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+.research-help-actions .choice { min-height: 40px; padding: 6px 3px; text-align: center; font-size: .75rem; }
+.research-help details { border-top: 0; padding-top: 0; }
+.research-help details summary { font-size: .72rem; }
+@media (max-width: 540px) {
+  .research-page { gap: 8px; padding-top: 8px; }
+  .research-page .task-title h1 { font-size: 1.17rem; }
+  .research-page .task-badge { width: 34px; height: 34px; flex-basis: 34px; }
+  .research-steps { gap: 4px; }
+  .research-steps .research-step-tab { font-size: .7rem; }
+  .research-page-step > .panel { gap: 8px; padding: 12px; }
+}

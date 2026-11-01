@@ -27,7 +27,7 @@ export function deckSummary(run: Run): HTMLElement {
 }
 export function moneyPanel(run: Run): HTMLElement {
   const row = (label: string, value: string): HTMLElement => h("div", { class: "ledger-row" }, h("span", null, label), h("strong", null, value));
-  return h("div", { class: "ledger" }, row("可用金币", coins(run.wallet.cashCents)), row("待执行金额", coins(run.wallet.reservedCents)), row("契约参考价值", run.market.referenceValueCents === null ? "尚未揭晓" : coins(run.market.referenceValueCents)), h("p", { class: "fineprint" }, "参考价值不是可用金币；回收执行到账后才能消费。"));
+  return h("div", { class: "ledger" }, row("可用金币", coins(run.wallet.cashCents)), row("待执行金额", coins(run.wallet.reservedCents)), row("投资当前价值", run.market.referenceValueCents === null ? "尚未揭晓" : coins(run.market.referenceValueCents)));
 }
 export function moneyHistory(run: Run): HTMLElement {
   return h("div", { class: "timeline" }, run.wallet.ledger.map((entry) => h("div", { class: "timeline-item" }, h("strong", null, entry.description), h("p", null, `${entry.cashDeltaCents > 0 ? "+" : ""}${coins(entry.cashDeltaCents)} 金币 · 之后可用 ${coins(entry.cashAfterCents)}`))));

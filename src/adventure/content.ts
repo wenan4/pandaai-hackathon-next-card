@@ -25,7 +25,7 @@ export const ENEMIES: Record<EnemyId, EnemyDefinition> = {
   pursuer: { id: 'pursuer', name: '追灯者', maxHp: 34, cycle: [{ kind: 'attack', amount: 8 }, { kind: 'attack', amount: 8 }, { kind: 'attack', amount: 3 }], rewardCents: 1200, blurb: '前两回合攻势较强，第三回合稍有喘息。' },
   moss: { id: 'moss', name: '苔壳卫兵', maxHp: 42, cycle: [{ kind: 'shield', amount: 6 }, { kind: 'attack', amount: 5 }, { kind: 'attack', amount: 9 }], rewardCents: 1200, blurb: '初期整备，随后攻击加重，适合寻找成长窗口。' },
   clock: { id: 'clock', name: '摆钟侍从', maxHp: 38, cycle: [{ kind: 'attack', amount: 12 }, { kind: 'shield', amount: 6 }, { kind: 'attack', amount: 4 }], rewardCents: 1200, blurb: '大攻击与整备交替出现。' },
-  keeper: { id: 'keeper', name: '守灯者', maxHp: 90, cycle: [{ kind: 'attack', amount: 6 }, { kind: 'attack', amount: 14 }, { kind: 'shield', amount: 10 }], rewardCents: 0, blurb: '守灯者按整备、压迫与恢复的固定节奏行动。' },
+  keeper: { id: 'keeper', name: '守灯者', maxHp: 75, cycle: [{ kind: 'attack', amount: 6 }, { kind: 'attack', amount: 14 }, { kind: 'shield', amount: 10 }], rewardCents: 0, blurb: '守灯者按整备、压迫与恢复的固定节奏行动。' },
 };
 
 export const REWARDS: Record<'N1' | 'N3' | 'N5', CardId[]> = {

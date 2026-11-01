@@ -53,6 +53,9 @@ function selectAt(node: FakeNode, label: string): FakeElement {
   return select;
 }
 function change(node: FakeElement, value: string): void { node.value = value; node.fire("change"); }
+function visiblePage(node: FakeNode): string | undefined {
+  return find(node, (item) => !!item.attributes["data-research-page"] && !("hidden" in item.attributes))?.attributes["data-research-page"];
+}
 const flush = async (): Promise<void> => { await Promise.resolve(); await Promise.resolve(); };
 
 beforeEach(() => {
@@ -97,15 +100,24 @@ function harness(run: Run, manifest: MarketManifest, initial: ResearchProfile, s
   let currentRun = run; let profile = initial; let section: "D1" | "D2" = "D1"; let inert = false; let hidden = false; let id = 0; let currentManifest: MarketManifest | null = manifest; let loading = false; let error: string | null = null;
   const retryManifest = vi.fn();
   const root = new FakeElement("root"); root.root = true;
+  const casePresentations: { caseId: string; page: string | undefined }[] = [];
+  const evidencePresentations: { part: "primary" | "other"; page: string | undefined }[] = [];
   const render = (): void => {
     const content = (section === "D1" ? ui.renderFunding() : ui.renderHistory()) as unknown as FakeElement;
     if (inert) content.setAttribute("inert", "");
     root.replaceChildren(content);
   };
-  const ui = new ResearchUI({ getRun: () => currentRun, getProfile: () => profile, setProfile: (value) => { profile = value; render(); }, getManifest: () => currentManifest, retryManifest, manifestLoading: () => loading, manifestError: () => error,
+  const ui = new ResearchUI({ getRun: () => currentRun, getProfile: () => profile, setProfile: (value) => {
+    for (const next of value.research_process) {
+      const previous = profile.research_process.find((attempt) => attempt.id === next.id);
+      if (next.shown?.primary && !previous?.shown?.primary) evidencePresentations.push({ part: "primary", page: visiblePage(root) });
+      if (next.shown?.other && !previous?.shown?.other) evidencePresentations.push({ part: "other", page: visiblePage(root) });
+    }
+    profile = value; render();
+  }, getManifest: () => currentManifest, retryManifest, manifestLoading: () => loading, manifestError: () => error,
     back: vi.fn(), openTask: (task) => { ui.leave(); section = task; render(); }, refresh: render, canPresentData: (task) => section === task && !inert && !hidden, notify: (message) => { throw new Error(message); }, uid: (prefix) => `${prefix}-${++id}`,
-    isCaseKnown: () => false, wasCaseSeen: (caseId) => hasSeenRelatedCase(seen, caseId), markCaseSeen: (caseId, excludeAttemptId) => { seen.add(caseId); profile = markPendingHistoryExposure(profile, caseId, excludeAttemptId); } });
-  return { root, ui, render, retryManifest, get profile() { return profile; }, set profile(value: ResearchProfile) { profile = value; }, set run(value: Run) { currentRun = value; }, set section(value: "D1" | "D2") { section = value; }, set inert(value: boolean) { inert = value; }, set hidden(value: boolean) { hidden = value; }, set manifest(value: MarketManifest | null) { currentManifest = value; }, set loading(value: boolean) { loading = value; }, set error(value: string | null) { error = value; }, seen };
+    isCaseKnown: () => false, wasCaseSeen: (caseId) => hasSeenRelatedCase(seen, caseId), markCaseSeen: (caseId, excludeAttemptId) => { casePresentations.push({ caseId, page: visiblePage(root) }); seen.add(caseId); profile = markPendingHistoryExposure(profile, caseId, excludeAttemptId); } });
+  return { root, ui, render, retryManifest, casePresentations, evidencePresentations, get profile() { return profile; }, set profile(value: ResearchProfile) { profile = value; }, set run(value: Run) { currentRun = value; }, set section(value: "D1" | "D2") { section = value; }, set inert(value: boolean) { inert = value; }, set hidden(value: boolean) { hidden = value; }, set manifest(value: MarketManifest | null) { currentManifest = value; }, set loading(value: boolean) { loading = value; }, set error(value: string | null) { error = value; }, seen };
 }
 
 async function delayedCase(caseId: string): Promise<{ requested: ReturnType<typeof vi.fn>; decoded: ReturnType<typeof vi.fn>; release: () => void }> {
@@ -128,12 +140,37 @@ async function delayedCase(caseId: string): Promise<{ requested: ReturnType<type
 async function completePrimaryHistory(state: ReturnType<typeof harness>): Promise<void> {
   state.section = "D2"; state.render(); buttonAt(state.root, "锁定并查看同期资料").fire("click");
   await vi.waitFor(() => expect(state.root.textContent).toContain("本案例结果相对同期基准"));
+  buttonAt(state.root, "作答").fire("click");
   change(selectAt(state.root, "本案例结果相对同期基准"), "equal");
   change(selectAt(state.root, "这次主要依据什么"), "根据同日期的数字比较");
   buttonAt(state.root, "提交这次研究").fire("click");
 }
 
 describe("research UI help and next steps", () => {
+  it("labels recorded market stages in plain language without changing the underlying journey", async () => {
+    const { run, manifest } = await fixture(); const before = JSON.stringify(run);
+    const state = harness(run, manifest, emptyResearchProfile()); state.render();
+    expect(state.root.textContent).toContain("第一段回收时");
+    expect(state.root.textContent).not.toContain("实际执行：t1-exec");
+    state.ui.leave(); state.section = "D2"; state.render();
+    buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    await vi.waitFor(() => expect(state.profile.research_process.at(-1)?.shown).not.toBeNull());
+    expect(state.root.textContent).toContain("第一段回收时");
+    expect(state.root.textContent).toContain("第二段回收时");
+    expect(state.root.textContent).not.toContain("t1-exec");
+    expect(state.root.textContent).not.toContain("t2-exec");
+    expect(JSON.stringify(run)).toBe(before);
+  });
+
+  it("moves focus to the active step when navigating between research pages", async () => {
+    const { run, manifest } = await fixture();
+    const state = harness(run, manifest, emptyResearchProfile()); state.render();
+    buttonAt(state.root, "下一步：判断采购").fire("click");
+    expect(visiblePage(state.root)).toBe("d1-question");
+    expect(buttonAt(state.root, "判断").attributes["aria-pressed"]).toBe("true");
+    expect(buttonAt(state.root, "判断").focused).toBe(true);
+  });
+
   it("focuses the revised D1 amount for a current funding goal without erasing the submitted result", async () => {
     const { run, manifest } = await fixture();
     const state = harness(run, manifest, setResearchGoal(emptyResearchProfile(), "goal", "funding")); state.render();
@@ -426,7 +463,10 @@ describe("research UI help and next steps", () => {
   it("records explicit help only after it is visible and never erases it when switching to self", async () => {
     const { run, manifest } = await fixture();
     const state = harness(run, manifest, setHelpPreference(emptyResearchProfile(), "preferred", "step"));
-    state.inert = true; state.render(); await flush();
+    state.render(); await flush();
+    expect(visiblePage(state.root)).toBe("d1-plan");
+    expect(state.profile.funding_exposure).toHaveLength(0);
+    state.inert = true; buttonAt(state.root, "判断").fire("click"); await flush();
     expect(state.root.textContent).toContain("先找采购前的可用金币");
     expect(state.profile.funding_exposure).toHaveLength(0);
     state.inert = false; state.render(); await flush();
@@ -434,7 +474,7 @@ describe("research UI help and next steps", () => {
     expect(state.profile.funding_exposure[0]?.help).toBe("step");
     buttonAt(state.root, "自主尝试").fire("click"); await flush();
     expect(state.root.textContent).toContain("你的默认偏好：分步说明");
-    expect(state.root.textContent).toContain("本次采用：自主尝试");
+    expect(buttonAt(state.root, "自主尝试").attributes["aria-pressed"]).toBe("true");
     expect(state.root.textContent).toContain("已经看过的帮助会保留在本题记录中");
     expect(state.profile.help_preference.at(-1)?.help).toBe("step");
     expect(state.profile.funding_exposure[0]?.help).toBe("step");
@@ -453,19 +493,23 @@ describe("research UI help and next steps", () => {
     expect(state.root.textContent).not.toContain("先比较同日程下两项盈亏");
     expect(state.root.textContent).not.toContain("相关片段 · 当前旅程");
     buttonAt(state.root, "锁定并查看同期资料").fire("click");
+    await vi.waitFor(() => expect(state.profile.research_process.at(-1)?.shown).not.toBeNull());
+    expect(state.profile.research_process.at(-1)?.helpUsed).toBe("self");
+    buttonAt(state.root, "作答").fire("click");
     await vi.waitFor(() => expect(state.profile.research_process.at(-1)?.helpUsed).toBe("hint"));
     const attempt = state.profile.research_process.at(-1)!;
     expect(attempt.caseId).toBe("lantern-b");
     expect(attempt.priorExposure).toBe(false);
     expect(state.seen.has("lantern-b")).toBe(true);
     expect(find(state.root, (item) => item.tag === "option" && item.attributes.value === "lantern-b")?.textContent).toContain("未见");
-    buttonAt(state.root, "再查看另一段历史（复习）").fire("click");
+    buttonAt(state.root, "案例").fire("click"); buttonAt(state.root, "再查看另一段历史（复习）").fire("click");
     await vi.waitFor(() => expect(state.profile.research_process.at(-1)?.shown?.other).toBeDefined());
     expect(state.profile.research_process.at(-1)?.shown?.otherPriorExposure).toBe(true);
-    buttonAt(state.root, "自主尝试").fire("click");
+    buttonAt(state.root, "作答").fire("click"); buttonAt(state.root, "自主尝试").fire("click");
     state.ui.leave(); state.render(); await flush();
     expect(state.profile.research_process.at(-1)?.helpUsed).toBe("hint");
     expect(find(state.root, (item) => item.tag === "option" && item.attributes.value === "lantern-b")?.textContent).toContain("未见");
+    buttonAt(state.root, "作答").fire("click");
     expect(buttonAt(state.root, "自主尝试").attributes["aria-pressed"]).toBe("true");
     change(selectAt(state.root, "本案例结果相对同期基准"), attempt.shown!.primary.direction);
     const shown = state.profile.research_process.at(-1)!.shown!;
@@ -487,9 +531,10 @@ describe("research UI help and next steps", () => {
     const { run, manifest } = await fixture();
     const state = harness(run, manifest, emptyResearchProfile());
     state.section = "D2"; state.render();
-    expect(buttonAt(state.root, "自主尝试").attributes["aria-pressed"]).toBe("true");
     buttonAt(state.root, "锁定并查看同期资料").fire("click");
     await vi.waitFor(() => expect(state.profile.research_process.at(-1)?.shown).not.toBeNull());
+    buttonAt(state.root, "作答").fire("click");
+    expect(buttonAt(state.root, "自主尝试").attributes["aria-pressed"]).toBe("true");
     const attempt = state.profile.research_process.at(-1)!;
     expect(attempt.caseId).toBe("lantern-a");
     expect(attempt.helpUsed).toBe("self");
@@ -730,6 +775,11 @@ describe("research data presentation while backgrounded or obscured", () => {
     expect(state.profile.research_process).toHaveLength(1);
     expect(state.profile.research_process[0]).toMatchObject({ id: locked.id, caseId: locked.caseId, schedule: locked.schedule, initialClaim: locked.initialClaim, priorExposure: false });
     expect(state.seen.has("lantern-a")).toBe(true);
+    expect(visiblePage(state.root)).toBe("d2-data");
+    expect(state.casePresentations).toEqual([{ caseId: "lantern-a", page: "d2-data" }]);
+    expect(state.evidencePresentations).toEqual([{ part: "primary", page: "d2-data" }]);
+    expect(state.profile.research_process[0]?.helpUsed).toBe("self");
+    buttonAt(state.root, "作答").fire("click");
     await vi.waitFor(() => expect(state.profile.research_process[0]?.helpUsed).toBe("step"));
     state.ui.resumePendingPresentation();
     expect(state.profile.research_process).toHaveLength(1);
@@ -757,6 +807,9 @@ describe("research data presentation while backgrounded or obscured", () => {
     expect(state.profile.research_process[0]?.priorExposure).toBe(false);
     expect(state.profile.research_process[0]?.shown?.otherPriorExposure).toBe(alreadySeen);
     expect(state.seen.has("lantern-b")).toBe(true);
+    expect(visiblePage(state.root)).toBe("d2-other");
+    expect(state.casePresentations).toEqual([{ caseId: "lantern-a", page: "d2-data" }, { caseId: "lantern-b", page: "d2-other" }]);
+    expect(state.evidencePresentations).toEqual([{ part: "primary", page: "d2-data" }, { part: "other", page: "d2-other" }]);
   });
 
   it("drops a late response on leave and can resume the same saved locked question", async () => {

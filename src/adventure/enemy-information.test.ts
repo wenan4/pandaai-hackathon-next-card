@@ -54,7 +54,7 @@ describe('public enemy patterns and intent forecasts', () => {
     ], attackGrowth: { fromTurn: 10, perTurn: 2 } });
     expect(enemyPattern('moss').cycle).toEqual([{ kind: 'shield', amount: 6 }, { kind: 'attack', amount: 5 }, { kind: 'attack', amount: 9 }]);
     expect(enemyPattern('clock').cycle).toEqual([{ kind: 'attack', amount: 12 }, { kind: 'shield', amount: 6 }, { kind: 'attack', amount: 4 }]);
-    expect(enemyPattern('keeper').maxHp).toBe(90);
+    expect(enemyPattern('keeper').maxHp).toBe(75);
     expect(enemyPattern('gatekeeper').attackGrowth).toBeNull();
     const copy = enemyPattern('moss'); copy.cycle[0]!.amount = 999; copy.attackGrowth!.perTurn = 99;
     expect(ENEMIES.moss.cycle[0]!.amount).toBe(6);

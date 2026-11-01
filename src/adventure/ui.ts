@@ -1,7 +1,9 @@
 import "./adventure.css";
+import "./mobile-pages.css";
+import { guideView, type GuideTopic } from "./ui-guide";
 import { h, type Child } from "../ui/dom";
 import { createRun, forkRun, pendingMarketStep, reduceRun } from "./engine";
-import { CARDS, ENEMIES } from "./content";
+import { CARDS, ENEMIES, PRICES } from "./content";
 import { discardRejectedMarketStage, loadMarketInitial, loadMarketInitialCase, loadMarketStage, loadResearchCase, type MarketInitialCase, type MarketManifest } from "./market";
 import { addUserReason, compareSchedule, compareSelfForecast, declarePriorExposure, emptyResearchProfile, markHistoryHelp, markPendingHistoryExposure, recommendResearch, revokeResearch, setHelpPreference, setResearchGoal, showHistoryEvidence, startHistory, submitHistory, updateJourney, type Direction, type Goal, type HelpPreference, type ResearchProfile } from "./research";
 import type { CardId, Run, RunAction } from "./types";
@@ -52,6 +54,7 @@ let selectedReward: CardId | null = null;
 let battleFeedback = "";
 let gameFeedback: GameReceipt | null = null;
 let tutorialStep = 4;
+let gamePage = "";
 let entryCents = 0;
 let reserveCents = 0;
 let modal: HTMLElement | null = null;
@@ -82,7 +85,7 @@ function discardPendingJudge(): void {
 function resetGameUi(): void {
   discardPendingJudge(); pendingDataInfo = null;
   selectedCard = null; selectedRetain = null; selectedUpgrade = null; selectedReward = null;
-  battleFeedback = ""; gameFeedback = null; toastMessage = "";
+  battleFeedback = ""; gameFeedback = null; toastMessage = ""; gamePage = "";
   window.clearTimeout(toastTimer); toastTimer = 0;
 }
 function selectReward(id: CardId | null): void {
@@ -277,7 +280,7 @@ function action(next: RunAction): void {
       const area: GameReceipt["area"] = next.type === "choose-reward" ? "journey" : next.type === "free-rest" || next.type === "free-upgrade" ? "free" : "shop";
       gameFeedback = { area, result: feedback };
     } else if (next.type !== "apply-quote" && next.type !== "open-archive") gameFeedback = null;
-    if (before.phase !== run.phase || before.node !== run.node) selectedReward = null;
+    if (before.phase !== run.phase || before.node !== run.node) { selectedReward = null; gamePage = ""; }
     if (feedback && (next.type === "upgrade-card" || next.type === "free-upgrade")) selectedUpgrade = null;
     if (before.node === "N1" && before.phase === "battle") {
       if (next.type === "play-card" && tutorialStep < 3) tutorialStep = 3;
@@ -407,7 +410,7 @@ function presentDataInfo(): void {
   else markExternalExposure(pending.displayedRun.caseId);
 }
 function archiveShown(view: HTMLDetailsElement, displayedRun: Run): boolean {
-  if (!canPresentGame() || run !== displayedRun || !view.isConnected || !view.open || view.closest("[inert]")) return false;
+  if (!canPresentGame() || run !== displayedRun || !view.isConnected || !view.open || view.closest("[inert]") || view.closest("[hidden]")) return false;
   if (displayedRun.source === "real") markNaturalArchiveSeen(displayedRun.caseId);
   else markExternalExposure(displayedRun.caseId);
   return true;
@@ -420,17 +423,44 @@ function openEnemyPlan(): void {
   if (!run?.battle || run.phase !== "battle") return;
   showDialog("对手行动节奏", enemyPlanView(run), [button("返回战斗", closeDialog, "secondary")]);
 }
+function openGuide(topic: GuideTopic = "battle"): void {
+  showDialog("怎么玩 · 规则手册", guideView(topic), [button("回去试试", closeDialog, "secondary")]);
+}
+function openDetails(title: string, body: Child): void {
+  showDialog(title, body, [button("关闭", closeDialog, "secondary")]);
+}
+function openMenu(): void {
+  showDialog("旅程菜单", h("div", { class: "menu-grid" },
+    run ? button("我的交易风格 · 本局画像", () => changeScreen("report"), "gold") : null,
+    run ? button("回到旅程", () => changeScreen(run?.phase === "ended" ? "report" : "game"), "secondary") : null,
+    run && profile.enabled ? button("目标与帮助", () => showDialog("目标与帮助（可跳过）", preferencePanel(), [button("完成", closeDialog, "secondary")]), "secondary") : null,
+    button("数据说明", dataInfo, "secondary"), run ? button("评委面板", () => changeScreen("judge"), "secondary") : null,
+    button("设置", settings, "secondary")), [button("关闭", closeDialog, "secondary")]);
+}
+function requestGameAction(next: RunAction): void {
+  if (!run) return;
+  const price = next.type === "buy-card" ? PRICES.cardCents : next.type === "upgrade-card" ? PRICES.upgradeCents : next.type === "heal" ? PRICES.healCents : next.type === "buy-archive" ? PRICES.archiveCents : 0;
+  const needsAllocation = run.node === "N2" && !run.market.entryCommitted && next.type !== "buy-archive";
+  const belowBudget = run.supplyPlanCents !== null && run.wallet.cashCents - price < run.supplyPlanCents;
+  if (price && run.wallet.cashCents >= price && (needsAllocation || belowBudget)) {
+    const current = run;
+    showDialog(needsAllocation ? "购买前，看看剩下的金币" : "这次消费会低于补给预算", h("p", null, `花费 ${coins(price)} 金币后剩 ${coins(run.wallet.cashCents - price)}。${needsAllocation ? "你还没决定留多少参与随行投资。" : ""}${belowBudget ? `此前希望留 ${coins(run.supplyPlanCents!)} 给补给。` : ""}仍可按自己的计划继续购买。`),
+      [button("继续购买", () => { modal = null; modalOpener = null; if (run === current) action(next); else { render(); flash("局面已变化，请重新选择。"); } }), needsAllocation ? button("先安排金币", () => { gamePage = "allocation"; closeDialog(); }, "secondary") : button("先保留金币", closeDialog, "secondary")]);
+    return;
+  }
+  action(next);
+}
 function topbar(): HTMLElement {
   return h("header", { class: "topbar" }, h("button", { type: "button", class: "brand", onclick: () => changeScreen("intro"), "aria-label": "回到冒险首页" }, h("span", { class: "brand-mark", "aria-hidden": "true" }, "灯"), h("span", null, h("span", { class: "brand-name" }, "下一张牌"), h("span", { class: "brand-sub" }, "A LITTLE JOURNEY"))),
-    h("nav", { class: "top-actions", "aria-label": "功能导航" }, run ? h("button", { type: "button", class: "link-button back-link", onclick: () => changeScreen(run?.phase === "ended" ? "report" : "game") }, run.phase === "ended" ? "旅程报告" : "回到旅程") : null, run && profile.enabled ? h("button", { type: "button", class: "link-button prefs-link", onclick: () => showDialog("目标与帮助（可跳过）", preferencePanel(), [button("完成", closeDialog, "secondary")]) }, "目标与帮助") : null, h("button", { type: "button", class: "link-button data-link", onclick: dataInfo }, "数据说明"), run ? h("button", { type: "button", class: "link-button judge-link", onclick: () => changeScreen("judge") }, "评委面板") : null, h("button", { type: "button", class: "link-button settings-link", onclick: settings }, "设置")));
+    h("nav", { class: "top-actions", "aria-label": "功能导航" }, button("怎么玩", () => openGuide(), "small secondary", false, "open-guide"), h("button", { type: "button", class: "link-button mobile-menu", onclick: openMenu }, "菜单"), run ? h("button", { type: "button", class: "link-button back-link", onclick: () => changeScreen(run?.phase === "ended" ? "report" : "game") }, run.phase === "ended" ? "旅程报告" : "回到旅程") : null, run && profile.enabled ? h("button", { type: "button", class: "link-button prefs-link", onclick: () => showDialog("目标与帮助（可跳过）", preferencePanel(), [button("完成", closeDialog, "secondary")]) }, "目标与帮助") : null, h("button", { type: "button", class: "link-button data-link", onclick: dataInfo }, "数据说明"), run ? h("button", { type: "button", class: "link-button judge-link", onclick: () => changeScreen("judge") }, "评委面板") : null, h("button", { type: "button", class: "link-button settings-link", onclick: settings }, "设置")));
 }
 function intro(): HTMLElement {
   return h("div", { class: "intro" }, topbar(), h("main", { class: "intro-hero", id: "main-content" }, h("div", { class: "intro-content" }, h("div", { class: "intro-kicker" }, "一段轻盈的卡牌冒险"), h("h1", null, "下一张牌", h("span", null, "晨光小城 · 守灯之旅")), h("p", { class: "intro-lead" }, "带上你的牌组，穿过晨雾渐散的小城。一路战斗、收集新牌、安排补给，去寻回那盏温暖的灯。"),
     h("div", { class: "intro-actions" }, run ? button(run.phase === "ended" ? "查看上次旅程" : "继续上次旅程", () => { changeScreen(run?.phase === "ended" ? "report" : "game"); queueMarket(); }, "gold", false, "resume") : null,
       button(run ? "开始新旅程 · 生成观察" : "开始旅程 · 生成本局观察", () => askNewRun(true), "", !manifest, "start-observation"), button("只玩游戏", () => askNewRun(false), "secondary", !manifest, "start-game-only")),
-    h("p", { class: "intro-note" }, "可选生成本局观察与研究任务。记录仅保存在本机，随时撤销；只玩游戏不记录兴趣、感受或原因。"),
+    h("p", { class: "intro-note" }, "选择生成观察，通关后可查看本局交易风格。记录存在本机，随时可撤销。"),
     initialError ? h("div", { class: "notice error", style: "margin-top:14px" }, initialError, " ", button("重试数据", loadInitial, "small secondary", initialLoading)) : null)),
-    h("div", { class: "intro-bottom" }, h("div", { class: "intro-feature" }, h("strong", null, "出牌，找到你的组合"), h("span", null, "读懂对手意图，拿新牌，走出自己的打法。")), h("div", { class: "intro-feature" }, h("strong", null, "经营，一路保有选择"), h("span", null, "补给、卡牌与契约共享同一段旅程。")), h("div", { class: "intro-feature" }, h("strong", null, "回望，再试一种可能"), h("span", null, "观察只描述本局，下一步由你选择。"))), h("footer", { class: "footer" }, "虚拟金币不兑换现金 · 历史案例不代表未来 · 现实财务承受能力未评估"));
+    h("div", { class: "intro-bottom" }, h("div", { class: "intro-feature" }, h("strong", null, "出牌，找到你的组合"), h("span", null, "读懂对手意图，拿新牌，走出自己的打法。")), h("div", { class: "intro-feature" }, h("strong", null, "经营，一路保有选择"), h("span", null, "买牌、补给，或留一部分金币随行情变化。")), h("div", { class: "intro-feature" }, h("strong", null, "回望，再试一种可能"), h("span", null, "观察只描述本局，下一步由你选择。"))));
 }
 function preferencePanel(): HTMLElement {
   const goal = profile.stated_interest.at(-1)?.goal ?? null; const help = profile.help_preference.at(-1)?.help;
@@ -440,7 +470,7 @@ function preferencePanel(): HTMLElement {
 }
 function report(): HTMLElement {
   return reportView({ run: run!, profile, manifest, wasCaseSeen: (caseId) => hasSeenRelatedCase(seenCases, caseId), header: topbar(), preferences: profile.enabled ? preferencePanel() : null, calibration: profile.enabled ? researchUI.calibrationReport() : null,
-    openTask: (task) => changeScreen(task === "D1" ? "d1" : "d2"), resume: () => changeScreen("game"), newRun: () => askNewRun(profile.enabled), home: () => changeScreen("intro"),
+    openDetails, openTask: (task) => changeScreen(task === "D1" ? "d1" : "d2"), resume: () => changeScreen("game"), newRun: () => askNewRun(profile.enabled), home: () => changeScreen("intro"),
     saveReason: (evidenceId, reason) => { if (!reason) { flash("请选择一个原因。"); return; } setProfile(addUserReason(profile, uid("reason"), evidenceId, reason)); flash("已保存你的补充。"); } });
 }
 function judge(): HTMLElement {
@@ -657,9 +687,9 @@ function render(preserve = true): void {
   else if (screen === "report") content = report();
   else if (screen === "judge") content = judge();
   else if (screen === "d1" || screen === "d2") content = h("div", { class: "app-shell" }, topbar(), screen === "d1" ? researchUI.renderFunding() : researchUI.renderHistory());
-  else content = h("div", null, h("div", { class: "app-shell" }, topbar()), gameView({ run, initialCase, initialCaseError, initialCaseLoading, retryInitialCase, selectedCard, selectedRetain, selectedUpgrade, selectedReward, entryCents, reserveCents, marketLoading, marketError, battleFeedback, gameFeedback, tutorialStep, action, selectCard: (id) => { selectedCard = id; if (id && run?.node === "N1" && tutorialStep < 2) { tutorialStep = 2; save(); } render(); }, selectRetain: (id) => { selectedRetain = id; render(); }, selectUpgrade: (id) => { selectedUpgrade = id; render(); }, selectReward, setEntry: (amount, redraw) => { entryCents = amount; if (redraw) render(); }, setReserve: (amount) => { reserveCents = amount; }, retryMarket, extraCamp: () => researchUI.campExtras(), openReport: () => changeScreen("report"), openTask: (task) => changeScreen(task), archiveShown, nextTutorial: () => setTutorialStep(tutorialStep + 1), skipTutorial: () => setTutorialStep(4), openPile, openEnemyPlan }));
+  else content = h("div", null, h("div", { class: "app-shell" }, topbar()), gameView({ run, initialCase, initialCaseError, initialCaseLoading, retryInitialCase, selectedCard, selectedRetain, selectedUpgrade, selectedReward, entryCents, reserveCents, marketLoading, marketError, battleFeedback, gameFeedback, tutorialStep, page: gamePage, selectPage: (page) => { gamePage = page; if (gameFeedback?.area === "journey") gameFeedback = null; render(false); resumePresentations(); }, openDetails, openGuide, action: requestGameAction, selectCard: (id) => { selectedCard = id; if (id && run?.node === "N1" && tutorialStep < 2) { tutorialStep = 2; save(); } render(); }, selectRetain: (id) => { selectedRetain = id; render(); }, selectUpgrade: (id) => { selectedUpgrade = id; render(); }, selectReward, setEntry: (amount, redraw) => { entryCents = amount; if (redraw) render(); }, setReserve: (amount) => { reserveCents = amount; }, retryMarket, extraCamp: () => researchUI.campExtras(), openReport: () => changeScreen("report"), openTask: (task) => changeScreen(task), archiveShown, nextTutorial: () => setTutorialStep(tutorialStep + 1), skipTutorial: () => setTutorialStep(4), openPile, openEnemyPlan }));
   content.inert = !!modal;
-  const wrapper = h("div", { class: `adventure${screen === "game" && run?.phase === "battle" ? " battle-active" : ""}` }, content, storageError ? h("div", { class: "toast", role: "status" }, "浏览器无法保存进度，请检查本地存储设置。") : null, toastMessage ? h("div", { class: "toast", role: "status" }, toastMessage) : null, modal);
+  const wrapper = h("div", { class: `adventure screen-${screen}${screen === "game" && run?.phase === "battle" ? " battle-active" : ""}` }, content, storageError ? h("div", { class: "toast", role: "status" }, "浏览器无法保存进度，请检查本地存储设置。") : null, toastMessage ? h("div", { class: "toast", role: "status" }, toastMessage) : null, modal);
   app.replaceChildren(wrapper);
   for (const summary of app.querySelectorAll<HTMLElement>("details > summary")) if (open.includes(summary.textContent ?? "")) (summary.parentElement as HTMLDetailsElement).open = true;
   for (const [key, left] of scrollPositions) { const element = app.querySelector<HTMLElement>(`[data-scroll-key="${CSS.escape(key)}"]`); if (element) element.scrollLeft = left; }

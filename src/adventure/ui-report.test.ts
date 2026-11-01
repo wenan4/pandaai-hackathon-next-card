@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { makeCalibrationDemo } from "./calibration-demo";
 import { createRun, reduceRun } from "./engine";
 import { gameplayHighlights } from "./gameplay-highlights";
+import { decisionSummary } from "./decision-summary";
 import { loadMarketInitial, loadMarketStage, resetMarketCacheForTest, type ResearchMarketCase } from "./market";
 import { compareSchedule, declarePriorExposure, emptyResearchProfile, mechanicalFundingExample, setResearchGoal, showHistoryEvidence, startHistory, submitFunding, submitHistory, updateJourney, type ResearchProfile } from "./research";
 import { reportView, researchSummary } from "./ui-report";
@@ -16,12 +17,13 @@ class FakeNode {
 class FakeElement extends FakeNode {
   attributes: Record<string, string> = {};
   listeners: Record<string, () => void> = {};
-  open = false;
+  open = false; hidden = false;
   value = "";
   constructor(readonly tag: string) { super(); }
   setAttribute(name: string, value: string): void { this.attributes[name] = value; }
   addEventListener(name: string, listener: () => void): void { this.listeners[name] = listener; }
   fire(name: string): void { this.listeners[name]?.(); }
+  focus(): void { /* no layout in this harness */ }
 }
 function find(node: FakeNode, predicate: (element: FakeElement) => boolean): FakeElement | undefined {
   if (node instanceof FakeElement && predicate(node)) return node;
@@ -29,6 +31,7 @@ function find(node: FakeNode, predicate: (element: FakeElement) => boolean): Fak
   return undefined;
 }
 function visibleText(node: FakeNode): string {
+  if (node instanceof FakeElement && node.hidden) return "";
   if (node instanceof FakeElement && node.tag === "details" && !node.open) return node.children.filter((child): child is FakeElement => child instanceof FakeElement && child.tag === "summary").map(visibleText).join("");
   return node.children.map((child) => typeof child === "string" ? child : visibleText(child)).join("");
 }
@@ -51,80 +54,109 @@ beforeEach(() => {
 });
 afterEach(() => { vi.unstubAllGlobals(); resetMarketCacheForTest(); });
 
-describe("compact journey report", () => {
-  it("identifies a defeat that ends immediately without any shares or quote wait", () => {
+describe("paged journey report", () => {
+  it("places the disabled portrait explanation and a battle report entry on the first page", () => {
     let run = createRun({ seed: 104, observationEnabled: false });
     for (let turn = 0; turn < 20 && run.phase === "battle"; turn++) run = reduceRun(run, { type: "end-turn" });
-    expect(run.status).toBe("defeated"); expect(run.phase).toBe("ended"); expect(run.market.pending).toBeNull();
+    expect(run.status).toBe("defeated");
     const view = reportView({ run, profile: emptyResearchProfile(false), manifest: null, wasCaseSeen: () => false, header: new FakeElement("header") as unknown as HTMLElement,
-      preferences: null, calibration: null, openTask: vi.fn(), saveReason: vi.fn(), resume: vi.fn(), newRun: vi.fn(), home: vi.fn() }) as unknown as FakeElement;
-    expect(visibleText(view)).toContain("战斗失败，旅程暂告一段落");
-    expect(visibleText(view)).toContain("生命已降至 0");
-    expect(visibleText(view)).not.toContain("等待报价");
-    expect(visibleText(view)).not.toContain("任务观察");
+      preferences: null, calibration: null, openTask: vi.fn(), openDetails: vi.fn(), saveReason: vi.fn(), resume: vi.fn(), newRun: vi.fn(), home: vi.fn() }) as unknown as FakeElement;
+    const visible = visibleText(view);
+    expect(visible).toContain("我的交易风格"); expect(visible).toContain("本局画像");
+    expect(visible).toContain("战斗失败，旅程暂告一段落"); expect(visible).toContain("生命已降至 0");
+    expect(visible).toContain("开启观察的新旅程才会生成本局画像");
+    expect(visible).toContain("查看战报"); expect(visible).not.toContain("任务观察");
+    byText(view, "button", "查看战报").fire("click");
+    expect(visibleText(view)).toContain("本局战报");
+    expect(visibleText(view)).toContain("这里只回顾游戏中的战斗与收获");
   });
 
-  it("shows real highlights and a single recommended entry while retaining other actions in disclosures", async () => {
+  it("shows three specific results first and keeps evidence, tasks and the battle report on separate pages", async () => {
     let run = await makeCalibrationDemo();
     run = reduceRun(run, { type: "submit-redemption", percent: 0 });
     run = reduceRun(run, { type: "apply-quote", quote: await loadMarketStage(run.caseId, "t1-exec", true) });
-    run = reduceRun(run, { type: "buy-archive" });
-    run = reduceRun(run, { type: "open-archive" });
+    run = reduceRun(run, { type: "buy-archive" }); run = reduceRun(run, { type: "open-archive" });
     run.source = "real";
     const profile = setResearchGoal(updateJourney(emptyResearchProfile(), run), "history-goal", "history");
-    const openTask = vi.fn(); const resume = vi.fn();
-    const view = reportView({ run, profile, manifest: await loadMarketInitial(), wasCaseSeen: () => false, header: new FakeElement("header") as unknown as HTMLElement, preferences: new FakeElement("div") as unknown as HTMLElement,
-      calibration: null, openTask, saveReason: vi.fn(), resume, newRun: vi.fn(), home: vi.fn() }) as unknown as FakeElement;
-    const visible = visibleText(view);
-    for (const item of gameplayHighlights(run)) expect(visible).toContain(item.text);
-    expect(profile.journey_observations.length).toBeGreaterThan(2);
-    const observations = find(view, (item) => item.attributes.class === "report-observation-list");
-    expect(observations?.children).toHaveLength(2);
-    expect(visible).toContain("同期比较"); expect(visible).toContain("样本边界"); expect(visible).toContain("可用现金");
-    expect(visible).toContain("推荐 · 历史对照台");
-    expect(visible).toContain("打开历史对照台");
-    expect(visible).not.toContain("打开资金安排台");
-    expect(visible).not.toContain("你的研究线索");
+    const initialRun = JSON.stringify(run); const initialProfile = JSON.stringify(profile);
+    const openTask = vi.fn(); const resume = vi.fn(); const openDetails = vi.fn();
+    const ctx = { run, profile, manifest: await loadMarketInitial(), wasCaseSeen: () => false, header: new FakeElement("header") as unknown as HTMLElement,
+      preferences: new FakeElement("div") as unknown as HTMLElement, calibration: null, openTask, openDetails, saveReason: vi.fn(), resume, newRun: vi.fn(), home: vi.fn() };
+    const view = reportView(ctx) as unknown as FakeElement;
+    const summary = decisionSummary(run); const visible = visibleText(view);
+    expect(visible).toContain("我的交易风格"); expect(visible).toContain("本局交易倾向");
+    expect(visible).toContain("仅描述本局选择，不代表现实投资人格");
+    expect(visible).toContain(summary.funding.brief); expect(visible).toContain(summary.information.brief); expect(visible).toContain(summary.response.brief);
+    expect(visible).toContain("参与 20 金币"); expect(visible).toContain("购买并打开档案"); expect(visible).toContain("中途继续持有");
+    expect(visible).not.toContain(summary.funding.detail); expect(visible).not.toContain("本局战报");
+    expect(byText(view, "button", "概览").attributes["aria-pressed"]).toBe("true");
+    expect(byText(view, "button", "选择依据").attributes["aria-controls"]).toBe("report-panel-choices");
+
+    byText(view, "button", "选择依据").fire("click");
+    expect(byText(view, "button", "概览").attributes["aria-pressed"]).toBe("false");
+    expect(byText(view, "button", "选择依据").attributes["aria-pressed"]).toBe("true");
+    expect(visibleText(view)).toContain(summary.funding.brief); expect(visibleText(view)).toContain(summary.information.brief);
+    expect(visibleText(view)).toContain(summary.response.brief);
+    find(view, (item) => item.attributes["data-focus-key"] === "report-evidence-资金取舍")!.fire("click");
+    expect(openDetails.mock.calls.at(-1)?.[0]).toBe("资金取舍 · 本局记录");
+    expect((openDetails.mock.calls.at(-1)![1] as unknown as FakeElement).textContent).toContain(summary.funding.detail);
+    expect((openDetails.mock.calls.at(-1)![1] as unknown as FakeElement).textContent).toContain("提交契约参与金额");
+    byText(view, "button", "如何理解这些描述").fire("click");
+    expect(openDetails).toHaveBeenCalledWith("如何理解本局画像", expect.any(FakeElement));
+    expect((openDetails.mock.calls.at(-1)![1] as unknown as FakeElement).textContent).toContain("战斗打法不参与金融观察");
+
+    byText(view, "button", "研究与下一步").fire("click");
+    expect(visibleText(view)).toContain("推荐 · 历史对照台");
     byText(view, "button", "打开历史对照台").fire("click"); expect(openTask).toHaveBeenCalledWith("D2");
-    byText(view, "button", "返回营地").fire("click"); expect(resume).toHaveBeenCalledOnce();
-    const other = byText(view, "summary", "也可选择资金安排台");
-    (other.parent as FakeElement).open = true;
-    expect(visibleText(view)).toContain("打开资金安排台");
     byText(view, "button", "打开资金安排台").fire("click"); expect(openTask).toHaveBeenCalledWith("D1");
-    const evidence = byText(view, "summary", "查看观察依据与研究过程");
-    (evidence.parent as FakeElement).open = true;
-    expect(visibleText(view)).toContain("你的研究线索");
-    expect(visibleText(view)).toContain("补充我的原因");
-    expect(visibleText(view)).toContain("更改目标与帮助");
-    expect(visibleText(view)).toContain("查看牌组、金币账本与旅程依据");
+    byText(view, "button", "查看研究线索").fire("click"); expect(openDetails.mock.calls.at(-1)?.[0]).toBe("你的研究线索");
+
+    byText(view, "button", "牌组账本").fire("click"); expect(visibleText(view)).toContain("本局战报");
+    byText(view, "button", "查看战报详情").fire("click");
+    const battle = openDetails.mock.calls.at(-1)![1] as unknown as FakeElement;
+    for (const item of gameplayHighlights(run)) expect(battle.textContent).toContain(item.text);
+    expect(battle.textContent).not.toContain("交易人格");
+    byText(view, "button", "返回旅程").fire("click"); expect(resume).toHaveBeenCalledOnce();
+    expect(JSON.stringify(run)).toBe(initialRun); expect(JSON.stringify(profile)).toBe(initialProfile);
+    const rerendered = reportView(ctx) as unknown as FakeElement;
+    expect(byText(rerendered, "button", "牌组账本").attributes["aria-pressed"]).toBe("true");
+    const fresh = reportView({ ...ctx, run: structuredClone(run) }) as unknown as FakeElement;
+    expect(byText(fresh, "button", "概览").attributes["aria-pressed"]).toBe("true");
   });
 
-  it("keeps game achievements visible for a simulated play-only journey without showing research observations", async () => {
-    const run = await makeCalibrationDemo(); run.source = "fork";
+  it("keeps a simulated play-only journey's battle report without producing a financial portrait", async () => {
+    const run = await makeCalibrationDemo(); run.source = "fork"; run.observationEnabled = false;
     const view = reportView({ run, profile: emptyResearchProfile(false, "fork"), manifest: null, wasCaseSeen: () => false, header: new FakeElement("header") as unknown as HTMLElement,
-      preferences: null, calibration: null, openTask: vi.fn(), saveReason: vi.fn(), resume: vi.fn(), newRun: vi.fn(), home: vi.fn() }) as unknown as FakeElement;
-    const visible = visibleText(view);
-    expect(visible).toContain("模拟 · 分叉");
-    expect(visible).toContain("只玩游戏");
-    expect(visible).toContain("旅程亮点");
-    expect(visible).not.toContain("任务观察");
-    expect(visible).not.toContain("查看观察依据与研究过程");
-    expect(visible).toContain("查看牌组、金币账本与旅程依据");
+      preferences: null, calibration: null, openTask: vi.fn(), openDetails: vi.fn(), saveReason: vi.fn(), resume: vi.fn(), newRun: vi.fn(), home: vi.fn() }) as unknown as FakeElement;
+    expect(visibleText(view)).toContain("模拟 · 分叉"); expect(visibleText(view)).toContain("未开启或已撤销观察");
+    expect(visibleText(view)).not.toContain("参与 20 金币");
+    byText(view, "button", "查看战报").fire("click"); expect(visibleText(view)).toContain("本局战报");
   });
 
-  it("says when a recommended exercise is only a mechanical example or a review", async () => {
+  it("shows missing evidence honestly in the initial portrait", () => {
+    const run = createRun({ observationEnabled: true });
+    const view = reportView({ run, profile: emptyResearchProfile(true), manifest: null, wasCaseSeen: () => false, header: new FakeElement("header") as unknown as HTMLElement,
+      preferences: null, calibration: null, openTask: vi.fn(), openDetails: vi.fn(), saveReason: vi.fn(), resume: vi.fn(), newRun: vi.fn(), home: vi.fn() }) as unknown as FakeElement;
+    const text = visibleText(view);
+    expect(text).toContain("尚无参与安排"); expect(text).toContain("尚无档案使用记录"); expect(text).toContain("尚无持有后的自主选择");
+    expect(text).not.toContain("参与 0 金币");
+    byText(view, "button", "研究与下一步").fire("click");
+    expect(visibleText(view)).toContain("历史对照台（待准备）");
+  });
+
+  it("labels a mechanical example and a review on the research page", async () => {
     const run = await makeCalibrationDemo(); run.source = "real";
     const manifest = await loadMarketInitial();
     const base = { run, manifest, wasCaseSeen: (id: string) => id === "lantern-a" || id === "lantern-b", header: new FakeElement("header") as unknown as HTMLElement,
-      preferences: null, calibration: null, openTask: vi.fn(), saveReason: vi.fn(), resume: vi.fn(), newRun: vi.fn(), home: vi.fn() };
+      preferences: null, calibration: null, openTask: vi.fn(), openDetails: vi.fn(), saveReason: vi.fn(), resume: vi.fn(), newRun: vi.fn(), home: vi.fn() };
     const funding = reportView({ ...base, profile: setResearchGoal(emptyResearchProfile(), "funding-goal", "funding") }) as unknown as FakeElement;
-    expect(visibleText(funding)).toContain("人工机制算例供练习");
-    expect(visibleText(funding)).toContain("不作为独立能力依据");
-    const history = reportView({ ...base, profile: setResearchGoal(emptyResearchProfile(), "history-goal", "history") }) as unknown as FakeElement;
-    expect(visibleText(history)).toContain("目前可选历史片段均标为已见");
-    expect(visibleText(history)).toContain("作为复习");
-    expect(visibleText(history)).not.toContain("新情境");
-    expect(visibleText(history)).toContain("为什么这样推荐与选择帮助");
+    byText(funding, "button", "研究与下一步").fire("click");
+    expect(visibleText(funding)).toContain("可用人工示例试算");
+    byText(funding, "button", "为什么这样推荐").fire("click");
+    expect((base.openDetails.mock.calls.at(-1)![1] as unknown as FakeElement).textContent).toContain("不作为独立能力依据");
+    const history = reportView({ ...base, run: structuredClone(run), profile: setResearchGoal(emptyResearchProfile(), "history-goal", "history") }) as unknown as FakeElement;
+    byText(history, "button", "研究与下一步").fire("click");
+    expect(visibleText(history)).toContain("可复习已看过的历史片段");
   });
 });
 
@@ -162,11 +194,15 @@ describe("research trace scope", () => {
 describe("saved funding review", () => {
   function viewProfile(profile: ResearchProfile): FakeElement {
     const run = createRun({ seed: 104, source: profile.source, observationEnabled: profile.enabled });
-    return reportView({ run, profile, manifest: null, wasCaseSeen: () => false, header: new FakeElement("header") as unknown as HTMLElement,
-      preferences: null, calibration: null, openTask: vi.fn(), saveReason: vi.fn(), resume: vi.fn(), newRun: vi.fn(), home: vi.fn() }) as unknown as FakeElement;
+    let view: FakeElement;
+    const openDetails = (_title: string, body: unknown): void => { if (body instanceof FakeNode) view.append(body); };
+    view = reportView({ run, profile, manifest: null, wasCaseSeen: () => false, header: new FakeElement("header") as unknown as HTMLElement,
+      preferences: null, calibration: null, openTask: vi.fn(), openDetails, saveReason: vi.fn(), resume: vi.fn(), newRun: vi.fn(), home: vi.fn() }) as unknown as FakeElement;
+    return view;
   }
   function openFunding(view: FakeElement): string {
-    (byText(view, "summary", "回看最近一次资金核查").parent as FakeElement).open = true;
+    byText(view, "button", "研究与下一步").fire("click");
+    byText(view, "button", "回看最近一次资金核查").fire("click");
     return visibleText(view);
   }
 
@@ -182,6 +218,7 @@ describe("saved funding review", () => {
       revisedPlan: { ...example.plan, participationCents: 6000 }, help: "self", answerExposed: false, priorExposure: false }).profile;
     const before = JSON.stringify(profile); const fetchSpy = vi.fn(); vi.stubGlobal("fetch", fetchSpy);
     const view = viewProfile(profile);
+    byText(view, "button", "研究与下一步").fire("click");
     expect(visibleText(view)).toContain("回看最近一次资金核查");
     expect(visibleText(view)).not.toContain("当时核查的采购：后续采购");
     const text = openFunding(view);

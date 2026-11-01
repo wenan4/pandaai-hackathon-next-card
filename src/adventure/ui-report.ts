@@ -1,12 +1,14 @@
 import "./ui-report.css";
 import { h, type Child } from "../ui/dom";
 import { gameplayHighlights } from "./gameplay-highlights";
+import { decisionSummary, type DecisionInsight } from "./decision-summary";
 import { recommendationPlan, type Direction, type FundingAttempt, type FundingPlan, type FundingRow, type FundingTimeline, type Knowledge, type KnowledgeEvidence, type Reason, type ResearchProfile } from "./research";
 import type { MarketManifest } from "./market";
 import type { Run } from "./types";
 import { button, coins, deckSummary, details, moneyHistory, pill } from "./ui-components";
 import { taskAvailability } from "./ui-availability";
 import { nodeNames } from "./ui-game";
+import { fundingRowLabel } from "./ui-research-labels";
 
 const names: Record<Knowledge, string> = { K1: "同期比较", K2: "样本边界", K3: "可用现金" };
 const statusLabels: Record<string, string> = { unobserved: "尚未观察", independent: "已有独立完成记录", assisted: "已有提示后完成记录", needs_confirmation: "仍需核对", conflicting: "不同情境表现不同" };
@@ -72,32 +74,20 @@ interface ReportContext {
   preferences: Child;
   calibration: Child;
   openTask: (task: "D1" | "D2") => void;
+  openDetails: (title: string, body: Child) => void;
   saveReason: (evidenceId: string, reason: Reason | "") => void;
   resume: () => void;
   newRun: () => void;
   home: () => void;
 }
 
-const shortStatus: Record<string, string> = { unobserved: "尚未观察", independent: "一次独立完成", assisted: "借助帮助完成", needs_confirmation: "需要再核对", conflicting: "情境结果不同" };
-function reportDetails(label: string, ...children: Child[]): HTMLElement {
-  return h("details", { class: "report-disclosure" }, h("summary", null, label), ...children);
-}
+type ReportPage = "overview" | "choices" | "research" | "deck";
+const reportPageByRun = new WeakMap<Run, ReportPage>();
 
 const savedAmount = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 const amountText = (value: unknown): string => savedAmount(value) ? `${coins(value)} 金币` : "未知";
 type SavedTimeline = Partial<FundingTimeline> | null | undefined;
 type SavedRow = Partial<FundingRow>;
-function savedRowLabel(label: string | undefined): string | undefined {
-  const match = label?.match(/^(实际执行|历史参考)：([^（]+)(（自动回收）)?$/);
-  if (!match) return label;
-  const labels: Record<string, string> = {
-    t1: "第一检查点的参考报价", t2: "第二检查点的参考报价", t3: "旅程终点的参考报价",
-    "t1-exec": "第一检查点后的回收节点", "t2-exec": "第二检查点后的回收节点",
-    "final-exec": "旅程结束后的回收节点", "exit-after-entry": "本次旅程结束后的回收节点",
-    "exit-after-t1-exec": "本次旅程结束后的回收节点", "exit-after-t2-exec": "本次旅程结束后的回收节点",
-  };
-  return labels[match[2]!] ? `${labels[match[2]!]}${match[3] ?? ""}` : label;
-}
 function timelineRows(timeline: SavedTimeline): SavedRow[] | null {
   return timeline && Array.isArray(timeline.rows) && timeline.rows.every((row) => !!row && typeof row === "object") ? timeline.rows : null;
 }
@@ -155,7 +145,7 @@ function recoverySettings(plan: Partial<FundingPlan> | null | undefined, timelin
   return h("div", { class: "stack" }, h("p", { class: "hint" }, "保存的回收设置："), entries.map(([id, pct], index) => {
     const own = ownRows?.find((row) => row.id === id && row.kind === "recovery");
     const fallback = otherRows?.find((row) => row.id === id && row.kind === "recovery");
-    const label = savedRowLabel(own?.label || fallback?.label) || `回收安排 ${index + 1}（节点名称未记录）`;
+    const label = fundingRowLabel(own?.label || fallback?.label) || `回收安排 ${index + 1}（节点名称未记录）`;
     const selected = pct === 0 || pct === 50 || pct === 100 ? `${pct}%` : "比例未知";
     return h("p", { class: "fineprint" }, `${label}：${selected}${own ? "" : "（此时间线未记录该节点）"}。`);
   }));
@@ -163,7 +153,7 @@ function recoverySettings(plan: Partial<FundingPlan> | null | undefined, timelin
 function savedTimeline(timeline: SavedTimeline, title: string): Child {
   const rows = timelineRows(timeline);
   if (!rows?.length) return h("p", { class: "fineprint" }, "时间线未保存或无法读取。");
-  return details(title, h("div", { class: "timeline" }, rows.map((row) => h("div", { class: "timeline-item" }, h("strong", null, savedRowLabel(row.label) || "节点名称未知"),
+  return details(title, h("div", { class: "timeline" }, rows.map((row) => h("div", { class: "timeline-item" }, h("strong", null, fundingRowLabel(row.label) || "节点名称未知"),
     h("p", null, row.kind === "purchase" ? purchaseDescription(row) : `处理后可用 ${amountText(row.cashCents)}；份额参考价值 ${row.referenceValueCents === null ? "尚未显示" : amountText(row.referenceValueCents)}。`)))));
 }
 function savedFundingPlan(title: string, plan: Partial<FundingPlan> | null | undefined, timeline: SavedTimeline, other: SavedTimeline, targetId: unknown): HTMLElement {
@@ -185,39 +175,109 @@ function savedFundingReview(attempt: FundingAttempt, run: Run): HTMLElement {
     savedFundingPlan("修订计划", attempt.revisedPlan, revised, original, attempt.purchaseId));
 }
 
-/** Compact journey recap; research findings remain separate from gameplay events. */
+/** Report pages are local UI state and are never saved as part of the journey. */
 export function reportView(ctx: ReportContext): HTMLElement {
   const { run, profile } = ctx;
   const active = run.status === "active";
-  const ending = active ? "旅程中的小发现" : run.status === "cleared" ? "灯火已点亮" : run.status === "returned" ? "带着收获返程" : "战斗失败，旅程暂告一段落";
-  const subtitle = active ? `现在位于${nodeNames[run.node]}，随时可以继续。` : run.status === "cleared" ? "你完成了守灯者的挑战。" : run.status === "returned" ? "这段旅程的发现，可以慢慢回看。" : "生命已降至 0。这次冒险结束了，带走的发现仍然属于你。";
+  const pending = !active && run.phase === "market";
+  const ending = active ? "旅程进行中" : run.status === "cleared" ? "灯火已点亮" : run.status === "returned" ? "带着收获返程" : "战斗失败，旅程暂告一段落";
+  const subtitle = pending ? "结局已确定，仍在等待结算。" : active ? "现在位于" + nodeNames[run.node] + "，随时可以继续。" : run.status === "defeated" ? "生命已降至 0；本局旅程已结束。" : "这段旅程的记录可以慢慢回看。";
+  const observed = profile.enabled && run.observationEnabled;
+  const summary = observed ? decisionSummary(run) : null;
   const highlights = gameplayHighlights(run).slice(0, 3);
-  const observations = profile.enabled ? profile.journey_observations.slice(-2).reverse() : [];
-  const plan = recommendationPlan(profile, taskAvailability(run, profile, ctx.manifest, ctx.wasCaseSeen));
+  const availability = taskAvailability(run, profile, ctx.manifest, ctx.wasCaseSeen);
+  const plan = recommendationPlan(profile, availability);
   const rec = plan.recommendation;
-  const task = profile.enabled ? rec.task_id ?? "D1" : "D1";
+  const task = observed ? rec.task_id ?? "D1" : "D1";
   const alternate = task === "D1" ? "D2" : "D1";
   const taskName = (value: "D1" | "D2"): string => value === "D1" ? "资金安排台" : "历史对照台";
-  const reasonEvidence = profile.enabled ? profile.journey_observations[0]?.evidence_ids[0] : undefined;
-  const reasonSelect = h("select", { "aria-label": "补充我的原因" }, h("option", { value: "" }, "选择一个原因"), h("option", { value: "upgrade" }, "想留钱升级"), h("option", { value: "not_understood" }, "有些规则没看懂"), h("option", { value: "not_interested" }, "暂时不感兴趣"), h("option", { value: "autonomous" }, "想自主尝试"), h("option", { value: "other" }, "其他或不确定"));
-  const otherTask = reportDetails(`也可选择${taskName(alternate)}`, h("p", { class: "hint" }, alternate === "D1" ? "试算参与、回收与途中采购。" : "固定日程，再比较同期基准与另一段历史。"), button(`打开${taskName(alternate)}`, () => ctx.openTask(alternate), "small secondary"));
-  const savedFunding = profile.enabled ? profile.funding_attempts.at(-1) : undefined;
-  const evidence = profile.enabled ? reportDetails("查看观察依据与研究过程", h("div", { class: "report-expanded stack" },
-    researchSummary(profile),
-    h("section", { class: "panel stack" }, h("h3", null, "经营观察与边界"), profile.journey_observations.length ? profile.journey_observations.map((item) => h("p", { class: "hint" }, `${item.text} 依据：${item.evidence_ids.join("、")}。${item.limitations.join("；")}。`)) : h("p", { class: "hint" }, "还没有足够的经营选择可供描述。"), h("p", { class: "fineprint" }, "现实财务承受能力未评估；单次游戏不能建立稳定交易类型。"),
-      ctx.calibration,
-      reasonEvidence ? details("补充我的原因", h("p", { class: "hint" }, "你的补充作为新记录保留，不改写原来的操作。"), reasonSelect, button("保存补充", () => ctx.saveReason(reasonEvidence, reasonSelect.value as Reason | ""), "small secondary")) : null))) : null;
+  const alternateUnavailable = alternate === "D1" ? availability.funding === "unavailable" : availability.history === "unavailable";
+  const shortOffer = task === "D1" ? ({
+    journey: "试算参与金额与采购后的可用金币。", example: "本局暂无完整日程，可用人工示例试算。", unavailable: "资金安排暂未准备好，可稍后重试。",
+  })[availability.funding] : ({
+    unseen: "比较一段未见历史与同期基准。", review: "可复习已看过的历史片段。", pending: "继续已锁定的历史研究。", unavailable: "历史目录尚未准备好或没有可用片段。",
+  })[availability.history];
+  const savedFunding = observed ? profile.funding_attempts.at(-1) : undefined;
+  const reasonEvidence = observed ? profile.journey_observations[0]?.evidence_ids[0] : undefined;
+  const rows: { label: string; insight: DecisionInsight }[] = summary ? [
+    { label: "资金取舍", insight: summary.funding },
+    { label: "信息使用", insight: summary.information },
+    { label: "应对变化", insight: summary.response },
+  ] : [];
+
+  const pages = new Map<ReportPage, HTMLElement>();
+  const tabs = new Map<ReportPage, HTMLButtonElement>();
+  const changePage = (page: ReportPage, focus = false): void => {
+    reportPageByRun.set(run, page);
+    for (const [name, element] of pages) element.hidden = name !== page;
+    for (const [name, tab] of tabs) tab.setAttribute("aria-pressed", String(name === page));
+    if (focus) tabs.get(page)?.focus({ preventScroll: true });
+  };
+  const definitions: { id: ReportPage; label: string }[] = [
+    { id: "overview", label: "概览" }, { id: "choices", label: "选择依据" },
+    { id: "research", label: "研究与下一步" }, { id: "deck", label: "牌组账本" },
+  ];
+  const navigation = h("nav", { class: "report-pages", "aria-label": "报告分页" }, definitions.map(({ id, label }) => {
+    const tab = button(label, () => changePage(id), "report-tab", false, "report-tab-" + id);
+    tab.setAttribute("id", "report-tab-" + id);
+    tab.setAttribute("aria-controls", "report-panel-" + id);
+    tabs.set(id, tab); return tab;
+  }));
+  const page = (id: ReportPage, content: Child): HTMLElement => {
+    const label = definitions.find((item) => item.id === id)!.label;
+    const element = h("section", { class: "report-screen", id: "report-panel-" + id, "aria-label": label }, content);
+    pages.set(id, element); return element;
+  };
+  const detailEvents = (insight: DecisionInsight): Child => {
+    const events = insight.evidenceIds.map((id) => run.history.find((event) => event.id === id)).filter((event) => !!event);
+    return events.length ? h("div", { class: "report-evidence" }, events.map((event) => h("p", { class: "fineprint" }, nodeNames[event.node] + " · " + event.message))) : h("p", { class: "fineprint" }, "还没有可引用的本局选择记录。");
+  };
+
+  const overview = page("overview", h("div", { class: "panel report-portrait" },
+    h("div", { class: "report-portrait-head" }, h("div", null, h("span", { class: "eyebrow" }, "本局画像"), h("h2", null, "本局交易倾向")), run.source !== "real" ? pill(run.source === "fork" ? "模拟 · 分叉" : "模拟 · 预设", "gold") : null),
+    summary ? h("div", { class: "report-traits" }, rows.map(({ label, insight }) => h("div", { class: "report-trait" }, h("span", null, label), h("strong", { class: insight.status === "unobserved" ? "muted" : "" }, insight.brief))))
+      : h("p", { class: "report-disabled" }, "本局未开启或已撤销观察，未生成画像。开启观察的新旅程才会生成本局画像。"),
+    summary ? h("p", { class: "fineprint report-boundary" }, "仅描述本局选择，不代表现实投资人格。") : null,
+    h("div", { class: "button-row report-primary-actions" },
+      summary ? button("查看选择依据", () => changePage("choices", true), "small", false, "report-open-choices") : null,
+      button("查看战报", () => changePage("deck", true), "small secondary", false, "report-open-battle"))));
+
+  const choices = page("choices", summary ? h("div", { class: "panel report-choice-page" },
+    h("h2", null, "选择依据"), h("p", { class: "hint" }, "由这次旅程中实际记录的选择整理。"),
+    h("div", { class: "report-choice-list" }, rows.map(({ label, insight }) => h("article", { class: "report-choice" }, h("div", null, h("span", null, label), h("h3", null, insight.title), h("p", null, insight.brief)),
+      button("查看详情", () => ctx.openDetails(label + " · 本局记录", h("div", { class: "stack" }, h("p", { class: "hint" }, insight.detail), detailEvents(insight))), "small ghost", false, "report-evidence-" + label)))),
+    h("div", { class: "button-row" }, button("如何理解这些描述", () => ctx.openDetails("如何理解本局画像", h("p", { class: "hint" }, summary.boundary)), "small secondary", false, "report-boundary"),
+      reasonEvidence ? button("补充我的原因", () => {
+        const select = h("select", { "aria-label": "补充我的原因" }, h("option", { value: "" }, "选择一个原因"), h("option", { value: "upgrade" }, "想留钱升级"), h("option", { value: "not_understood" }, "有些规则没看懂"), h("option", { value: "not_interested" }, "暂时不感兴趣"), h("option", { value: "autonomous" }, "想自主尝试"), h("option", { value: "other" }, "其他或不确定"));
+        ctx.openDetails("补充我的原因", h("div", { class: "stack" }, h("p", { class: "hint" }, "你的补充会保留为新的记录。"), select, button("保存补充", () => ctx.saveReason(reasonEvidence, select.value as Reason | ""), "small")));
+      }, "small secondary", false, "report-reason") : null))
+    : h("div", { class: "panel report-empty" }, h("h2", null, "选择依据"), h("p", { class: "hint" }, "本局未开启或已撤销观察，因此没有画像依据。开启观察的新旅程才会生成画像。"), button("查看战报", () => changePage("deck", true), "small secondary")));
+
+  const research = page("research", h("div", { class: "panel report-research-page" },
+    h("span", { class: "eyebrow" }, "下一步"), h("h2", null, observed && rec.task_id ? "推荐 · " + taskName(task) : "可先试试" + taskName(task)),
+    h("p", { class: "hint" }, rec.reason), h("p", { class: "fineprint" }, shortOffer),
+    h("div", { class: "button-row" }, button("打开" + taskName(task), () => ctx.openTask(task), "small", false, "report-task-primary"),
+      button("打开" + taskName(alternate) + (alternateUnavailable ? "（待准备）" : ""), () => ctx.openTask(alternate), "small secondary", false, "report-task-other")),
+    h("div", { class: "report-link-list" },
+      observed ? button("查看研究线索", () => ctx.openDetails("你的研究线索", researchSummary(profile)), "small secondary", false, "report-research-details") : null,
+      savedFunding ? button("回看最近一次资金核查", () => ctx.openDetails("回看最近一次资金核查", savedFundingReview(savedFunding, run)), "small secondary", false, "report-funding-review") : null,
+      observed && ctx.calibration ? button("查看预期对照", () => ctx.openDetails("本局预期对照", ctx.calibration), "small secondary", false, "report-calibration") : null,
+      observed && ctx.preferences ? button("更改目标与帮助", () => ctx.openDetails("目标与帮助", ctx.preferences), "small secondary", false, "report-preferences") : null,
+      button("为什么这样推荐", () => ctx.openDetails("推荐依据", h("div", { class: "stack" }, h("p", { class: "hint" }, rec.reason), plan.continuity ? h("p", { class: "hint" }, plan.continuity) : null, h("p", { class: "fineprint" }, "帮助方式：" + rec.help_reason), h("p", { class: "fineprint" }, "资金安排：" + plan.offers.D1), h("p", { class: "fineprint" }, "历史对照：" + plan.offers.D2), plan.observed_steps.map((item) => h("p", { class: "fineprint" }, item.text)))), "small secondary", false, "report-recommendation"))));
+
+  const deck = page("deck", h("div", { class: "panel report-deck-page" },
+    h("h2", null, "本局战报"), h("p", { class: "hint" }, "这里只回顾游戏中的战斗与收获。"),
+    highlights.length ? h("ul", { class: "report-highlight-list" }, highlights.map((item) => h("li", null, item.title))) : h("p", { class: "hint" }, "旅程刚开始，还没有战斗亮点。"),
+    highlights.length ? button("查看战报详情", () => ctx.openDetails("本局战报", h("div", { class: "stack" }, highlights.map((item) => h("div", null, h("strong", null, item.title), h("p", { class: "hint" }, item.text))))), "small secondary", false, "report-battle-details") : null,
+    h("div", { class: "report-deck-stats" }, h("span", null, "随行牌组 " + run.deck.length + " 张"), h("span", null, "可用金币 " + coins(run.wallet.cashCents))),
+    h("div", { class: "button-row" }, button("查看随行牌组", () => ctx.openDetails("随行牌组", deckSummary(run)), "small secondary", false, "report-deck-details"),
+      button("查看金币账本", () => ctx.openDetails("金币往来", moneyHistory(run)), "small secondary", false, "report-ledger"))));
+
+  const chosen = reportPageByRun.get(run) ?? "overview";
+  changePage(chosen);
   return h("div", { class: "app-shell" }, ctx.header, h("main", { class: "report-page", id: "main-content" },
-    h("section", { class: "panel report-hero" }, h("div", { class: "report-hero-top" }, h("div", null, h("div", { class: "eyebrow" }, active ? "A PAUSE IN THE JOURNEY" : "JOURNEY COMPLETE"), h("h1", null, ending)), run.source !== "real" ? pill(run.source === "fork" ? "模拟 · 分叉" : "模拟 · 预设", "gold") : !profile.enabled ? pill("只玩游戏", "blue") : null),
-      h("p", { class: "hint" }, subtitle), h("p", { class: "report-stats" }, `生命 ${run.hp}/${run.maxHp} · ${run.deck.length} 张牌 · 可用 ${coins(run.wallet.cashCents)} 金币`)),
-    h("section", { class: "panel report-highlights" }, h("div", { class: "report-section-heading" }, h("h2", null, "旅程亮点"), h("span", { class: "fineprint" }, "来自本局记录")),
-      highlights.length ? h("ul", { class: "report-highlight-list" }, highlights.map((item, index) => h("li", null, h("span", { class: "report-highlight-number", "aria-hidden": "true" }, String(index + 1).padStart(2, "0")), h("div", null, h("strong", null, item.title), h("p", null, item.text))))) : h("p", { class: "hint" }, "旅程刚开始，继续冒险会留下新的战斗记录。")),
-    profile.enabled ? h("section", { class: "panel report-observations" }, h("h2", null, "这一路的线索"), observations.length ? h("ul", { class: "report-observation-list" }, observations.map((item) => h("li", null, item.text))) : h("p", { class: "hint" }, "暂时没有可描述的经营选择。"),
-      h("div", { class: "report-knowledge" }, h("h3", null, "任务观察"), h("div", { class: "report-knowledge-list" }, (["K1", "K2", "K3"] as Knowledge[]).map((dimension) => { const item = profile.knowledge_observations.find((observation) => observation.dimension === dimension); return h("div", null, h("span", null, names[dimension]), h("strong", null, shortStatus[item?.status ?? "unobserved"] ?? "尚未观察")); })), h("p", { class: "fineprint" }, "只反映本次任务，未观察的保持未知。"))) : h("section", { class: "panel report-observations" }, h("h2", null, "这一路的线索"), h("p", { class: "hint" }, "你选择了只玩游戏；可以自由练习，不保存研究观察。")),
-    h("section", { class: "panel report-next" }, h("div", null, h("div", { class: "eyebrow" }, profile.enabled && rec.task_id ? "A SUGGESTED NEXT STEP" : "A STEP YOU CAN TRY"), h("h2", null, profile.enabled && rec.task_id ? `推荐 · ${taskName(task)}` : `可先试试${taskName(task)}`), h("p", { class: "hint" }, rec.reason), h("p", { class: "fineprint" }, plan.offers[task])), button(`打开${taskName(task)}`, () => ctx.openTask(task), "gold")),
-    h("section", { class: "panel report-more", "aria-label": "更多旅程内容" }, otherTask, savedFunding ? reportDetails("回看最近一次资金核查", savedFundingReview(savedFunding, run)) : null, evidence,
-      reportDetails("为什么这样推荐与选择帮助", h("div", { class: "report-expanded stack" }, h("p", { class: "hint" }, rec.reason), plan.continuity ? h("p", { class: "hint" }, plan.continuity) : null, h("p", { class: "hint" }, `帮助方式：${rec.help_reason}`), h("p", { class: "hint" }, `资金安排：${plan.offers.D1}`), h("p", { class: "hint" }, `历史对照：${plan.offers.D2}`), plan.observed_steps.map((item) => h("p", { class: "fineprint" }, item.text, item.excluded_evidence_ids?.length ? ` ${item.limitations.find((limit) => limit.includes("本人补充")) ?? "本人补充了先前已见，相关操作保留。"}` : "")))),
-      reportDetails("查看牌组、金币账本与旅程依据", h("div", { class: "report-expanded stack" }, h("h3", null, "当前牌组"), deckSummary(run), h("h3", null, "金币往来"), moneyHistory(run), highlights.length ? h("div", null, h("h3", null, "旅程亮点依据"), highlights.map((item) => h("p", { class: "fineprint" }, `${item.title}：${item.evidenceIds.join("、")}`))) : null)),
-      profile.enabled ? reportDetails("更改目标与帮助", ctx.preferences) : null),
-    h("div", { class: "button-row report-actions" }, active ? button("返回营地", ctx.resume, "secondary") : button("再来一局", ctx.newRun, "secondary"), active ? null : button("回到首页", ctx.home, "ghost"))));
+    h("header", { class: "report-heading" }, h("span", { class: "eyebrow" }, "我的旅程"), h("h1", null, "我的交易风格"),
+      h("p", { class: "report-status" }, ending + " · " + subtitle)),
+    navigation, overview, choices, research, deck,
+    h("div", { class: "button-row report-actions" }, active ? button("返回旅程", ctx.resume, "small secondary") : button("再来一局", ctx.newRun, "small secondary"), active ? null : button("回到首页", ctx.home, "small ghost"))));
 }
